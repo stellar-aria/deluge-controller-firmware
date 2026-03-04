@@ -1,0 +1,53 @@
+# Build outputs
+/build/
+/dbt-build/
+/e2-build/
+asio-driver/build/
+
+# Toolchain (downloaded separately)
+/toolchain/
+
+# CMake / Ninja artifacts
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+build.ninja
+*.ninja
+*.map
+
+# Compiled binaries
+*.elf
+*.bin
+*.hex
+*.a
+*.o
+*.obj
+
+# Debug / flash artifacts
+*.nmdump
+*.jdebug.user
+/JLinkLog.log
+/scripts/debug/openocd.log
+/Deluge.jlink
+*.launch
+
+# IDE configs
+.vscode/
+.idea/
+*.srctrl*
+
+# clangd index cache
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.sconsign.dblite
+/dbt_options.py
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
