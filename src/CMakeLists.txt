@@ -1,0 +1,6 @@
+add_subdirectory(startup)
+add_subdirectory(platform)
+add_subdirectory(drivers)
+add_subdirectory(controller)
+add_subdirectory(RZA1)
+add_subdirectory(RTT)

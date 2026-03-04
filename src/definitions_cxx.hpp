@@ -1,0 +1,152 @@
+/*
+ * Copyright © 2014-2023 Synthstrom Audible Limited
+ *
+ * This file is part of The Synthstrom Audible Deluge Firmware.
+ *
+ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
+ * terms of the GNU General Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with this program.
+ * If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#pragma once
+#include "definitions.h"
+#include "util/misc.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+
+#define HARDWARE_TEST_MODE 0
+
+#define AUTOMATED_TESTER_ENABLED (0 && ALPHA_OR_BETA_VERSION)
+
+#if ALPHA_OR_BETA_VERSION
+// #define TEST_VECTOR 1
+// #define TEST_VECTOR_SEARCH_MULTIPLE 1
+#define TEST_GENERAL_MEMORY_ALLOCATION 0
+// #define TEST_VECTOR_DUPLICATES 1
+// #define TEST_SD_WRITE 1
+// #define TEST_SAMPLE_LOOP_POINTS 1
+#endif
+
+#define SD_TEST_MODE_ENABLED 0
+#define SD_TEST_MODE_ENABLED_LOAD_SONGS 0
+#define SD_TEST_MODE_ENABLED_SAVE_SONGS 0
+#define UNDO_REDO_TEST_ENABLED 0
+#define RECORDING_TEST_ENABLED 0
+#define AUTOPILOT_TEST_ENABLED 0
+#define LAUNCH_CLIP_TEST_ENABLED 0
+
+#define PLAYBACK_STOP_SHOULD_CLEAR_MONO_EXPRESSION 1
+
+#define HAVE_SEQUENCE_STEP_CONTROL 1
+
+#define ENABLE_CLIP_CUTTING_DIAGNOSTICS 1
+
+#define PITCH_DETECT_DEBUG_LEVEL 0
+
+// Constants for the char value of the flat(♭) accidental glyph
+#define FLAT_CHAR_STR "\x81"
+#define FLAT_CHAR 0x81u
+
+constexpr uint8_t kOctaveSize = 12;
+
+struct Cartesian {
+	int32_t x;
+	int32_t y;
+};
+
+// Buttons / LEDs ---------------------------------------------------------------
+// Note: (Kate) All LED coordinates were identical to their button counterparts, so they
+// have been removed
+
+constexpr Cartesian syncScalingButtonCoord = {7, 2};
+constexpr Cartesian crossScreenEditButtonCoord = {6, 2};
+constexpr Cartesian xEncButtonCoord = {0, 1};
+constexpr Cartesian yEncButtonCoord = {0, 0};
+constexpr Cartesian tempoEncButtonCoord = {4, 1};
+constexpr Cartesian affectEntireButtonCoord = {3, 0};
+constexpr Cartesian modEncoder0ButtonCoord = {0, 2};
+constexpr Cartesian modEncoder1ButtonCoord = {0, 3};
+constexpr Cartesian shiftButtonCoord = {8, 0};
+constexpr Cartesian playButtonCoord = {8, 3};
+constexpr Cartesian recordButtonCoord = {8, 2};
+constexpr Cartesian clipViewButtonCoord = {3, 2};
+constexpr Cartesian sessionViewButtonCoord = {3, 1};
+constexpr Cartesian synthButtonCoord = {5, 0};
+constexpr Cartesian kitButtonCoord = {5, 1};
+constexpr Cartesian midiButtonCoord = {5, 2};
+constexpr Cartesian cvButtonCoord = {5, 3};
+constexpr Cartesian learnButtonCoord = {7, 0};
+constexpr Cartesian tapTempoButtonCoord = {7, 3};
+constexpr Cartesian saveButtonCoord = {6, 3};
+constexpr Cartesian loadButtonCoord = {6, 1};
+constexpr Cartesian scaleModeButtonCoord = {6, 0};
+constexpr Cartesian keyboardButtonCoord = {3, 3};
+constexpr Cartesian selectEncButtonCoord = {4, 3};
+constexpr Cartesian backButtonCoord = {7, 1};
+constexpr Cartesian tripletsButtonCoord = {8, 1};
+
+constexpr int32_t kEditPadPressBufferSize = 8;
+
+constexpr int32_t kNumModButtons = 8;
+constexpr int32_t kNumGoldKnobIndicatorLEDs = 4;
+
+// Display information (actually pads, not the display proper)
+constexpr int32_t kDisplayHeight = 8;
+constexpr int32_t kDisplayHeightMagnitude = 3;
+constexpr int32_t kDisplayWidth = 16;
+constexpr int32_t kDisplayWidthMagnitude = 4;
+
+constexpr int32_t kNumBytesInColUpdateMessage = 49;
+constexpr int32_t kNumBytesInLongestMessage = 55;
+
+constexpr int32_t kNumBytesInSidebarRedraw = (kNumBytesInColUpdateMessage);
+constexpr int32_t kNumBytesInMainPadRedraw = (kNumBytesInColUpdateMessage * 8);
+
+constexpr int32_t kMinLedBrightness = 1;
+constexpr int32_t kMaxLedBrightness = 25;
+
+struct Pin {
+	uint8_t port;
+	uint8_t pin;
+};
+
+constexpr Pin LINE_OUT_DETECT_L = {6, 3};
+constexpr Pin LINE_OUT_DETECT_R = {6, 4};
+constexpr Pin ANALOG_CLOCK_IN = {1, 14};
+constexpr Pin SPEAKER_ENABLE = {4, 1};
+constexpr Pin HEADPHONE_DETECT = {6, 5};
+constexpr Pin LINE_IN_DETECT = {6, 6};
+constexpr Pin MIC_DETECT = {7, 9};
+constexpr Pin SYNCED_LED = {6, 7};
+constexpr Pin CODEC = {6, 12};
+
+constexpr Pin BATTERY_LED = {1, 1};
+constexpr int32_t SYS_VOLT_SENSE_PIN = 5;
+constexpr Pin VOLT_SENSE = {1, 8 + SYS_VOLT_SENSE_PIN};
+
+constexpr Pin SPI_CLK = {6, 0};
+constexpr Pin SPI_MOSI = {6, 2};
+constexpr Pin SPI_SSL = {6, 1};
+
+constexpr int32_t kSideBarWidth = 2;
+
+/// System sample rate, in samples per second. This is fixed in hardware because the Serial Sound Interface bit clock
+/// is generated by a crystal, and the RZ/A1L provides only a divider on this clock.
+/// See Figure 19.1 in the RZ/A1L TRM R01UH0437EJ0600 Rev.6.00 and the rest of section 19, Serial Sound Interface for
+/// more detail.
+constexpr int32_t kSampleRate = 44100;
+
+// The Deluge deals with 24-bit PCM audio
+constexpr int32_t kBitDepth = 24;
+
+// The maximum value a (24-bit) sample can hold
+constexpr int32_t kMaxSampleValue = 1 << kBitDepth; // 2 ** kBitDepth

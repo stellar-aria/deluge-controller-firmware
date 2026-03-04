@@ -1,0 +1,9 @@
+file(GLOB_RECURSE PLATFORM_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_LIST_DIR}/*.S
+    ${CMAKE_CURRENT_LIST_DIR}/*.c
+    ${CMAKE_CURRENT_LIST_DIR}/*.cpp
+)
+
+add_library(platform OBJECT ${PLATFORM_SOURCES})
+
+target_include_directories(platform PUBLIC ${CMAKE_SOURCE_DIR}/src)

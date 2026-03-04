@@ -1,0 +1,66 @@
+name: ASIO Driver
+
+on:
+  workflow_call:
+    inputs:
+      build-type:
+        description: "CMake build type (Debug | Release | RelWithDebInfo)"
+        default: "Release"
+        type: string
+      retention-days:
+        default: 7
+        type: number
+  workflow_dispatch:
+    inputs:
+      build-type:
+        description: "Build type"
+        type: choice
+        options: [Debug, Release, RelWithDebInfo]
+        default: Release
+
+env:
+  LIBUSBK_VERSION: "3.1.0.0"
+  LIBUSBK_URL: "https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-dev-kit-3.1.0.0.7z"
+
+jobs:
+  build:
+    name: Build ASIO driver (${{ inputs.build-type }})
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache libusbK dev kit
+        id: cache-libusbk
+        uses: actions/cache@v4
+        with:
+          path: C:\libusbK-dev-kit
+          key: libusbk-${{ env.LIBUSBK_VERSION }}
+
+      - name: Download and extract libusbK dev kit
+        if: steps.cache-libusbk.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "$env:LIBUSBK_URL" -OutFile libusbk.7z
+          & "C:\Program Files\7-Zip\7z.exe" x libusbk.7z -o"C:\libusbK-dev-kit" -y
+          Remove-Item libusbk.7z
+
+      - name: Configure
+        working-directory: asio-driver
+        shell: pwsh
+        run: |
+          cmake -B build `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DLIBUSBK_DIR="C:\libusbK-dev-kit"
+
+      - name: Build
+        working-directory: asio-driver
+        shell: pwsh
+        run: cmake --build build --config ${{ inputs.build-type }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: asio-driver-${{ inputs.build-type }}
+          path: |
+            contrib/asio-driver/build/bin/${{ inputs.build-type }}/DelugeASIO.dll
+          retention-days: ${{ inputs.retention-days }}

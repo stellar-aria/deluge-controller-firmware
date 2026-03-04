@@ -1,0 +1,4 @@
+# Build output
+build/
+
+# libusbK SDK (user-specific install path)

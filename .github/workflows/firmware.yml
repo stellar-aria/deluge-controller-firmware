@@ -1,0 +1,57 @@
+name: Firmware
+
+on:
+  workflow_call:
+    inputs:
+      build-type:
+        description: "CMake build type (Debug | Release | RelWithDebInfo)"
+        default: "Release"
+        type: string
+      retention-days:
+        default: 7
+        type: number
+    outputs:
+      artifact-name:
+        value: ${{ jobs.build.outputs.artifact-name }}
+  workflow_dispatch:
+    inputs:
+      build-type:
+        description: "Build type"
+        type: choice
+        options: [Debug, Release, RelWithDebInfo]
+        default: Release
+
+jobs:
+  build:
+    name: Build firmware (${{ inputs.build-type }})
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.set-artifact.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Pull toolchain image
+        run: docker pull ghcr.io/synthstromaudible/dbt-toolchain:v$(cat toolchain/REQUIRED_VERSION)
+
+      - name: Build
+        run: |
+          docker run --rm \
+            --user=$(id --user):$(id --group) \
+            -e DBT_NO_PYTHON_UPGRADE=1 \
+            -v $(pwd):/src \
+            ghcr.io/synthstromaudible/dbt-toolchain:v$(cat toolchain/REQUIRED_VERSION) \
+            build ${{ inputs.build-type }}
+
+      - name: Set artifact name
+        id: set-artifact
+        run: echo "name=firmware-${{ inputs.build-type }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.set-artifact.outputs.name }}
+          path: |
+            build/${{ inputs.build-type }}/deluge_controller.bin
+          retention-days: ${{ inputs.retention-days }}
