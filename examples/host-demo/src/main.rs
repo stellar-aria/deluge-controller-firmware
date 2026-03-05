@@ -15,9 +15,7 @@ const GOLD_KNOB_1_ENC_ID: u8 = 3; // MOD_1 → knob indicator bar 1
 // Knob indicator range: 0 (all off) – 4 (all on).
 const KNOB_MAX: i32 = 4;
 
-// Button LED layout: 9 columns × 4 rows, LED index = x + y*9.
-// Tempo encoder button: tempoEncButtonCoord = {4,1} → LED index 4+1*9=13 → PIC byte 144+13=157.
-// Pressing it toggles the dedicated SYNCED_LED GPIO (not via the PIC LED array).
+// Tempo encoder button: toggling this only controls the SYNCED_LED GPIO, no PIC LED.
 const TEMPO_ENC_BUTTON_ID: u8 = 144 + 4 + 1 * 9; // 157
 
 /// Mutable demo state shared across the main loop.
@@ -333,11 +331,15 @@ fn handle_event(deluge: &mut Deluge, state: &mut DemoState, event: &DelugeEvent)
                 (state.knob_levels[knob] + *delta as i32).clamp(0, KNOB_MAX);
             apply_knob_indicator(deluge, state, knob)?;
         }
+        // Tempo encoder button: only toggles the GPIO synced LED, no PIC LED.
+        DelugeEvent::ButtonPressed { id } if *id == TEMPO_ENC_BUTTON_ID => {
+            state.synced_led = !state.synced_led;
+            deluge.set_synced_led(state.synced_led)?;
+        }
         // Button press: toggle the corresponding indicator LED.
         // Button id is the raw PIC value (144–179); LED index = id - 144.
         // Gold knob presses (modEncoder0 = 162, modEncoder1 = 171) are excluded —
         // their indicator bars are controlled by rotation only.
-        // The tempo encoder button (157) also toggles the GPIO synced LED.
         DelugeEvent::ButtonPressed { id } if *id >= 144 && *id < 180
             && *id != 162  // modEncoder0ButtonCoord {0,2} → 144+18
             && *id != 171  // modEncoder1ButtonCoord {0,3} → 144+27
@@ -346,10 +348,6 @@ fn handle_event(deluge: &mut Deluge, state: &mut DemoState, event: &DelugeEvent)
             let idx = led as usize;
             state.button_leds[idx] = !state.button_leds[idx];
             deluge.set_led(led, state.button_leds[idx])?;
-            if *id == TEMPO_ENC_BUTTON_ID {
-                state.synced_led = !state.synced_led;
-                deluge.set_synced_led(state.synced_led)?;
-            }
         }
         _ => {}
     }

@@ -35,10 +35,13 @@ target_include_directories(controller SYSTEM PUBLIC
 # Link against dependencies
 target_link_libraries(controller PUBLIC
     RZA1
-    RTT
     tinyusb
     drivers
 )
+
+if(ENABLE_RTT)
+    target_link_libraries(controller PUBLIC RTT)
+endif()
 
 # USB Audio mode: 0 = headset (async+implicit FB), 1 = speaker-only (async+explicit FB)
 # Override with: cmake -DUSB_AUDIO_SPEAKER_ONLY=1

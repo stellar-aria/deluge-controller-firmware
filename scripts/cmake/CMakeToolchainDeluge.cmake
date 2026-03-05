@@ -10,7 +10,10 @@ endif()
 IF(DEFINED ENV{DELUGE_FW_ROOT})
   set(FIRMWARE_ROOT $ENV{DELUGE_FW_ROOT})
 else()
-  set(FIRMWARE_ROOT ${CMAKE_SOURCE_DIR})
+  # Derive from the toolchain file location (scripts/cmake/ -> project root)
+  # Using CMAKE_CURRENT_LIST_DIR instead of CMAKE_SOURCE_DIR so this works
+  # correctly during try_compile, which runs the toolchain in a scratch directory.
+  get_filename_component(FIRMWARE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 endif()
 
 file(READ ${FIRMWARE_ROOT}/toolchain/REQUIRED_VERSION TOOLCHAIN_VERSION)

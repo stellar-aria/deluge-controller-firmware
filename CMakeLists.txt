@@ -8,7 +8,13 @@ project(Deluge
     VERSION 1.3.0
 )
 
-option(ENABLE_RTT "Enable SEGGER RTT debug output" ON)
+# Default RTT on for debug builds, off for release
+# Override per-configure with: cmake -DENABLE_RTT=ON/OFF
+if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo)$")
+    set(ENABLE_RTT OFF CACHE BOOL "Enable SEGGER RTT debug output" FORCE)
+else()
+    set(ENABLE_RTT ON CACHE BOOL "Enable SEGGER RTT debug output" FORCE)
+endif()
 
 # Colored output
 set(CMAKE_COLOR_DIAGNOSTICS ON)
@@ -63,10 +69,15 @@ target_link_libraries(deluge PUBLIC
         startup
         platform
         controller
-        -Wl,--whole-archive
-        RTT
-        -Wl,--no-whole-archive
 )
+
+if(ENABLE_RTT)
+    target_link_libraries(deluge PUBLIC
+            -Wl,--whole-archive
+            RTT
+            -Wl,--no-whole-archive
+    )
+endif()
 
 # Project-only compile options (warnings, etc.)
 set(DELUGE_C_STANDARD 23)

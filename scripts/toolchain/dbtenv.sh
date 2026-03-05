@@ -395,7 +395,6 @@ dbtenv_main()
 
     if [ -n "${DBT_DID_UNPACKING}" ]; then
       dbtenv_setup_python
-      pre-commit install --install-hooks
     fi
 }
 
