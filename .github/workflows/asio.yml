@@ -74,5 +74,5 @@ jobs:
         with:
           name: asio-driver-${{ inputs.build-type }}
           path: |
-            contrib/asio-driver/build/bin/${{ inputs.build-type }}/DelugeASIO.dll
+            asio-driver/build/bin/${{ inputs.build-type }}/DelugeASIO.dll
           retention-days: ${{ inputs.retention-days }}
