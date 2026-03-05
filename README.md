@@ -90,6 +90,7 @@ Send these messages to control Deluge outputs.
 | `SET_ALL_PADS` | `0x27` | `[18 × 8 × 3 bytes]` | Bulk update all pad LEDs; bytes are packed row-major RGB triples |
 | `SET_KNOB_INDICATOR` | `0x28` | `[which, b0, b1, b2, b3]` | Set gold knob indicator brightness; `which` selects knob 0 or 1; `b0`–`b3` are per-LED brightness values |
 | `SET_SYNCED_LED` | `0x29` | `[on]` | Control the external-sync (SYNCED) LED (GPIO, not a PIC LED) |
+| `CLEAR_ALL_LEDS` | `0x2A` | _(none)_ | Turn off all 36 indicator LEDs, both knob indicator bars, and the SYNCED LED in one command |
 | `GET_VERSION` | `0x30` | _(none)_ | Request protocol version; Deluge replies with `VERSION` |
 | `PING` | `0x31` | _(none)_ | Request a `PONG` reply (connection health check) |
 
