@@ -20,7 +20,7 @@ on:
 
 env:
   LIBUSBK_VERSION: "3.1.0.0"
-  LIBUSBK_URL: "https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-dev-kit-3.1.0.0.7z"
+  LIBUSBK_URL: "https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-3.1.0.0-bin.7z"
 
 jobs:
   build:
