@@ -40,7 +40,7 @@ jobs:
         if: steps.cache-libusbk.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "$env:LIBUSBK_URL" -OutFile libusbk.7z
+          curl.exe --location --fail --output libusbk.7z "$env:LIBUSBK_URL"
           & "C:\Program Files\7-Zip\7z.exe" x libusbk.7z -o"C:\libusbK-dev-kit" -y
           Remove-Item libusbk.7z
 
