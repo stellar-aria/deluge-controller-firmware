@@ -183,6 +183,16 @@ void usb_audio_task(void) {
 				int32_t* dmaPos = (int32_t*)getTxBufferCurrentPlace();
 				audio_write_pos = advance_write_pos(dmaPos,
 				    AUDIO_WRITE_AHEAD_SAMPLES * NUM_MONO_OUTPUT_CHANNELS, txBuffer, txBufferEnd);
+				// Align to stereo pair boundary: the DMA runs one mono slot at a time so
+				// getTxBufferCurrentPlace() can return an odd (R-channel) offset.  Adding
+				// an even advance to an odd base gives an odd write position which
+				// permanently swaps L/R for the session.  Snap down to the nearest even
+				// offset (one slot of rounding is negligible vs. 256-sample headroom).
+				{
+					int32_t wrOff = (int32_t)(audio_write_pos - txBuffer);
+					wrOff &= ~1;
+					audio_write_pos = txBuffer + wrOff;
+				}
 
 				CDBG_STR("[SPK] streaming started\n");
 				usb_audio_update_speaker_state();
@@ -252,6 +262,12 @@ void usb_audio_task(void) {
 				audio_write_pos = advance_write_pos(dmaPos,
 				    AUDIO_WRITE_AHEAD_SAMPLES * NUM_MONO_OUTPUT_CHANNELS,
 				    txBuffer, txBufEnd);
+				// Re-align to stereo pair boundary after resync (same reason as stream start).
+				{
+					int32_t wrOff = (int32_t)(audio_write_pos - txBuffer);
+					wrOff &= ~1;
+					audio_write_pos = txBuffer + wrOff;
+				}
 				// Rate-limit underrun logging to avoid stalling the main loop.
 				// (RTT is non-blocking now, but still avoid flooding the channel.)
 				static uint32_t underrun_count = 0;
@@ -484,6 +500,12 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
 			int32_t* dmaPos = (int32_t*)getRxBufferCurrentPlace();
 			audio_read_pos = advance_read_pos(dmaPos, -AUDIO_READ_BEHIND_SAMPLES * NUM_MONO_INPUT_CHANNELS, rxBuffer,
 			                                  rxBufferEnd);
+			// Align read position to stereo pair boundary (same L/R swap hazard as write side).
+			{
+				int32_t rdOff = (int32_t)(audio_read_pos - rxBuffer);
+				rdOff &= ~1;
+				audio_read_pos = rxBuffer + rdOff;
+			}
 		}
 	}
 #endif // CFG_TUD_AUDIO_ENABLE_EP_IN
