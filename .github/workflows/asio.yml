@@ -41,8 +41,14 @@ jobs:
         shell: pwsh
         run: |
           curl.exe --location --fail --output libusbk.7z "$env:LIBUSBK_URL"
-          & "C:\Program Files\7-Zip\7z.exe" x libusbk.7z -o"C:\libusbK-dev-kit" -y
+          & "C:\Program Files\7-Zip\7z.exe" x libusbk.7z -o"C:\libusbK-dev-kit-staging" -y
           Remove-Item libusbk.7z
+          # The archive may contain a top-level subdirectory — find the actual SDK root
+          $sdk = Get-ChildItem -Path "C:\libusbK-dev-kit-staging" -Recurse -Filter "libusbk.h" |
+                 Select-Object -First 1 |
+                 ForEach-Object { $_.Directory.Parent.FullName }
+          if (-not $sdk) { Write-Error "libusbk.h not found in extracted archive"; exit 1 }
+          Move-Item -Path $sdk -Destination "C:\libusbK-dev-kit"
 
       - name: Configure
         working-directory: asio-driver
