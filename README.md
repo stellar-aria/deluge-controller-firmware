@@ -127,7 +127,7 @@ Send `SET_ALL_PADS` (`0x27`) with `18 × 8 × 3 = 432` bytes of RGB data. The pa
 | CV outputs | DAC via SPI, 16-bit resolution per channel |
 | Gate outputs | GPIO |
 | Audio | I2S codec (SSI0), 44.1 kHz stereo |
-| USB | Full-speed USB via on-chip RZ/A1L controller (TinyUSB) |
+| USB | High-speed USB via on-chip RZ/A1L controller (TinyUSB) |
 | MIDI | DIN 5-pin IN and OUT |
 
 ## Building
@@ -135,12 +135,19 @@ Send `SET_ALL_PADS` (`0x27`) with `18 × 8 × 3 = 432` bytes of RGB data. The pa
 Requirements: the Deluge Build Tools (`dbt`). On Windows:
 
 ```
-dbt.cmd build debug
-dbt.cmd build release
-dbt.cmd build relwithdebinfo
+dbt.cmd build Debug
+dbt.cmd build Release
+dbt.cmd build RelWithDebInfo
 ```
 
-The resulting firmware binary can be loaded via JTAG/SWD using J-Link or OpenOCD.
+On Linux:
+
+```
+chmod +x ./dbt
+./dbt build Release
+```
+
+The resulting firmware binary under `build/` can be loaded via JTAG/SWD using J-Link or OpenOCD.
 
 ## Debugging
 
