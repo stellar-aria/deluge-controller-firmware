@@ -58,6 +58,7 @@ enum MsgTo {
     SetCv = 0x25,
     #[allow(dead_code)]
     SetGate = 0x26,
+    ClearAllLeds = 0x2A,
     SetAllPads = 0x27,
     SetKnobIndicator = 0x28,
     SetSyncedLed = 0x29,
@@ -348,6 +349,11 @@ impl Deluge {
     /// Set the tempo external-synced GPIO indicator LED.
     pub fn set_synced_led(&mut self, on: bool) -> Result<()> {
         self.send_raw(MsgTo::SetSyncedLed as u8, &[on as u8])
+    }
+
+    /// Turn off all button indicator LEDs, both gold knob indicator bars, and the synced LED.
+    pub fn clear_all_leds(&mut self) -> Result<()> {
+        self.send_raw(MsgTo::ClearAllLeds as u8, &[])
     }
 
     /// Clear all pads.

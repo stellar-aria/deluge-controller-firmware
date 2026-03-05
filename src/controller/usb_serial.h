@@ -101,6 +101,10 @@ extern "C" {
 //   MSG_TO_SET_SYNCED_LED    [on:1]
 //     Controls the external-sync LED on the rear panel.  on: 0=off, 1=on.
 //
+//   MSG_TO_CLEAR_ALL_LEDS    (no payload)
+//     Turns off all 36 button indicator LEDs, both gold knob indicator bars,
+//     and the synced LED in one atomic operation.
+//
 //   MSG_TO_SET_CV            [channel:1][value_hi:1][value_lo:1]
 //     Sets a CV output voltage.  channel: 0–3.
 //     value = (value_hi << 8) | value_lo  →  0–65535 linear across 0–10 V.
@@ -143,6 +147,7 @@ typedef enum {
 	MSG_TO_SET_ALL_PADS = 0x27,
 	MSG_TO_SET_KNOB_INDICATOR = 0x28, // data: [which(0|1), b0, b1, b2, b3]
 	MSG_TO_SET_SYNCED_LED = 0x29,     // data: [on(0|1)]
+	MSG_TO_CLEAR_ALL_LEDS = 0x2A,    // no payload: clears all button LEDs, knob indicators, synced LED
 	MSG_TO_GET_VERSION = 0x30,
 	MSG_TO_PING = 0x31,
 } MessageToDelugeType;

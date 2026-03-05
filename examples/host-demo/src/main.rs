@@ -124,14 +124,7 @@ fn main() -> Result<()> {
     println!("\nCleaning up...");
     deluge.clear_pads()?;
     deluge.clear_display()?;
-    // Turn off all button LEDs
-    for i in 0..36u8 {
-        deluge.set_led(i, false)?;
-    }
-    // Reset knob indicators to zero
-    deluge.set_knob_indicator(0, &[0, 0, 0, 0])?;
-    deluge.set_knob_indicator(1, &[0, 0, 0, 0])?;
-    deluge.set_synced_led(false)?;
+    deluge.clear_all_leds()?;
     println!("Done.");
     Ok(())
 }

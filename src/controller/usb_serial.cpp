@@ -105,6 +105,22 @@ static void process_incoming_message(uint8_t type, const uint8_t* data, uint16_t
 		}
 		break;
 
+	case MSG_TO_CLEAR_ALL_LEDS:
+		// Turn off all 36 button indicator LEDs
+		for (uint8_t i = 0; i < 36; ++i) {
+			hardware_led_set(i, false);
+		}
+		// Clear both gold knob indicator bars
+		{
+			std::array<uint8_t, kNumGoldKnobIndicatorLEDs> off = {0, 0, 0, 0};
+			PIC::setGoldKnobIndicator(0, off);
+			PIC::setGoldKnobIndicator(1, off);
+		}
+		// Clear the synced GPIO LED
+		setOutputState(6, 7, false);
+		PIC::flush();
+		break;
+
 	case MSG_TO_SET_CV:
 		if (data_len >= 3) {
 			uint8_t channel = data[0];

@@ -144,7 +144,6 @@ int32_t controller_main(void) {
 
 	// Drain PIC responses from OLED init
 	// The PIC echoes back: SET_DC_LOW, ENABLE_OLED, SELECT_OLED, SET_DC_HIGH (from init), DESELECT_OLED
-	// Plus there may be many DESELECT_OLED responses (0xF9)
 	CDBG_STR("Draining OLED init responses...\n");
 	delay_ms(10); // Let responses arrive
 	int oled_drain = 0;
@@ -194,10 +193,7 @@ int32_t controller_main(void) {
 	tud_connect();
 
 	// RZA1L hardware quirk: INTENB0/BEMPENB/BRDYENB registers are NOT writable
-	// immediately after USBE=1. The peripheral needs time (and possibly VBUS
-	// processing) before these registers accept writes.  We poll tud_task()
-	// during this window so any early bus-reset / setup packets are handled
-	// in polled mode, then switch to interrupt-driven operation.
+	// immediately after USBE=1, for some reason.
 	// CRITICAL: Do NOT clear INTSTS0 — pending flags must survive so they
 	// trigger an interrupt the moment INTENB0 is armed.
 	for (int i = 0; i < 5; i++) {
