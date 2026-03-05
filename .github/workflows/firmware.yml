@@ -37,6 +37,7 @@ jobs:
 
       - name: Build
         run: |
+          chmod +x dbt
           docker run --rm \
             --user=$(id --user):$(id --group) \
             -e DBT_NO_PYTHON_UPGRADE=1 \

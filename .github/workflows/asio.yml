@@ -20,7 +20,7 @@ on:
 
 env:
   LIBUSBK_VERSION: "3.1.0.0"
-  LIBUSBK_URL: "https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-dev-kit-3.1.0.0.7z"
+  LIBUSBK_URL: "https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-3.1.0.0-bin.7z"
 
 jobs:
   build:
@@ -40,7 +40,7 @@ jobs:
         if: steps.cache-libusbk.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "$env:LIBUSBK_URL" -OutFile libusbk.7z
+          curl.exe --location --fail --output libusbk.7z "$env:LIBUSBK_URL"
           & "C:\Program Files\7-Zip\7z.exe" x libusbk.7z -o"C:\libusbK-dev-kit" -y
           Remove-Item libusbk.7z
 

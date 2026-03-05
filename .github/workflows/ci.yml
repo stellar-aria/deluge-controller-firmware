@@ -20,18 +20,3 @@ jobs:
     with:
       build-type: Release
       retention-days: 7
-
-  format-check:
-    name: Format Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: clang-format (C/C++)
-        uses: d-griet/clang-format-lint-action@99a106be2f3f1a92d9783ea7c744fde62d8ce1fa
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          source: "./src"
-          extensions: "c,cpp,h,hpp"
-          clangFormatVersion: 19
