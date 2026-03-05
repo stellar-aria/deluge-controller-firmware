@@ -20,7 +20,8 @@ on:
 
 env:
   LIBUSBK_VERSION: "3.1.0.0"
-  LIBUSBK_URL: "https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-3.1.0.0-bin.7z"
+  LIBUSBK_BIN_URL: "https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-3.1.0.0-bin.7z"
+  LIBUSBK_SRC_URL: "https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-3.1.0.0-src.7z"
 
 jobs:
   build:
@@ -40,15 +41,20 @@ jobs:
         if: steps.cache-libusbk.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          curl.exe --location --fail --output libusbk.7z "$env:LIBUSBK_URL"
-          & "C:\Program Files\7-Zip\7z.exe" x libusbk.7z -o"C:\libusbK-dev-kit-staging" -y
-          Remove-Item libusbk.7z
-          # The archive may contain a top-level subdirectory — find the actual SDK root
-          $sdk = Get-ChildItem -Path "C:\libusbK-dev-kit-staging" -Recurse -Filter "libusbk.h" |
-                 Select-Object -First 1 |
-                 ForEach-Object { $_.Directory.Parent.FullName }
-          if (-not $sdk) { Write-Error "libusbk.h not found in extracted archive"; exit 1 }
-          Move-Item -Path $sdk -Destination "C:\libusbK-dev-kit"
+          $7z = "C:\Program Files\7-Zip\7z.exe"
+          # Bin archive — provides bin/lib and bin/dll
+          curl.exe --location --fail --output libusbk-bin.7z "$env:LIBUSBK_BIN_URL"
+          & $7z x libusbk-bin.7z -o"C:\libusbk-staging-bin" -y
+          Remove-Item libusbk-bin.7z
+          # Src archive — provides includes/libusbk.h
+          curl.exe --location --fail --output libusbk-src.7z "$env:LIBUSBK_SRC_URL"
+          & $7z x libusbk-src.7z -o"C:\libusbk-staging-src" -y
+          Remove-Item libusbk-src.7z
+          # Both archives have a single versioned top-level folder; merge into SDK root
+          $binRoot = Get-ChildItem "C:\libusbk-staging-bin" | Select-Object -First 1 -ExpandProperty FullName
+          $srcRoot = Get-ChildItem "C:\libusbk-staging-src" | Select-Object -First 1 -ExpandProperty FullName
+          Move-Item "$binRoot" "C:\libusbK-dev-kit"
+          Move-Item "$srcRoot\includes" "C:\libusbK-dev-kit\includes"
 
       - name: Configure
         working-directory: asio-driver
