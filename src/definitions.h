@@ -66,7 +66,11 @@ extern void freezeWithError(char const* errmsg);
 #define RUNTIME_FEATURE_SETTING_MAX_OPTIONS 9
 
 // UART
+// MIDI_TX_BUFFER_SIZE is canonically defined in RZA1/cpu_specific.h so that
+// sio_char.h can use it in inline macros without pulling in definitions.h.
+#ifndef MIDI_TX_BUFFER_SIZE
 #define MIDI_TX_BUFFER_SIZE 1024
+#endif
 
 #define MIDI_RX_BUFFER_SIZE 512
 #define MIDI_RX_TIMING_BUFFER_SIZE 32 // Must be <= MIDI_RX_BUFFER_SIZE, above

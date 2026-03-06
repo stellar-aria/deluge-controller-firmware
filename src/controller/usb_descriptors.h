@@ -148,12 +148,12 @@ enum {
 	        /*_ep*/ _epout, /*_attr*/                                                                                  \
 	        (uint8_t)((uint8_t)TUSB_XFER_ISOCHRONOUS | (uint8_t)TUSB_ISO_EP_ATT_ASYNCHRONOUS                           \
 	                  | (uint8_t)TUSB_ISO_EP_ATT_DATA),                                                                \
-	        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_OUT_16, /*_interval*/ 0x01),                                     \
+        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_OUT_16, /*_interval*/ CFG_TUD_AUDIO_HS_BINTERVAL),               \
 	    TUD_AUDIO20_DESC_CS_AS_ISO_EP(/*_attr*/ AUDIO20_CS_AS_ISO_DATA_EP_ATT_NON_MAX_PACKETS_OK,                      \
 	                                  /*_ctrl*/ AUDIO20_CTRL_NONE,                                                     \
 	                                  /*_lockdelayunit*/ AUDIO20_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_MILLISEC,           \
 	                                  /*_lockdelay*/ 0x0001),                                                          \
-	    TUD_AUDIO20_DESC_STD_AS_ISO_FB_EP(/*_ep*/ _epfb, /*_epsize*/ 4, /*_interval*/ 0x04),                           \
+	    TUD_AUDIO20_DESC_STD_AS_ISO_FB_EP(/*_ep*/ _epfb, /*_epsize*/ 4, /*_interval*/ CFG_TUD_AUDIO_HS_BINTERVAL),    \
 	    /* --- Alternate 2: 24-bit stereo 44.1kHz + feedback EP --- */                                                 \
 	    TUD_AUDIO20_DESC_STD_AS_INT(/*_itfnum*/ (uint8_t)(ITF_NUM_AUDIO_STREAMING_SPK), /*_altset*/ 0x02,              \
 	                                /*_nEPs*/ 0x02, /*_stridx*/ 0x00),                                                 \
@@ -167,12 +167,12 @@ enum {
 	        /*_ep*/ _epout, /*_attr*/                                                                                  \
 	        (uint8_t)((uint8_t)TUSB_XFER_ISOCHRONOUS | (uint8_t)TUSB_ISO_EP_ATT_ASYNCHRONOUS                           \
 	                  | (uint8_t)TUSB_ISO_EP_ATT_DATA),                                                                \
-	        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_OUT_24, /*_interval*/ 0x01),                                     \
+        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_OUT_24, /*_interval*/ CFG_TUD_AUDIO_HS_BINTERVAL),               \
 	    TUD_AUDIO20_DESC_CS_AS_ISO_EP(/*_attr*/ AUDIO20_CS_AS_ISO_DATA_EP_ATT_NON_MAX_PACKETS_OK,                      \
 	                                  /*_ctrl*/ AUDIO20_CTRL_NONE,                                                     \
 	                                  /*_lockdelayunit*/ AUDIO20_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_MILLISEC,           \
 	                                  /*_lockdelay*/ 0x0001),                                                          \
-	    TUD_AUDIO20_DESC_STD_AS_ISO_FB_EP(/*_ep*/ _epfb, /*_epsize*/ 4, /*_interval*/ 0x04)
+	    TUD_AUDIO20_DESC_STD_AS_ISO_FB_EP(/*_ep*/ _epfb, /*_epsize*/ 4, /*_interval*/ CFG_TUD_AUDIO_HS_BINTERVAL)
 
 #else // !USB_AUDIO_SPEAKER_ONLY
 // ============================================================================
@@ -283,7 +283,7 @@ enum {
 	        /*_ep*/ _epout, /*_attr*/                                                                                  \
 	        (uint8_t)((uint8_t)TUSB_XFER_ISOCHRONOUS | (uint8_t)USB_AUDIO_SPK_EP_SYNC                                  \
 	                  | (uint8_t)TUSB_ISO_EP_ATT_DATA),                                                                \
-	        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_OUT_16, /*_interval*/ 0x01),                                     \
+        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_OUT_16, /*_interval*/ CFG_TUD_AUDIO_HS_BINTERVAL),               \
 	    TUD_AUDIO20_DESC_CS_AS_ISO_EP(/*_attr*/ AUDIO20_CS_AS_ISO_DATA_EP_ATT_NON_MAX_PACKETS_OK,                      \
 	                                  /*_ctrl*/ AUDIO20_CTRL_NONE,                                                     \
 	                                  /*_lockdelayunit*/ AUDIO20_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_MILLISEC,           \
@@ -301,7 +301,7 @@ enum {
 	        /*_ep*/ _epout, /*_attr*/                                                                                  \
 	        (uint8_t)((uint8_t)TUSB_XFER_ISOCHRONOUS | (uint8_t)USB_AUDIO_SPK_EP_SYNC                                  \
 	                  | (uint8_t)TUSB_ISO_EP_ATT_DATA),                                                                \
-	        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_OUT_24, /*_interval*/ 0x01),                                     \
+        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_OUT_24, /*_interval*/ CFG_TUD_AUDIO_HS_BINTERVAL),               \
 	    TUD_AUDIO20_DESC_CS_AS_ISO_EP(/*_attr*/ AUDIO20_CS_AS_ISO_DATA_EP_ATT_NON_MAX_PACKETS_OK,                      \
 	                                  /*_ctrl*/ AUDIO20_CTRL_NONE,                                                     \
 	                                  /*_lockdelayunit*/ AUDIO20_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_MILLISEC,           \
@@ -323,7 +323,7 @@ enum {
 	        /*_ep*/ _epin, /*_attr*/                                                                                   \
 	        (uint8_t)((uint8_t)TUSB_XFER_ISOCHRONOUS | (uint8_t)TUSB_ISO_EP_ATT_ASYNCHRONOUS                           \
 	                  | (uint8_t)USB_AUDIO_MIC_EP_USAGE),                                                              \
-	        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_IN_16, /*_interval*/ 0x01),                                      \
+        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_IN_16, /*_interval*/ CFG_TUD_AUDIO_HS_BINTERVAL),                \
 	    TUD_AUDIO20_DESC_CS_AS_ISO_EP(/*_attr*/ AUDIO20_CS_AS_ISO_DATA_EP_ATT_NON_MAX_PACKETS_OK,                      \
 	                                  /*_ctrl*/ AUDIO20_CTRL_NONE,                                                     \
 	                                  /*_lockdelayunit*/ AUDIO20_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_MILLISEC,           \
@@ -341,7 +341,7 @@ enum {
 	        /*_ep*/ _epin, /*_attr*/                                                                                   \
 	        (uint8_t)((uint8_t)TUSB_XFER_ISOCHRONOUS | (uint8_t)TUSB_ISO_EP_ATT_ASYNCHRONOUS                           \
 	                  | (uint8_t)USB_AUDIO_MIC_EP_USAGE),                                                              \
-	        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_IN_24, /*_interval*/ 0x01),                                      \
+        /*_maxEPsize*/ CFG_TUD_AUDIO_FUNC_1_EP_SZ_IN_24, /*_interval*/ CFG_TUD_AUDIO_HS_BINTERVAL),                \
 	    TUD_AUDIO20_DESC_CS_AS_ISO_EP(/*_attr*/ AUDIO20_CS_AS_ISO_DATA_EP_ATT_NON_MAX_PACKETS_OK,                      \
 	                                  /*_ctrl*/ AUDIO20_CTRL_NONE,                                                     \
 	                                  /*_lockdelayunit*/ AUDIO20_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_MILLISEC,           \

@@ -50,8 +50,5 @@ if(USB_AUDIO_SPEAKER_ONLY)
     target_compile_definitions(tinyusb PUBLIC USB_AUDIO_SPEAKER_ONLY=1)
 endif()
 
-# Verbose controller debug logging (boot trace, USB status, audio events).
-# Off by default; enable with: cmake -DCONTROLLER_DEBUG=1
-if(CONTROLLER_DEBUG)
-    target_compile_definitions(controller PRIVATE CONTROLLER_DEBUG=1)
-endif()
+# Verbose controller / USB / audio debug logging is gated on ENABLE_RTT.
+# Enable with: cmake -DENABLE_RTT=ON

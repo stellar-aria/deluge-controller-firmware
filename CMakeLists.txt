@@ -8,12 +8,14 @@ project(Deluge
     VERSION 1.3.0
 )
 
-# Default RTT on for debug builds, off for release
-# Override per-configure with: cmake -DENABLE_RTT=ON/OFF
-if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo)$")
-    set(ENABLE_RTT OFF CACHE BOOL "Enable SEGGER RTT debug output" FORCE)
-else()
-    set(ENABLE_RTT ON CACHE BOOL "Enable SEGGER RTT debug output" FORCE)
+# RTT off by default; enable with: cmake -DENABLE_RTT=ON
+# (The old CMAKE_BUILD_TYPE guard was broken under Ninja Multi-Config where
+# CMAKE_BUILD_TYPE is always empty — reliable under both single- and
+# multi-config generators only with a plain option().)
+option(ENABLE_RTT "Enable SEGGER RTT debug output" OFF)
+if(ENABLE_RTT)
+    # Define globally so all targets (including tinyusb) see it in headers.
+    add_compile_definitions(ENABLE_RTT=1)
 endif()
 
 # Colored output

@@ -52,11 +52,12 @@ static constexpr struct { uint8_t port, pin, mux; } kSSIPins[] = {
 };
 
 int32_t controller_main(void) {
-	// Initialize RTT for debug output
-	// Use NO_BLOCK_SKIP so RTT never stalls the main loop — critical for
-	// real-time audio.  BLOCK_IF_FIFO_FULL caused a death spiral where
-	// underrun log messages blocked the loop, causing more underruns.
+#ifdef ENABLE_RTT
+	// Configure RTT channel 0 for NO_BLOCK_SKIP — RTT must never stall the
+	// main loop.  BLOCK_IF_FIFO_FULL caused a death spiral where underrun log
+	// messages blocked the loop, causing more underruns.
 	SEGGER_RTT_ConfigUpBuffer(0, NULL, NULL, 0, SEGGER_RTT_MODE_NO_BLOCK_SKIP);
+#endif
 	CDBG_STR("\n=== Deluge USB Controller Starting ===\n");
 
 	// Assume OLED is always present in controller mode
@@ -282,6 +283,12 @@ int32_t controller_main(void) {
 		// Process USB tasks (handles non-interrupt USB events)
 		tud_task();
 
+		// Run audio task immediately after tud_task so USB audio data is written
+		// to the SSI TX buffer with minimal latency.  A second call at the bottom
+		// of the loop ensures any data that arrived during the rest of the
+		// iteration is also drained before the next tud_task.
+		usb_audio_task();
+
 		// Scan hardware for events
 		hardware_events_scan();
 
@@ -292,6 +299,12 @@ int32_t controller_main(void) {
 		// Called here (not only inside usb_serial_task) so dirty pairs are sent as soon as the
 		// PIC UART ring buffer has room, even when no USB message arrives this iteration.
 		pad_led_flush_dirty();
+
+		// Immediately restart UART DMA if it completed while pad data was being enqueued.
+		// The SCIF TX interrupt (priority 13) can be delayed by USB ISRs (priority 9), leaving
+		// a brief gap between DMA chunk completion and the next descriptor setup.  Calling
+		// uartFlushIfNotSending() here closes that gap without waiting for the next loop iteration.
+		uartFlushIfNotSending(UART_ITEM_PIC);
 
 		// Process USB again before audio — minimise latency for set_itf responses
 		tud_task();

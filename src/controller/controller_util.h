@@ -10,7 +10,7 @@
 // compiles away to nothing.
 // ---------------------------------------------------------------------------
 
-#ifdef CONTROLLER_DEBUG
+#ifdef ENABLE_RTT
 // Forward-declare the two RTT functions used by the macros so this header
 // can be included from both C and C++ translation units without pulling in
 // the full SEGGER_RTT.h (which has its own extern-C guards).

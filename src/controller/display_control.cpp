@@ -124,6 +124,7 @@ void pad_led_flush_dirty(void) {
 	// Rotate the starting pair each call so that no single pair is perpetually last.
 	static uint8_t start_pair = 0;
 
+#if ENABLE_RTT
 	// ── Diagnostics ─────────────────────────────────────────────────
 	static constexpr uint32_t kDiagInterval = 45; // ~1 s at 43fps gate
 	static uint32_t diag_flush_calls   = 0;
@@ -134,6 +135,7 @@ void pad_led_flush_dirty(void) {
 	// ────────────────────────────────────────────────────────────────
 
 	++diag_flush_calls;
+#endif
 
 	for (uint8_t i = 0; i < 9; i++) {
 		uint8_t pair = (start_pair + i) % 9;
@@ -143,6 +145,7 @@ void pad_led_flush_dirty(void) {
 		}
 
 		int32_t space = uartGetTxBufferSpace(UART_ITEM_PIC);
+#if ENABLE_RTT
 		if ((uint32_t)space < (uint32_t)diag_min_space) {
 			diag_min_space = (uint32_t)space;
 		}
@@ -151,6 +154,7 @@ void pad_led_flush_dirty(void) {
 			diag_skip[pair]++;
 			break;
 		}
+#endif
 
 		uint8_t base_col = pair * 2;
 		std::array<RGB, 16> colours;
@@ -162,20 +166,25 @@ void pad_led_flush_dirty(void) {
 		}
 		PIC::setColourForTwoColumns(pair, colours);
 		pad_col_pair_dirty &= ~(1u << pair);
+#if ENABLE_RTT
 		diag_send[pair]++;
+#endif
 	}
 
+#if ENABLE_RTT
 	if (pad_col_pair_dirty) {
 		diag_leftover++;
 	}
+#endif
 
 	start_pair = (start_pair + 1) % 9;
 	PIC::flush();
 
+	#if ENABLE_RTT
 	// ── Periodic diagnostic dump ─────────────────────────────────────
 	if (diag_flush_calls >= kDiagInterval) {
 		const RGB& tr = pad_led_state[17][7];
-		SEGGER_RTT_printf(0,
+		CDBG_FMT(
 			"[PAD DIAG] flush_calls=%lu leftover=%lu min_uart_space=%lu\r\n"
 			"  pair sends:  %2lu %2lu %2lu %2lu %2lu %2lu %2lu %2lu %2lu\r\n"
 			"  pair skips:  %2lu %2lu %2lu %2lu %2lu %2lu %2lu %2lu %2lu\r\n"
@@ -200,6 +209,7 @@ void pad_led_flush_dirty(void) {
 		diag_min_space    = 1024;
 		for (uint8_t p = 0; p < 9; p++) { diag_send[p] = 0; diag_skip[p] = 0; }
 	}
+#endif
 	// ────────────────────────────────────────────────────────────────
 }
 

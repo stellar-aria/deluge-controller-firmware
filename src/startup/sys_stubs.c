@@ -1,4 +1,6 @@
+#ifdef ENABLE_RTT
 #include "RTT/SEGGER_RTT.h"
+#endif
 #include "definitions.h"
 #include <sys/stat.h>
 
@@ -47,12 +49,14 @@ int _isatty(int file) {
 int _lseek(int file, int ptr, int dir) {
 	return 0;
 }
-// Redirect to RTT for TinyUSB debug output
+// Redirect to RTT for TinyUSB debug output (no-op when RTT is disabled)
 int _write(int file, char* ptr, int len) {
 	(void)file;
+#ifdef ENABLE_RTT
 	if (len > 0) {
 		SEGGER_RTT_Write(0, ptr, len);
 	}
+#endif
 	return len;
 }
 // read nothing

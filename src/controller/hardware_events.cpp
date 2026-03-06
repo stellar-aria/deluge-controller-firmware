@@ -1,10 +1,10 @@
 
 
 #include "hardware_events.h"
+#include "controller_util.h"
 #include "drivers/pic/pic.h"
 
 extern "C" {
-#include "RTT/SEGGER_RTT.h"
 #include "RZA1/cpu_specific.h"
 #include "RZA1/gpio/gpio.h"
 #include "RZA1/mtu/mtu.h"
@@ -91,7 +91,7 @@ static void encoders_read(void) {
 static bool push_event(const HardwareEvent* event) {
 	uint32_t next_head = (queue_head + 1) % EVENT_QUEUE_SIZE;
 	if (next_head == queue_tail) {
-		SEGGER_RTT_WriteString(0, "[EVT] queue overflow — event dropped\n");
+		CDBG_STR("[EVT] queue overflow — event dropped\n");
 		return false;
 	}
 	memcpy(&event_queue[queue_head], event, sizeof(HardwareEvent));

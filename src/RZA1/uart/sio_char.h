@@ -91,7 +91,7 @@ extern char midiTxBuffer[];
         *(((volatile char*)(&midiTxBuffer[0])) + writePos) = charToSend;                                               \
                                                                                                                        \
         uartItems[UART_ITEM_MIDI].txBufferWritePos += 1;                                                               \
-        uartItems[UART_ITEM_MIDI].txBufferWritePos &= (PIC_TX_BUFFER_SIZE - 1);                                        \
+        uartItems[UART_ITEM_MIDI].txBufferWritePos &= (MIDI_TX_BUFFER_SIZE - 1);                                       \
     } while (0)
 
 /* SIO_CHAR_H */

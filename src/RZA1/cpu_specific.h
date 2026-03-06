@@ -49,10 +49,20 @@ enum UartItemType {
 #define UART_ITEM_PIC_PADS       UART_ITEM_PIC
 #define UART_ITEM_PIC_INDICATORS UART_ITEM_PIC
 
-// PIC UART buffer sizes - different here on A1 because on A2 we have 3 of them
-#define PIC_TX_BUFFER_SIZE                                                                                             \
-    1024 // Theoretically I should be able to do just 512, and it almost works, but occasionally the cursor pos won't
-         // update - at the end of an audio clip record
+// UART TX buffer sizes.  Both must be powers of 2 (buffer positions are
+// masked with size−1, not taken modulo).  Keep both definitions here so that
+// sio_char.h — which uses them in macros that run in ISR-context — can always
+// see the correct value without pulling in higher-level headers.
+//
+// PIC buffer: must hold ≥ one full pad-LED flush (9 pairs × 49 B = 441 B)
+// plus headroom for concurrent PIC commands.  At 200 kbaud the ring drains
+// at 20 000 B/s.  Historically 1024 was marginal; 2048 ensures the
+// pad_led_flush_dirty() space guard essentially never fires.
+#define PIC_TX_BUFFER_SIZE  2048
+
+// MIDI buffer: sized for maximum MIDI burst (SysEx etc.).
+// Also defined in definitions.h — guarded there with #ifndef.
+#define MIDI_TX_BUFFER_SIZE 1024
 #define PIC_RX_BUFFER_SIZE 64
 
 #define TIMING_CAPTURE_ITEM_MIDI 0

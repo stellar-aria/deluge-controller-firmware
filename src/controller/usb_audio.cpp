@@ -46,9 +46,11 @@ static volatile uint16_t audio_spk_last_rx_hw_time = 0;
 #define AUDIO_STREAM_TIMEOUT_HW_TICKS 6600
 
 // How far ahead of DMA position to write (in stereo sample pairs).
-// Must be large enough to survive the worst-case main-loop latency.
-// With a 1024-sample TX buffer, 256 pairs ≈ 5.8 ms gives plenty of margin.
-#define AUDIO_WRITE_AHEAD_SAMPLES 256
+// 512 pairs = 1024 mono slots = exactly half the 2048-slot (1024-sample stereo) TX
+// buffer — matching the feedback loop's target so the write pointer starts at the
+// steady-state position immediately, with no convergence window to glitch through.
+// 512 / 44100 ≈ 11.6 ms of headroom before an underrun if the main loop stalls.
+#define AUDIO_WRITE_AHEAD_SAMPLES 512
 
 #if CFG_TUD_AUDIO_ENABLE_EP_IN
 // How far behind DMA position to read (in stereo sample pairs)
@@ -152,6 +154,11 @@ void usb_audio_task(void) {
 
 	// ---- Speaker RX: read from USB and write to SSI TX buffer ----
 	if (audio_spk_alt_setting != 0) {
+		// Snapshot the DMA position once per task invocation.  The DMA moves at
+		// 44100 Hz so it shifts by < 50 slots during the rest of the task — negligible
+		// vs. the 512-pair (1024-slot) write-ahead threshold.
+		int32_t* const dmaPos_snap = (int32_t*)getTxBufferCurrentPlace();
+
 		// Read all available data from TinyUSB FIFO in a loop
 		// At HS each microframe delivers ~28 bytes; we drain whatever is buffered
 		static uint8_t spk_buf[252]; // 252 = 42 stereo frames × 6 bytes — always frame-aligned for 24-bit
@@ -163,9 +170,8 @@ void usb_audio_task(void) {
 		uint16_t bytes_read;
 		while ((bytes_read = tud_audio_n_read(0, spk_buf, max_read)) > 0) {
 			if ((spk_dbg_counter++ % 50000) == 0) {
-				int32_t* dmaPos = (int32_t*)getTxBufferCurrentPlace();
 				int32_t* txBuf = getTxBufferStart();
-				int32_t dmaOff = dmaPos - txBuf;
+				int32_t dmaOff = dmaPos_snap - txBuf;
 				int32_t wrOff = audio_write_pos - txBuf;
 				CDBG_FMT("[SPK] read %u bytes  dma=%d wr=%d\n",
 					bytes_read, (int)dmaOff, (int)wrOff);
@@ -180,8 +186,7 @@ void usb_audio_task(void) {
 
 			if (!was_streaming) {
 				// Reset write position ahead of current DMA position
-				int32_t* dmaPos = (int32_t*)getTxBufferCurrentPlace();
-				audio_write_pos = advance_write_pos(dmaPos,
+				audio_write_pos = advance_write_pos(dmaPos_snap,
 				    AUDIO_WRITE_AHEAD_SAMPLES * NUM_MONO_OUTPUT_CHANNELS, txBuffer, txBufferEnd);
 				// Align to stereo pair boundary: the DMA runs one mono slot at a time so
 				// getTxBufferCurrentPlace() can return an odd (R-channel) offset.  Adding
@@ -222,13 +227,10 @@ void usb_audio_task(void) {
 				int32_t numSamples = bytes_read / 3;
 
 				for (int32_t i = 0; i < numSamples; i++) {
-					int32_t sample = (int32_t)((uint32_t)src[0] | ((uint32_t)src[1] << 8) | ((uint32_t)src[2] << 16));
-					// Sign-extend from 24-bit
-					if (sample & 0x800000) {
-						sample |= (int32_t)0xFF000000;
-					}
-					int32_t val = sample << 8; // MSB-align: bits 8-31
-					*writePos = val;
+					// Re-assemble 3 LE bytes into an MSB-aligned 32-bit word.
+					// Shifting src[2] into bit 24 and casting to int32_t propagates
+					// the sign bit to bit 31 implicitly — no explicit sign-extend branch needed.
+					*writePos = (int32_t)((uint32_t)src[0] << 8 | (uint32_t)src[1] << 16 | (uint32_t)src[2] << 24);
 
 					src += 3;
 					writePos++;
@@ -249,7 +251,7 @@ void usb_audio_task(void) {
 			int32_t* txBuffer  = getTxBufferStart();
 			int32_t* txBufEnd  = getTxBufferEnd();
 			int32_t  bufSize   = txBufEnd - txBuffer;
-			int32_t  dmaOff    = (int32_t*)getTxBufferCurrentPlace() - txBuffer;
+			int32_t  dmaOff    = dmaPos_snap - txBuffer; // use snapshot; negligible drift at 44100 Hz
 			int32_t  wrOff     = audio_write_pos - txBuffer;
 			int32_t  ahead     = (wrOff - dmaOff + bufSize) % bufSize;
 
@@ -258,8 +260,7 @@ void usb_audio_task(void) {
 			// threshold we have (or are about to have) an underrun.
 			const int32_t minAhead = AUDIO_WRITE_AHEAD_SAMPLES * NUM_MONO_OUTPUT_CHANNELS / 2;
 			if (ahead < minAhead) {
-				int32_t* dmaPos = (int32_t*)getTxBufferCurrentPlace();
-				audio_write_pos = advance_write_pos(dmaPos,
+				audio_write_pos = advance_write_pos(dmaPos_snap,
 				    AUDIO_WRITE_AHEAD_SAMPLES * NUM_MONO_OUTPUT_CHANNELS,
 				    txBuffer, txBufEnd);
 				// Re-align to stereo pair boundary after resync (same reason as stream start).
@@ -289,7 +290,7 @@ void usb_audio_task(void) {
 			int32_t* txBuffer  = getTxBufferStart();
 			int32_t* txBufEnd  = getTxBufferEnd();
 			int32_t  bufSize   = txBufEnd - txBuffer;
-			int32_t  dmaOff    = (int32_t*)getTxBufferCurrentPlace() - txBuffer;
+			int32_t  dmaOff    = dmaPos_snap - txBuffer; // use snapshot; negligible drift at 44100 Hz
 			int32_t  wrOff     = audio_write_pos - txBuffer;
 			int32_t  ahead     = (wrOff - dmaOff + bufSize) % bufSize;
 
