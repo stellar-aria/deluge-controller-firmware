@@ -5,6 +5,7 @@
 extern "C" {
 #include "RTT/SEGGER_RTT.h"
 #include "RZA1/gpio/gpio.h"
+#include "RZA1/mtu/mtu.h"
 #include "drivers/oled/oled_low_level.h"
 #include "RZA1/uart/sio_char.h"
 #include "definitions.h"
@@ -98,22 +99,56 @@ void pad_led_flush_dirty(void) {
 		return;
 	}
 
+	// UART throughput gate: the PIC UART runs at 200kbaud (10 bits/byte = 20,000 bytes/sec).
+	// A full 9-pair update is 441 bytes, taking 22.05ms to transmit.  The host sends at 60fps
+	// which would require 26,460 bytes/sec — 32% more than the UART can drain.  Without rate
+	// limiting the TX ring buffer fills to capacity over ~150ms and no pairs can ever be sent.
+	//
+	// Gate sends to at most ~43fps (23ms minimum interval ≈ 12,000 fast-timer ticks at 520kHz).
+	// 441 bytes × 43fps = 18,963 bytes/sec < 20,000 bytes/sec — sustainable.
+	// The dirty-state accumulates between sends so the pads always show the latest colour.
+	static constexpr uint16_t kFlushGateTicks = 12000u; // ~23ms at 520kHz
+	static uint16_t last_flush_tick = 0;
+	uint16_t now = *TCNT[TIMER_SYSTEM_FAST];
+	if ((uint16_t)(now - last_flush_tick) < kFlushGateTicks) {
+		return;
+	}
+	last_flush_tick = now;
+
 	// Each column-pair costs 1 command byte + 16 * 3 RGB bytes = 49 bytes in the PIC UART TX ring
 	// buffer. Guard against overflowing the 1024-byte ring (which would silently corrupt queued
-	// commands) by stopping early if there is not enough space. Dirty bits are preserved so the
-	// remaining pairs are sent on the next call (which is triggered from the main loop every
-	// iteration, not just when USB data arrives).
+	// commands) by stopping early if there is not enough space.
 	static constexpr int32_t kBytesPerPair = 1 + 16 * 3; // 49
 	static constexpr int32_t kPairGuard    = kBytesPerPair + 8;
 
-	// Send only the column pairs that changed since last flush
-	for (uint8_t pair = 0; pair < 9; pair++) {
+	// Rotate the starting pair each call so that no single pair is perpetually last.
+	static uint8_t start_pair = 0;
+
+	// ── Diagnostics ─────────────────────────────────────────────────
+	static constexpr uint32_t kDiagInterval = 45; // ~1 s at 43fps gate
+	static uint32_t diag_flush_calls   = 0;
+	static uint32_t diag_send[9]       = {};
+	static uint32_t diag_skip[9]       = {};
+	static uint32_t diag_leftover      = 0;
+	static uint32_t diag_min_space     = 1024;
+	// ────────────────────────────────────────────────────────────────
+
+	++diag_flush_calls;
+
+	for (uint8_t i = 0; i < 9; i++) {
+		uint8_t pair = (start_pair + i) % 9;
+
 		if (!(pad_col_pair_dirty & (1u << pair))) {
 			continue;
 		}
 
-		// Stop if PIC TX buffer is too full to safely fit another pair
-		if (uartGetTxBufferSpace(UART_ITEM_PIC) < kPairGuard) {
+		int32_t space = uartGetTxBufferSpace(UART_ITEM_PIC);
+		if ((uint32_t)space < (uint32_t)diag_min_space) {
+			diag_min_space = (uint32_t)space;
+		}
+
+		if (space < kPairGuard) {
+			diag_skip[pair]++;
 			break;
 		}
 
@@ -126,10 +161,46 @@ void pad_led_flush_dirty(void) {
 			colours[8 + row_idx] = pad_led_state[base_col + 1][row_idx];
 		}
 		PIC::setColourForTwoColumns(pair, colours);
-		pad_col_pair_dirty &= ~(1u << pair); // clear only this pair's dirty bit
+		pad_col_pair_dirty &= ~(1u << pair);
+		diag_send[pair]++;
 	}
 
+	if (pad_col_pair_dirty) {
+		diag_leftover++;
+	}
+
+	start_pair = (start_pair + 1) % 9;
 	PIC::flush();
+
+	// ── Periodic diagnostic dump ─────────────────────────────────────
+	if (diag_flush_calls >= kDiagInterval) {
+		const RGB& tr = pad_led_state[17][7];
+		SEGGER_RTT_printf(0,
+			"[PAD DIAG] flush_calls=%lu leftover=%lu min_uart_space=%lu\r\n"
+			"  pair sends:  %2lu %2lu %2lu %2lu %2lu %2lu %2lu %2lu %2lu\r\n"
+			"  pair skips:  %2lu %2lu %2lu %2lu %2lu %2lu %2lu %2lu %2lu\r\n"
+			"  top-right (col17,row7): R=%u G=%u B=%u\r\n",
+			(unsigned long)diag_flush_calls,
+			(unsigned long)diag_leftover,
+			(unsigned long)diag_min_space,
+			(unsigned long)diag_send[0], (unsigned long)diag_send[1],
+			(unsigned long)diag_send[2], (unsigned long)diag_send[3],
+			(unsigned long)diag_send[4], (unsigned long)diag_send[5],
+			(unsigned long)diag_send[6], (unsigned long)diag_send[7],
+			(unsigned long)diag_send[8],
+			(unsigned long)diag_skip[0], (unsigned long)diag_skip[1],
+			(unsigned long)diag_skip[2], (unsigned long)diag_skip[3],
+			(unsigned long)diag_skip[4], (unsigned long)diag_skip[5],
+			(unsigned long)diag_skip[6], (unsigned long)diag_skip[7],
+			(unsigned long)diag_skip[8],
+			(unsigned)tr.r, (unsigned)tr.g, (unsigned)tr.b);
+
+		diag_flush_calls  = 0;
+		diag_leftover     = 0;
+		diag_min_space    = 1024;
+		for (uint8_t p = 0; p < 9; p++) { diag_send[p] = 0; diag_skip[p] = 0; }
+	}
+	// ────────────────────────────────────────────────────────────────
 }
 
 void pad_led_set_all(const uint8_t* data, uint16_t len) {

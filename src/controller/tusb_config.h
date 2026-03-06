@@ -37,7 +37,7 @@ extern "C" {
 
 // Debug level (0 = no debug, 1 = errors only, 2 = warnings, 3 = verbose)
 #ifndef CFG_TUSB_DEBUG
-#define CFG_TUSB_DEBUG 0
+#define CFG_TUSB_DEBUG 3
 #endif
 
 // Route TinyUSB debug output to Segger RTT channel 0
@@ -66,7 +66,7 @@ static inline int rtt_printf(const char* format, ...) {
 #define BOARD_TUD_RHPORT 0
 #endif
 
-// RHPort max operational speed - High-Speed for UAC2 bandwidth
+// RHPort max operational speed
 #ifndef BOARD_TUD_MAX_SPEED
 #define BOARD_TUD_MAX_SPEED OPT_MODE_HIGH_SPEED
 #endif
@@ -105,11 +105,19 @@ static inline int rtt_printf(const char* format, ...) {
 #define CFG_TUD_VENDOR 0
 
 // CDC FIFO size of TX and RX
-#define CFG_TUD_CDC_RX_BUFSIZE 512
+// RX must be large enough that _prep_out_transaction (which requires
+// remaining >= EP_BUFSIZE=512) can always submit the next OUT transfer
+// even when previously received data hasn't been consumed yet.
+// The host-demo sends ~1200 bytes/frame, so 2048 provides safe headroom.
+#define CFG_TUD_CDC_RX_BUFSIZE 2048
 #define CFG_TUD_CDC_TX_BUFSIZE 512
 
-// CDC Endpoint transfer buffer size (512 bytes for High-Speed bulk)
+// CDC Endpoint transfer buffer size: 512 for HS bulk, 64 for FS bulk
+#if BOARD_TUD_MAX_SPEED == OPT_MODE_HIGH_SPEED
 #define CFG_TUD_CDC_EP_BUFSIZE 512
+#else
+#define CFG_TUD_CDC_EP_BUFSIZE 64
+#endif
 
 // MIDI FIFO size of TX and RX
 #define CFG_TUD_MIDI_RX_BUFSIZE 512

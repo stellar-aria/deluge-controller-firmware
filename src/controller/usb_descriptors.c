@@ -91,8 +91,8 @@ uint8_t const desc_configuration[] = {
     8, TUSB_DESC_INTERFACE_ASSOCIATION, ITF_NUM_MIDI, 2, TUSB_CLASS_AUDIO, AUDIO_SUBCLASS_MIDI_STREAMING,
     AUDIO_FUNC_PROTOCOL_CODE_UNDEF, 0,
 
-    // MIDI Interface - 512 bytes for High-Speed BULK
-    TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI, 8, EPNUM_MIDI_OUT, EPNUM_MIDI_IN, 512),
+    // MIDI Interface - max packet: 512 for HS bulk, 64 for FS bulk
+    TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI, 8, EPNUM_MIDI_OUT, EPNUM_MIDI_IN, CFG_TUD_CDC_EP_BUFSIZE),
 };
 
 // Compile-time check: descriptor array size must match computed total length

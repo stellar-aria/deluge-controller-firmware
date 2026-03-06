@@ -22,17 +22,14 @@ extern "C" {
 #include "definitions.h"
 #include "drivers/ssi/ssi.h"
 #include "drivers/uart/uart.h"
-#include "portable/renesas/rusb1/dcd_rusb1.h"
 #include "util/cfunctions.h"
 
 // TinyUSB interrupt handler (from tinyusb)
 void dcd_int_handler(uint8_t rhport);
 
-// USB interrupt handler wrapper — keep minimal for HS timing
-static volatile uint32_t usb_irq_count = 0;
+// USB interrupt handler wrapper
 void usb_interrupt_handler(uint32_t int_sense) {
 	(void)int_sense;
-	usb_irq_count = usb_irq_count + 1;
 	dcd_int_handler(0); // rhport 0
 }
 
@@ -305,16 +302,7 @@ int32_t controller_main(void) {
 		// Handle USB MIDI I/O
 		usb_midi_task();
 
-		// Periodic USB status dump (debug builds only)
-#ifdef CONTROLLER_DEBUG
-		{
-			static uint32_t dbg_counter = 0;
-			if ((dbg_counter++ % 500000) == 0) {
-				SEGGER_RTT_printf(0, "[USB] IRQs=%lu INTSTS0=0x%04X SYSCFG0=0x%04X mounted=%d\n",
-				                  usb_irq_count, USB200.INTSTS0, USB200.SYSCFG0, tud_mounted());
-			}
-		}
-#endif
+
 	}
 
 	return 0;

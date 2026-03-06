@@ -165,11 +165,21 @@ impl Deluge {
         buf.push((length >> 8) as u8);
         buf.push(msg_type);
         buf.extend_from_slice(data);
-        // write_all can return ERROR_SEM_TIMEOUT (121) on Windows CDC — retry on timeout
+        // Retry on transient stalls (Windows ERROR_SEM_TIMEOUT=121, Linux EAGAIN/WouldBlock).
+        // On Linux, the kernel CDC ACM TX buffer can be momentarily full when USB audio
+        // isochronous transfers are competing for bandwidth; WouldBlock must be retried
+        // rather than treated as an unrecoverable error.
         let mut written = 0usize;
         let deadline = Instant::now() + Duration::from_secs(2);
         while written < buf.len() {
             match self.port.write(&buf[written..]) {
+                Ok(0) => {
+                    // Zero-byte write with no error — treat as a transient stall
+                    if Instant::now() >= deadline {
+                        anyhow::bail!("Write stalled (0 bytes) sending to Deluge");
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
                 Ok(n) => written += n,
                 Err(e) if Self::is_timeout(&e) => {
                     if Instant::now() >= deadline {
@@ -184,9 +194,16 @@ impl Deluge {
         Ok(())
     }
 
-    /// Check if an I/O error is a timeout (handles Windows ERROR_SEM_TIMEOUT = 121).
+    /// Check if an I/O error is a transient write stall that should be retried.
+    /// Handles:
+    ///  - `TimedOut`          – serialport timeout on Windows
+    ///  - `WouldBlock`        – Linux EAGAIN when the kernel CDC ACM TX buffer is
+    ///                          momentarily full (e.g. while USB isochronous audio
+    ///                          transfers are consuming bandwidth)
+    ///  - raw OS error 121   – ERROR_SEM_TIMEOUT on Windows
     fn is_timeout(e: &std::io::Error) -> bool {
         e.kind() == std::io::ErrorKind::TimedOut
+            || e.kind() == std::io::ErrorKind::WouldBlock
             || e.raw_os_error() == Some(121) // ERROR_SEM_TIMEOUT on Windows
     }
 

@@ -120,10 +120,11 @@ void hardware_events_scan(void) {
 	//   value < 144  (= kDisplayHeight*2*9)  : pad   — SINGLE byte, press/release
 	//                                           determined by preceding NEXT_PAD_OFF (252)
 	//   144 <= value < 180                   : button — SINGLE byte, same press/release logic
-	//   180 <= value (< 252)                 : encoder — TWO bytes: cmd + signed delta
+	//   180 <= value < 248                   : encoder — TWO bytes: cmd + signed delta
+	//   248 / 249                            : OLED select / deselect handshake (skip if not waiting)
+	//   250 / 251 / 253 / 255                : undefined — skip
 	//   252  NEXT_PAD_OFF                    : prefix — next pad/button is a release
 	//   254  NO_PRESSES_HAPPENING            : no-op
-	//   248/249 OLED select/deselect         : OLED handshake
 
 	static constexpr uint8_t kIsPadMax = 8 * 2 * 9; // 144  — kDisplayHeight * 2 * 9
 
@@ -203,7 +204,18 @@ void hardware_events_scan(void) {
 			next_is_off = false;
 		}
 		else {
-			// Encoder (>= 180) — followed by a signed delta byte
+			// Encoder (180–247) — followed by a signed delta byte.
+			//
+			// Bytes in the range 248–255 are reserved or OLED handshake codes
+			// (248 = OLED select, 249 = OLED deselect, 252 = PAD_OFF (handled
+			// above), 254 = NO_PRESSES (handled above)).  The OLED-handshake
+			// check near the top of this loop only fires when oledWaitingForMessage
+			// is active; stray 248/249 bytes at other times would otherwise fall
+			// through here and be misinterpreted as encoder messages with IDs 68
+			// and 69 (and similarly 250–255 → IDs 70–75).  Skip them explicitly.
+			if (value >= 248) {
+				continue;
+			}
 			char next_char;
 			if (uartGetChar(UART_ITEM_PIC, &next_char) == 0) {
 				// Delta byte not yet in buffer — park and retry next call

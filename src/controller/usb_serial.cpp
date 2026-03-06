@@ -11,8 +11,9 @@ extern "C" {
 #include "RZA1/gpio/gpio.h"
 }
 
-// Message buffer for receiving
-#define RX_BUFFER_SIZE 1024
+// Message buffer for receiving — must be larger than the biggest single message
+// (UpdateDisplay: 2 + 769 = 771 bytes) with headroom for back-to-back arrivals.
+#define RX_BUFFER_SIZE 2048
 static uint8_t rx_buffer[RX_BUFFER_SIZE];
 static uint32_t rx_buffer_pos = 0;
 
@@ -42,8 +43,10 @@ static void send_message(uint8_t type, const uint8_t* data, uint16_t data_len) {
 	}
 
 	// Send via TinyUSB CDC
-	tud_cdc_write(tx_buffer, 3 + data_len);
-	tud_cdc_write_flush();
+	uint32_t written = tud_cdc_write(tx_buffer, 3 + data_len);
+	uint32_t flushed = tud_cdc_write_flush();
+	(void)written;
+	(void)flushed;
 }
 
 static void process_incoming_message(uint8_t type, const uint8_t* data, uint16_t data_len) {
@@ -201,15 +204,13 @@ void usb_serial_task(void) {
 		}
 	}
 
-	// Read available data
-	uint32_t available = tud_cdc_available();
-	if (available == 0) {
-		return;
-	}
-
-	// Read into buffer
-	uint32_t space = RX_BUFFER_SIZE - rx_buffer_pos;
-	if (space > 0) {
+	// Read available data.  Always call tud_cdc_read even when
+	// available==0 so that its internal _prep_out_transaction() retries
+	// arming the bulk-OUT pipe (pipe 3) after the application drains the
+	// FIFO.  Without this the pipe can stay NAK'd permanently.
+	{
+		uint32_t available = tud_cdc_available();
+		uint32_t space = RX_BUFFER_SIZE - rx_buffer_pos;
 		uint32_t to_read = (available < space) ? available : space;
 		uint32_t read = tud_cdc_read(&rx_buffer[rx_buffer_pos], to_read);
 		rx_buffer_pos += read;
@@ -218,6 +219,16 @@ void usb_serial_task(void) {
 	// Process complete messages
 	while (rx_buffer_pos >= 3) { // Minimum: 2-byte length + 1-byte type
 		uint16_t msg_len = rx_buffer[0] | (rx_buffer[1] << 8);
+
+		// Sanity-check: msg_len must be at least 1 (the type byte) and must not
+		// exceed the buffer.  A zero or oversized msg_len indicates stream
+		// misalignment (e.g. stale bytes after reconnect).  Discard the entire
+		// buffer to resynchronise.
+		if (msg_len == 0 || msg_len > RX_BUFFER_SIZE - 2) {
+			rx_buffer_pos = 0;
+			break;
+		}
+
 		uint16_t total_len = 2 + msg_len; // length field + message
 
 		if (rx_buffer_pos >= total_len) {
@@ -242,6 +253,14 @@ void usb_serial_task(void) {
 			break;
 		}
 	}
+	// Ensure any bytes queued in the CDC TX FIFO this iteration get flushed to the
+	// USB endpoint.  send_message() calls tud_cdc_write_flush() after each write,
+	// but if the endpoint was busy at that moment the flush silently returns 0 and
+	// the bytes stay in the FIFO.  The CDC TX-complete callback is supposed to re-
+	// flush, but races can prevent it.  Calling flush here at the end of every task
+	// iteration guarantees pending bytes go out on the very next free endpoint cycle.
+	tud_cdc_write_flush();
+
 	// pad_led_flush_dirty() is called from the main loop on every iteration so that
 	// remaining dirty pairs drain as soon as UART buffer space opens up, regardless
 	// of whether any USB data arrived this call.
@@ -300,11 +319,13 @@ extern "C" {
 
 // Invoked when device is mounted
 void tud_mount_cb(void) {
+	rx_buffer_pos = 0; // clear stale bytes from any previous session
 	CDBG_STR("*** USB MOUNTED ***\n");
 }
 
 // Invoked when device is unmounted
 void tud_umount_cb(void) {
+	rx_buffer_pos = 0; // discard partial messages
 	CDBG_STR("*** USB UNMOUNTED ***\n");
 }
 
