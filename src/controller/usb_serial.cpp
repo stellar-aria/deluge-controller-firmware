@@ -140,6 +140,16 @@ static void process_incoming_message(uint8_t type, const uint8_t* data, uint16_t
 		}
 		break;
 
+	case MSG_TO_SET_BRIGHTNESS:
+		if (data_len >= 1) {
+			// level 0 (dimmest) → interval 25; level 25 (brightest) → interval 0
+			uint8_t level = data[0];
+			if (level > 25) level = 25;
+			PIC::setDimmerInterval(25 - level);
+			PIC::flush();
+		}
+		break;
+
 	case MSG_TO_GET_VERSION:
 		usb_serial_send_version();
 		break;

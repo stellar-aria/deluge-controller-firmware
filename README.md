@@ -91,6 +91,7 @@ Send these messages to control Deluge outputs.
 | `SET_KNOB_INDICATOR` | `0x28` | `[which, b0, b1, b2, b3]` | Set gold knob indicator brightness; `which` selects knob 0 or 1; `b0`–`b3` are per-LED brightness values |
 | `SET_SYNCED_LED` | `0x29` | `[on]` | Control the external-sync (SYNCED) LED (GPIO, not a PIC LED) |
 | `CLEAR_ALL_LEDS` | `0x2A` | _(none)_ | Turn off all 36 indicator LEDs, both knob indicator bars, and the SYNCED LED in one command |
+| `SET_BRIGHTNESS` | `0x2B` | `[level]` | Set display brightness; `level` 0–25 where 0 is dimmest and 25 is brightest |
 | `GET_VERSION` | `0x30` | _(none)_ | Request protocol version; Deluge replies with `VERSION` |
 | `PING` | `0x31` | _(none)_ | Request a `PONG` reply (connection health check) |
 
@@ -102,8 +103,8 @@ Send these messages to control Deluge outputs.
 // SET_PAD_RGB: col=2, row=3, r=255, g=0, b=0
 // payload length = 1 (type) + 5 (data) = 6
 05 00  22  02 03 FF 00 00
-│──┘  │   └──────────────── data: col=2 row=3 r=255 g=0 b=0
-│     └── type: 0x22 (SET_PAD_RGB)
+│──┘   │   └──────────────── data: col=2 row=3 r=255 g=0 b=0
+│      └── type: 0x22 (SET_PAD_RGB)
 └── length: 6 (little-endian)
 ```
 
@@ -127,7 +128,7 @@ Send `SET_ALL_PADS` (`0x27`) with `18 × 8 × 3 = 432` bytes of RGB data. The pa
 | CV outputs | DAC via SPI, 16-bit resolution per channel |
 | Gate outputs | GPIO |
 | Audio | I2S codec (SSI0), 44.1 kHz stereo |
-| USB | High-speed USB via on-chip RZ/A1L controller (TinyUSB) |
+| USB | Full-speed USB via on-chip RZ/A1L controller (TinyUSB) |
 | MIDI | DIN 5-pin IN and OUT |
 
 ## Building

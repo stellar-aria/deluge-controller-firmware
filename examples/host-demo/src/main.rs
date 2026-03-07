@@ -15,6 +15,12 @@ const GOLD_KNOB_1_ENC_ID: u8 = 3; // MOD_1 → knob indicator bar 1
 // Knob indicator range: 0 (all off) – 4 (all on).
 const KNOB_MAX: i32 = 4;
 
+// Select encoder ID.
+const SELECT_ENC_ID: u8 = 5;
+
+// Brightness range: 0 (dimmest) – 25 (brightest).
+const BRIGHTNESS_MAX: i32 = 25;
+
 // Tempo encoder button: toggling this only controls the SYNCED_LED GPIO, no PIC LED.
 const TEMPO_ENC_BUTTON_ID: u8 = 144 + 4 + 1 * 9; // 157
 
@@ -26,6 +32,8 @@ struct DemoState {
     button_leds: [bool; 36],
     /// Toggle state of the tempo external-synced GPIO LED.
     synced_led: bool,
+    /// Current brightness level (0 = dimmest, 25 = brightest).
+    brightness: i32,
 }
 
 #[derive(Parser)]
@@ -90,13 +98,16 @@ fn main() -> Result<()> {
         knob_levels: [KNOB_MAX / 2; 2],
         button_leds: [false; 36],
         synced_led: false,
+        brightness: BRIGHTNESS_MAX,
     };
     apply_knob_indicator(&mut deluge, &state, 0)?;
     apply_knob_indicator(&mut deluge, &state, 1)?;
+    deluge.set_brightness(state.brightness as u8)?;
 
     println!("\nRunning demo (Ctrl-C to exit)...");
     println!("  - Pads: rainbow gradient that scrolls over time");
     println!("  - OLED: bouncing ball + frame counter");
+    println!("  - SELECT encoder: adjust brightness (0–25)");
     println!("  - Input events printed to console\n");
 
     while running.load(Ordering::SeqCst) {
@@ -314,15 +325,23 @@ fn drain_events(deluge: &mut Deluge, state: &mut DemoState) -> Result<()> {
 fn handle_event(deluge: &mut Deluge, state: &mut DemoState, event: &DelugeEvent) -> Result<()> {
     match event {
         // Gold encoder turns: adjust the corresponding 4-LED indicator bar.
+        // SELECT encoder turn: adjust brightness.
         DelugeEvent::EncoderRotated { id, delta } => {
-            let knob = match *id {
-                x if x == GOLD_KNOB_0_ENC_ID => 0usize,
-                x if x == GOLD_KNOB_1_ENC_ID => 1usize,
-                _ => return Ok(()), // other encoders have no indicator bar
-            };
-            state.knob_levels[knob] =
-                (state.knob_levels[knob] + *delta as i32).clamp(0, KNOB_MAX);
-            apply_knob_indicator(deluge, state, knob)?;
+            match *id {
+                x if x == GOLD_KNOB_0_ENC_ID || x == GOLD_KNOB_1_ENC_ID => {
+                    let knob = if *id == GOLD_KNOB_0_ENC_ID { 0usize } else { 1usize };
+                    state.knob_levels[knob] =
+                        (state.knob_levels[knob] + *delta as i32).clamp(0, KNOB_MAX);
+                    apply_knob_indicator(deluge, state, knob)?;
+                }
+                x if x == SELECT_ENC_ID => {
+                    state.brightness =
+                        (state.brightness + *delta as i32).clamp(0, BRIGHTNESS_MAX);
+                    deluge.set_brightness(state.brightness as u8)?;
+                    println!("  [brightness] {}", state.brightness);
+                }
+                _ => {}
+            }
         }
         // Tempo encoder button: only toggles the GPIO synced LED, no PIC LED.
         DelugeEvent::ButtonPressed { id } if *id == TEMPO_ENC_BUTTON_ID => {

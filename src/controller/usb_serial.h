@@ -112,6 +112,9 @@ extern "C" {
 //   MSG_TO_SET_GATE          [channel:1][on:1]
 //     Sets a gate output.  channel: 0–3.  on: 0=off, 1=on (+5 V).
 //
+//   MSG_TO_SET_BRIGHTNESS    [level:1]
+//     Sets the pad/LED brightness.  level: 0 (dimmest) – 25 (brightest).
+//
 //   MSG_TO_GET_VERSION       (no payload)  →  triggers MSG_FROM_VERSION
 //
 //   MSG_TO_PING              (no payload)  →  triggers MSG_FROM_PONG
@@ -148,6 +151,7 @@ typedef enum {
 	MSG_TO_SET_KNOB_INDICATOR = 0x28, // data: [which(0|1), b0, b1, b2, b3]
 	MSG_TO_SET_SYNCED_LED = 0x29,     // data: [on(0|1)]
 	MSG_TO_CLEAR_ALL_LEDS = 0x2A,    // no payload: clears all button LEDs, knob indicators, synced LED
+	MSG_TO_SET_BRIGHTNESS = 0x2B,    // data: [level(0–25)]  0=dimmest, 25=brightest
 	MSG_TO_GET_VERSION = 0x30,
 	MSG_TO_PING = 0x31,
 } MessageToDelugeType;
