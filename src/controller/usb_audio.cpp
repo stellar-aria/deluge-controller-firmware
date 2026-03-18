@@ -39,6 +39,11 @@ static int32_t* audio_read_pos = NULL;
 // Flag to defer TX buffer dither fill from ISR to main loop
 static volatile bool audio_needs_dither_fill = false;
 
+// Cached jack-detect state for change detection in usb_audio_task()
+static bool prev_headphone_plugged = false;
+static bool prev_line_out_plugged_L = false;
+static bool prev_line_out_plugged_R = false;
+
 // Hardware-timer snapshot of last audio RX (TIMER_SYSTEM_SLOW, 33kHz)
 static volatile uint16_t audio_spk_last_rx_hw_time = 0;
 
@@ -72,9 +77,12 @@ static inline int32_t get_dither_noise(void) {
 	if (bit) {
 		dither_lfsr ^= 0xB400u; // Taps at positions 16,14,13,11
 	}
-	// Return tiny noise value in the lowest bits of the 24-bit range
-	// This is inaudible but prevents the codec from entering auto-mute
-	return (int32_t)(dither_lfsr & 0x1F) - 0x10; // Range: -16 to +15
+	// Return tiny noise in bits 8-12 of the 32-bit SSI word.
+	// The SSI with DWL=24, PDTA=0 puts 24-bit audio data in bits [31:8] of SSIFTDR.
+	// Values in bits [7:0] are zero-padding and are invisible to the codec; shifting
+	// left by 8 ensures both positive and negative dither land in the data range.
+	// ±16 × 256 = ±4096 = ±16 LSBs of 24-bit audio ≈ −114 dBFS — completely inaudible.
+	return ((int32_t)(dither_lfsr & 0x1F) - 0x10) << 8; // ±16 LSBs of 24-bit audio
 }
 
 // Helper to advance write position with wrap-around
@@ -135,6 +143,19 @@ void usb_audio_task(void) {
 		int32_t* txBufferEnd = getTxBufferEnd();
 		for (int32_t* p = txBuffer; p < txBufferEnd; p++) {
 			*p = get_dither_noise();
+		}
+	}
+
+	// Poll jack-detect pins and update speaker/output routing on any change
+	{
+		bool hp  = readInput(HEADPHONE_DETECT.port, HEADPHONE_DETECT.pin) != 0;
+		bool loL = readInput(LINE_OUT_DETECT_L.port, LINE_OUT_DETECT_L.pin) != 0;
+		bool loR = readInput(LINE_OUT_DETECT_R.port, LINE_OUT_DETECT_R.pin) != 0;
+		if (hp != prev_headphone_plugged || loL != prev_line_out_plugged_L || loR != prev_line_out_plugged_R) {
+			prev_headphone_plugged  = hp;
+			prev_line_out_plugged_L = loL;
+			prev_line_out_plugged_R = loR;
+			usb_audio_update_speaker_state();
 		}
 	}
 
@@ -401,18 +422,20 @@ void usb_audio_update_speaker_state(void) {
 	bool lineOutPluggedInL = readInput(LINE_OUT_DETECT_L.port, LINE_OUT_DETECT_L.pin) != 0;
 	bool lineOutPluggedInR = readInput(LINE_OUT_DETECT_R.port, LINE_OUT_DETECT_R.pin) != 0;
 
-	// Enable speaker only if streaming AND no headphones/line out
+	// Enable speaker if the audio interface is open (alt != 0) and no headphones/line out.
+	// Using alt_setting rather than streaming_active pre-warms the amplifier during the
+	// write-ahead window, so it is fully on before the first audio sample reaches the DMA.
 	bool enableSpeaker =
-	    audio_spk_streaming_active && !headphonesPluggedIn && !lineOutPluggedInL && !lineOutPluggedInR;
+	    audio_spk_alt_setting != 0 && !headphonesPluggedIn && !lineOutPluggedInL && !lineOutPluggedInR;
 
 	setOutputState(SPEAKER_ENABLE.port, SPEAKER_ENABLE.pin, enableSpeaker ? 1 : 0);
 
-	CDBG_FMT("[SPK] speaker=%s stream=%d hp=%d lineL=%d lineR=%d\n",
+	CDBG_FMT("[SPK] speaker=%s alt=%u stream=%d hp=%d lineL=%d lineR=%d\n",
 		enableSpeaker ? "ON" : "OFF",
-		audio_spk_streaming_active, headphonesPluggedIn, lineOutPluggedInL, lineOutPluggedInR);
+		audio_spk_alt_setting, audio_spk_streaming_active, headphonesPluggedIn, lineOutPluggedInL, lineOutPluggedInR);
 
-	TU_LOG2("Speaker: %s (stream=%d, hp=%d, lineL=%d, lineR=%d)\r\n", enableSpeaker ? "ON" : "OFF",
-	        audio_spk_streaming_active, headphonesPluggedIn, lineOutPluggedInL, lineOutPluggedInR);
+	TU_LOG2("Speaker: %s (alt=%u, stream=%d, hp=%d, lineL=%d, lineR=%d)\r\n", enableSpeaker ? "ON" : "OFF",
+	        audio_spk_alt_setting, audio_spk_streaming_active, headphonesPluggedIn, lineOutPluggedInL, lineOutPluggedInR);
 }
 
 // TinyUSB calls these callbacks from C linkage — must be extern "C" so the linker finds them
@@ -472,6 +495,10 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
 		else {
 			audio_spk_bytes_per_sample = (alt == 2) ? 3 : 2;
 			CDBG_FMT("[SPK] streaming enabled alt=%u (%u-bit)\n", alt, audio_spk_bytes_per_sample * 8);
+			// Pre-warm the speaker amplifier now so it is fully on before audio arrives.
+			// The write-ahead delay (11.6 ms) gives the amp time to stabilise before
+			// the first audio sample reaches the DMA read position.
+			usb_audio_update_speaker_state();
 #if CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
 			// Set initial feedback to nominal rate so host starts sending
 			// at approximately the right rate before our control loop kicks in.
