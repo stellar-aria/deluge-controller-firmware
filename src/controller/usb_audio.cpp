@@ -66,8 +66,11 @@ static volatile uint16_t audio_spk_last_rx_hw_time = 0;
 #define MIC_SAMPLES_PER_CHUNK 48
 #endif
 
-// Simple LFSR-based noise generator to prevent codec DC auto-mute
-// The codec chip auto-mutes when it sees continuous all-zero samples
+// Simple LFSR-based noise generator to prevent codec DC auto-mute.
+// The codec auto-mutes after ~2 seconds of continuous near-zero samples.
+// We mix a tiny amount of noise into every sample written to the SSI TX buffer
+// so the codec never sees prolonged silence — matching what the original Deluge
+// firmware does (it adds getNoise() to every output sample unconditionally).
 static uint32_t dither_lfsr = 0xACE1u;
 
 static inline int32_t get_dither_noise(void) {
@@ -77,11 +80,10 @@ static inline int32_t get_dither_noise(void) {
 	if (bit) {
 		dither_lfsr ^= 0xB400u; // Taps at positions 16,14,13,11
 	}
-	// Return tiny noise in bits 8-12 of the 32-bit SSI word.
-	// The SSI with DWL=24, PDTA=0 puts 24-bit audio data in bits [31:8] of SSIFTDR.
-	// Values in bits [7:0] are zero-padding and are invisible to the codec; shifting
-	// left by 8 ensures both positive and negative dither land in the data range.
-	// ±16 × 256 = ±4096 = ±16 LSBs of 24-bit audio ≈ −114 dBFS — completely inaudible.
+	// The SSI is configured for 24-bit DWL; audio data occupies bits [31:8] of
+	// the 32-bit SSIFTDR word.  Shifting by 8 places the dither in the lowest
+	// bits of the 24-bit data range, keeping it well below audibility.
+	// ±16 × 256 = ±4096 in the 32-bit word = ±16 LSBs of 24-bit audio ≈ −114 dBFS.
 	return ((int32_t)(dither_lfsr & 0x1F) - 0x10) << 8; // ±16 LSBs of 24-bit audio
 }
 
@@ -229,12 +231,15 @@ void usb_audio_task(void) {
 			int32_t* writePos = audio_write_pos;
 
 			if (audio_spk_bytes_per_sample == 2) {
-				// 16-bit: sample << 16 puts it in bits 16-31 (MSB-aligned)
+				// 16-bit: sample << 16 puts it in bits [31:16] (MSB-aligned).
+				// get_dither_noise() returns ±16 LSBs of 24-bit audio in bits [12:8].
+				// Adding it prevents codec DC auto-mute (codec sleeps after ~8192
+				// consecutive identical samples ≈ 0.19s at 44.1kHz).
 				int16_t* samples_16 = (int16_t*)spk_buf;
 				int32_t numSamples = bytes_read / sizeof(int16_t);
 
 				for (int32_t i = 0; i < numSamples; i++) {
-					*writePos = ((int32_t)samples_16[i]) << 16;
+					*writePos = (((int32_t)samples_16[i]) << 16) + get_dither_noise();
 					writePos++;
 					if (writePos >= txBufferEnd) {
 						writePos = txBuffer;
@@ -243,16 +248,18 @@ void usb_audio_task(void) {
 			}
 			else {
 				// 24-bit: 3 bytes per sample, little-endian from USB.
-				// Reassemble and shift << 8 to MSB-align in 32-bit word.
+				// Reassemble and shift << 8 to MSB-align in 32-bit word (bits [31:8]).
+				// get_dither_noise() returns ±16 LSBs of 24-bit audio in bits [12:8].
+				// Adding it keeps the codec awake during silence — the codec auto-sleeps
+				// after ~8192 consecutive identical samples (~0.19s at 44.1kHz).
 				uint8_t* src = spk_buf;
 				int32_t numSamples = bytes_read / 3;
 
 				for (int32_t i = 0; i < numSamples; i++) {
 					// Re-assemble 3 LE bytes into an MSB-aligned 32-bit word.
-					// Shifting src[2] into bit 24 and casting to int32_t propagates
-					// the sign bit to bit 31 implicitly — no explicit sign-extend branch needed.
-					*writePos = (int32_t)((uint32_t)src[0] << 8 | (uint32_t)src[1] << 16 | (uint32_t)src[2] << 24);
-
+					// Shifting src[2] into bit 24 propagates the sign bit to bit 31.
+					*writePos = (int32_t)((uint32_t)src[0] << 8 | (uint32_t)src[1] << 16 | (uint32_t)src[2] << 24)
+					            + get_dither_noise();
 					src += 3;
 					writePos++;
 					if (writePos >= txBufferEnd) {
