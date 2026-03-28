@@ -5,13 +5,17 @@
 //! RZ/A1L Hardware Manual.
 //!
 //! Milestone plan:
-//!   1. GPIO  — SYNC LED toggle proof-of-life
-//!   2. UART  — async MIDI (UART0) and PIC32 (UART1) drivers
-//!   3. OSTM  — free-running timer → Embassy `time_driver` impl
-//!   4. SSI   — I2S audio codec at 44.1 kHz
-//!   5. USB   — CDC/MIDI/Audio composite device
+//!   1. GPIO  — SYNC LED toggle proof-of-life ✅
+//!   2. GIC   — full interrupt infrastructure ✅
+//!   3. OSTM  — free-running timer ✅ → Embassy `time_driver` impl
+//!   4. UART  — async MIDI (UART0) and PIC32 (UART1) drivers
+//!   5. SSI   — I2S audio codec at 44.1 kHz
+//!   6. USB   — CDC/MIDI/Audio composite device
 
 #![no_std]
+
+pub mod gic;
+pub mod ostm;
 
 /// Bare-metal critical section for Cortex-A9: saves and restores the CPSR
 /// I-bit (IRQ enable). Used by `rtt-target` and will be used by Embassy.
@@ -125,18 +129,4 @@ pub mod uart {
     pub const SCFSR:  usize = 0x10;
     pub const SCFRDR: usize = 0x14;
     pub const SCFCR:  usize = 0x18;
-}
-
-/// OS Timer (OSTM) registers — free-running 32-bit counter (see HW Manual §28).
-/// Used as tick source for the Embassy time driver.
-pub mod ostm {
-    pub const OSTM0_BASE: usize = 0xFCFE_C000;
-    pub const OSTM1_BASE: usize = 0xFCFE_D000;
-
-    pub const CMP: usize = 0x00; /* Compare register         */
-    pub const CNT: usize = 0x04; /* Counter (read-only)      */
-    pub const TE:  usize = 0x10; /* Timer enable status      */
-    pub const TS:  usize = 0x14; /* Timer start              */
-    pub const TT:  usize = 0x18; /* Timer stop               */
-    pub const CTL: usize = 0x20; /* Control (interval/free)  */
 }

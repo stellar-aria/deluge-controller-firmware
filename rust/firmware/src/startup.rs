@@ -149,13 +149,133 @@ _reset_handler:
     .global _svc_handler
     .global _prefetch_handler
     .global _abort_handler
-    .global _irq_handler
     .global _fiq_handler
 _undef_handler:     b .
 _svc_handler:       b .
 _prefetch_handler:  b .
 _abort_handler:     b .
-_irq_handler:       b .
 _fiq_handler:       b .
+"#
+);
+
+// ---------------------------------------------------------------------------
+// IRQ handler — full GIC dispatch with ARM errata workarounds
+// ---------------------------------------------------------------------------
+//
+// This is a faithful port of `irqfiq_handler.S` from the Renesas BSP,
+// adapted to call the Rust `gic_dispatch(icciar)` function.
+//
+// ARM errata handled:
+//   801120  — dummy ICCHPIR read before ICCIAR ensures correct data
+//   733075  — spurious ID 0 or >=1022: read-modify-write ICDIPR0, re-read ICCIAR
+//
+// Register usage on entry (IRQ mode, IRQ/FIQ disabled):
+//   LR_irq = interrupted PC + 4
+//   SPSR_irq = CPSR of interrupted mode
+//
+// Stack layout built by this handler (IRQ stack → SYS stack):
+//   IRQ stack: [SPSR] [LR_irq - 4]      (srsdb / manual push/pop)
+//   SYS stack: r0-r3, r12               (caller-saved AAPCS)
+//              alignment pad (0 or 4)
+//              r0(=icciar), r1(=pad), r2, r3, r4, lr_sys   (around bl gic_dispatch)
+
+global_asm!(
+    r#"
+    .equ GICC_IAR_ADDR,   0xE820200C
+    .equ GICC_EOIR_ADDR,  0xE8202010
+    .equ GICC_HPPIR_ADDR, 0xE8202018
+    .equ GICD_IPR0_ADDR,  0xE8201400
+    .equ SYS_MODE, 0x1F
+    .equ IRQ_MODE, 0x12
+
+    .section .text._irq_handler, "ax"
+    .code 32
+    .global _irq_handler
+    .type _irq_handler, %function
+_irq_handler:
+    /* Adjust LR: on IRQ entry LR_irq = interrupted PC + 4; subtract 4
+     * so MOVS PC,LR returns to the correct instruction. */
+    sub     lr, lr, #4
+
+    /* Push return address and SPSR onto the IRQ-mode stack. */
+    push    {{lr}}
+    mrs     lr, spsr
+    push    {{lr}}
+
+    /* Switch to SYS mode (same stack as application; IRQ/FIQ still masked). */
+    cps     #SYS_MODE
+
+    /* Save caller-saved AAPCS registers. */
+    push    {{r0-r3, r12}}
+
+    /* ---- ARM Errata 801120: dummy HPPIR read before ICCIAR ---- */
+    ldr     r2, =GICC_HPPIR_ADDR
+    ldr     r2, [r2]
+
+    /* Read Interrupt Acknowledge Register -> r3 = raw icciar */
+    ldr     r2, =GICC_IAR_ADDR
+    ldr     r3, [r2]
+
+    /* Extract interrupt ID (bits [9:0]) for errata-733075 check. */
+    ubfx    r0, r3, #0, #10
+
+    /* ---- ARM Errata 733075: SGI ID 0 or spurious IDs >= 1022 ---- */
+    cmp     r0, #0
+    beq     .Lirq_errata_733075
+    ldr     r1, =1022
+    cmp     r0, r1
+    bge     .Lirq_errata_733075
+    b       .Lirq_post_errata
+
+.Lirq_errata_733075:
+    /* Read-modify-write ICDIPR0 to resolve the errata, then re-read ICCIAR. */
+    ldr     r2, =GICD_IPR0_ADDR
+    ldr     r0, [r2]
+    str     r0, [r2]
+    dsb
+    ldr     r2, =GICC_HPPIR_ADDR
+    ldr     r2, [r2]
+    ldr     r2, =GICC_IAR_ADDR
+    ldr     r3, [r2]
+
+.Lirq_post_errata:
+    /* r0 = full icciar (used for both gic_dispatch arg and ICCEOIR write). */
+    mov     r0, r3
+
+    /* Align stack to 8 bytes (AAPCS requirement for BL). */
+    mov     r1, sp
+    and     r1, r1, #4
+    sub     sp, sp, r1
+
+    /* Push: r0(icciar), r1(pad amount), r2, r3, r4(padding reg), lr_sys. */
+    push    {{r0-r4, lr}}
+
+    /* Call Rust dispatch: gic_dispatch(icciar) -- r0 already set. */
+    bl      gic_dispatch
+
+    /* Restore registers; r0 restored to icciar for the EOI write below. */
+    pop     {{r0-r4, lr}}
+
+    /* Undo stack alignment. */
+    add     sp, sp, r1
+
+    /* Disable IRQ, memory + instruction barriers, then write EOI. */
+    cpsid   i
+    dsb
+    isb
+    ldr     r2, =GICC_EOIR_ADDR
+    str     r0, [r2]
+
+    /* Restore caller-saved registers. */
+    pop     {{r0-r3, r12}}
+
+    /* Return to interrupted mode: switch to IRQ mode, restore SPSR + LR. */
+    cps     #IRQ_MODE
+    pop     {{lr}}
+    msr     spsr_cxsf, lr
+    pop     {{lr}}
+    movs    pc, lr          /* return from IRQ exception */
+
+    .size _irq_handler, . - _irq_handler
 "#
 );
