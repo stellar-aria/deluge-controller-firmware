@@ -1,10 +1,16 @@
 #![no_std]
 #![no_main]
+#![feature(impl_trait_in_assoc_type)]
 
 mod startup;
 
 use core::panic::PanicInfo;
 use rtt_target::{rprintln, rtt_init_print};
+
+use core::mem::MaybeUninit;
+
+use embassy_executor::{Executor, Spawner};
+use embassy_time::Timer;
 
 use rza1::gic;
 use rza1::ostm;
@@ -17,7 +23,30 @@ fn panic(info: &PanicInfo) -> ! {
     }
 }
 
-/// Firmware entry point, called from startup assembly after BSS is zeroed.
+// ---------------------------------------------------------------------------
+// Async tasks
+// ---------------------------------------------------------------------------
+
+#[embassy_executor::task]
+async fn blink_task() {
+    const SYNC_PORT: u8 = 6;
+    const SYNC_PIN: u8 = 7;
+    let mut led_on = false;
+    loop {
+        led_on = !led_on;
+        unsafe { rza1::gpio::write(SYNC_PORT, SYNC_PIN, led_on) };
+        rprintln!("SYNC LED {}", if led_on { "ON" } else { "OFF" });
+        Timer::after_millis(500).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
+static mut EXECUTOR: MaybeUninit<Executor> = MaybeUninit::uninit();
+
+/// Entry point called from startup assembly after BSS clear and stack setup.
 #[no_mangle]
 pub extern "C" fn rust_main() -> ! {
     rtt_init_print!();
@@ -25,43 +54,33 @@ pub extern "C" fn rust_main() -> ! {
     rprintln!("CPU: Renesas RZ/A1L Cortex-A9 @ 400 MHz");
 
     // ---- Interrupt infrastructure ----------------------------------------
-    // Initialize GIC distributor + CPU interface. All sources start masked.
     unsafe { gic::init() };
     rprintln!("GIC initialized");
 
-    // ---- OSTM free-running timer -----------------------------------------
-    // Ungate OSTM0+OSTM1 clocks in CPG, then start OSTM0 as a free-running
-    // 32-bit counter at P0 = 33.33 MHz (≈30 ns per tick).
+    // ---- OSTM clocks on, then Embassy time driver ------------------------
     unsafe {
         ostm::enable_clock();
-        ostm::start_free_running(0);
+        rza1::time_driver::init();
     }
-    rprintln!("OSTM0 running at ~33.33 MHz");
+    rprintln!("Embassy time driver ready (OSTM0/1)");
 
     // ---- GPIO output: SYNC LED (P6_7) ------------------------------------
-    // SYNCED_LED = {6, 7} per definitions_cxx.hpp
-    const SYNC_PORT: u8 = 6;
-    const SYNC_PIN: u8 = 7;
-    unsafe { rza1::gpio::set_as_output(SYNC_PORT, SYNC_PIN) };
+    unsafe { rza1::gpio::set_as_output(6, 7) };
     rprintln!("SYNC LED (P6_7) configured as output");
 
     // ---- Enable global IRQ -----------------------------------------------
-    // No interrupt sources are enabled yet, so this is safe. Future drivers
-    // call gic::register() + gic::enable() before their peripheral starts.
     unsafe { cortex_ar::interrupt::enable() };
-    rprintln!("IRQ enabled — blink loop starting");
+    rprintln!("IRQ enabled — starting Embassy executor");
 
-    // ---- Blink loop using OSTM timing ------------------------------------
-    // 500 ms on / 500 ms off at P0 = 33.33 MHz → 16_666_666 ticks per half-period
-    const HALF_PERIOD_TICKS: u32 = ostm::OSTM_HZ / 2;
-
-    let mut led_on = false;
-    loop {
-        led_on = !led_on;
-        unsafe { rza1::gpio::write(SYNC_PORT, SYNC_PIN, led_on) };
-        rprintln!("SYNC LED {}", if led_on { "ON" } else { "OFF" });
-        unsafe { ostm::delay_ticks(HALF_PERIOD_TICKS) };
-    }
+    // ---- Embassy executor ------------------------------------------------
+    // Safety: single-core, single-threaded; EXECUTOR is written exactly once
+    // before `executor.run()` takes the exclusive reference forever.
+    #[allow(static_mut_refs)]
+    let executor = unsafe {
+        EXECUTOR.write(Executor::new());
+        EXECUTOR.assume_init_mut()
+    };
+    executor.run(|spawner: Spawner| {
+        spawner.spawn(blink_task().unwrap());
+    });
 }
-
-

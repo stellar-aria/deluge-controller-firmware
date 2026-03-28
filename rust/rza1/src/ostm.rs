@@ -139,3 +139,61 @@ pub unsafe fn delay_ms(ms: u32) {
     // OSTM_HZ / 1000 = 33_333 ticks per millisecond
     delay_ticks(ms * (OSTM_HZ / 1000));
 }
+
+/// Stop OSTM channel `n`.
+///
+/// # Safety
+/// Writes to memory-mapped OSTM registers.
+#[inline]
+pub unsafe fn stop(n: u8) {
+    let tt = (base(n) + TT) as *mut u8;
+    tt.write_volatile(1);
+}
+
+/// Start OSTM channel `n` in free-running mode with a compare-match interrupt.
+///
+/// The interrupt fires when CNT == `cmp`. After firing, CNT continues counting
+/// (one-shot style; the channel stays running). Re-arm by calling this again.
+///
+/// Use `cmp = 0` to get an overflow notification (fires when CNT wraps to 0).
+///
+/// # Safety
+/// Writes to memory-mapped OSTM registers. Must only be called after
+/// [`enable_clock`].
+pub unsafe fn start_free_running_cmp(n: u8, cmp: u32) {
+    let b = base(n);
+    let tt = (b + TT) as *mut u8;
+    tt.write_volatile(1); // stop first so CTL is writeable
+
+    let cmp_reg = (b + CMP) as *mut u32;
+    cmp_reg.write_volatile(cmp);
+
+    let ctl = (b + CTL) as *mut u8;
+    ctl.write_volatile(CTL_FREE_RUN_INT); // free-running with CMP interrupt
+
+    let ts = (b + TS) as *mut u8;
+    ts.write_volatile(1);
+}
+
+/// Start OSTM channel `n` in interval mode with a single-shot countdown.
+///
+/// The channel counts down from `delta_ticks` to 0, fires one interrupt, then
+/// auto-reloads. Call [`stop`] inside the ISR to prevent the auto-reload.
+///
+/// # Safety
+/// Writes to memory-mapped OSTM registers. Must only be called after
+/// [`enable_clock`].
+pub unsafe fn start_alarm(n: u8, delta_ticks: u32) {
+    let b = base(n);
+    let tt = (b + TT) as *mut u8;
+    tt.write_volatile(1); // stop in case already running
+
+    let cmp_reg = (b + CMP) as *mut u32;
+    cmp_reg.write_volatile(delta_ticks);
+
+    let ctl = (b + CTL) as *mut u8;
+    ctl.write_volatile(CTL_INTERVAL | 0x01); // interval mode with interrupt
+
+    let ts = (b + TS) as *mut u8;
+    ts.write_volatile(1);
+}

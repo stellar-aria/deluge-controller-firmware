@@ -16,6 +16,7 @@
 
 pub mod gic;
 pub mod ostm;
+pub mod time_driver;
 
 /// GPIO port registers (see RZ/A1L HW Manual §21).
 ///
