@@ -14,6 +14,7 @@ use embassy_time::Timer;
 
 use rza1::gic;
 use rza1::ostm;
+use deluge_bsp::uart as bsp_uart;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -35,8 +36,19 @@ async fn blink_task() {
     loop {
         led_on = !led_on;
         unsafe { rza1::gpio::write(SYNC_PORT, SYNC_PIN, led_on) };
-        rprintln!("SYNC LED {}", if led_on { "ON" } else { "OFF" });
         Timer::after_millis(500).await;
+    }
+}
+
+/// MIDI DIN loopback: echo every received byte straight back.
+///
+/// Useful for hardware verification: jumper P6_15 (TX) → P6_14 (RX).
+#[embassy_executor::task]
+async fn midi_echo_task() {
+    rprintln!("MIDI echo task started (SCIF0 @ 31250 baud)");
+    loop {
+        let byte = bsp_uart::read_byte(bsp_uart::MIDI_CH).await;
+        bsp_uart::write_bytes(bsp_uart::MIDI_CH, &[byte]).await;
     }
 }
 
@@ -68,6 +80,13 @@ pub extern "C" fn rust_main() -> ! {
     unsafe { rza1::gpio::set_as_output(6, 7) };
     rprintln!("SYNC LED (P6_7) configured as output");
 
+    // ---- UART (SCIF) init ------------------------------------------------
+    unsafe {
+        bsp_uart::init_midi(31250); // SCIF0 — MIDI DIN, P6_15/P6_14
+        bsp_uart::init_pic(31250);  // SCIF1 — PIC32,    P3_15/P1_9
+    }
+    rprintln!("UART SCIF0/1 initialized at 31250 baud");
+
     // ---- Enable global IRQ -----------------------------------------------
     unsafe { cortex_ar::interrupt::enable() };
     rprintln!("IRQ enabled — starting Embassy executor");
@@ -82,5 +101,6 @@ pub extern "C" fn rust_main() -> ! {
     };
     executor.run(|spawner: Spawner| {
         spawner.spawn(blink_task().unwrap());
+        spawner.spawn(midi_echo_task().unwrap());
     });
 }

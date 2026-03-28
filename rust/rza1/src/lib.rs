@@ -17,6 +17,7 @@
 pub mod gic;
 pub mod ostm;
 pub mod time_driver;
+pub mod uart;
 
 /// GPIO port registers (see RZ/A1L HW Manual §21).
 ///
@@ -87,20 +88,34 @@ pub mod gpio {
             core::ptr::write_volatile(p(port), v & !(1u16 << pin));
         }
     }
-}
 
-/// UART (SCIF) registers (see RZ/A1L HW Manual §24).
-pub mod uart {
-    /// UART0 — MIDI DIN at 31250 baud (P6_3/P6_4)
-    pub const UART0_BASE: usize = 0xE800_7000;
-    /// UART1 — PIC32 button/encoder scanner at 200000 baud
-    pub const UART1_BASE: usize = 0xE800_7800;
+    /// Configure a pin as a peripheral function (GPIO pin-mux).
+    ///
+    /// Mirrors `setPinMux(port, pin, mux)` from `gpio.c`.
+    ///
+    /// `port`: 1-based (1–11).  `pin`: bit position (0–15).  `mux`: function (1–7).
+    ///
+    /// # Safety
+    /// Writes to memory-mapped GPIO registers.
+    pub unsafe fn set_pin_mux(port: u8, pin: u8, mux: u8) {
+        // Base address for port 1 of each mux register group; stride 4 per port.
+        const PFC_BASE:   usize = 0xFCFE_3504;
+        const PFCE_BASE:  usize = 0xFCFE_3604;
+        const PFCAE_BASE: usize = 0xFCFE_3A04;
+        const PMC_BASE:   usize = 0xFCFE_3404; // PMC1 = 0x3404, PMCn = +4*(n-1)
+        const PIPC_BASE:  usize = 0xFCFE_7204;
 
-    pub const SCSMR:  usize = 0x00;
-    pub const SCBRR:  usize = 0x04;
-    pub const SCSCR:  usize = 0x08;
-    pub const SCFTDR: usize = 0x0C;
-    pub const SCFSR:  usize = 0x10;
-    pub const SCFRDR: usize = 0x14;
-    pub const SCFCR:  usize = 0x18;
+        fn modify(base: usize, port: u8, pin: u8, set: bool) {
+            let addr = (base + (port as usize - 1) * 4) as *mut u16;
+            let v = unsafe { core::ptr::read_volatile(addr) };
+            let new = if set { v | (1u16 << pin) } else { v & !(1u16 << pin) };
+            unsafe { core::ptr::write_volatile(addr, new) };
+        }
+
+        modify(PFCAE_BASE, port, pin, mux >= 5);
+        modify(PFCE_BASE,  port, pin, ((mux - 1) >> 1) & 1 != 0);
+        modify(PFC_BASE,   port, pin, (mux - 1) & 1 != 0);
+        modify(PMC_BASE,   port, pin, true);
+        modify(PIPC_BASE,  port, pin, true);
+    }
 }

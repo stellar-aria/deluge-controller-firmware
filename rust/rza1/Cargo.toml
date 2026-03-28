@@ -6,5 +6,6 @@ edition = "2021"
 [dependencies]
 cortex-ar = { version = "0.3", features = ["critical-section-single-core"] }
 critical-section = "1"
+embassy-sync = "0.6"
 embassy-time-driver = "0.2"
 embassy-time-queue-utils = "0.3"

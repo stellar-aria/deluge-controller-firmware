@@ -1,0 +1,7 @@
+[package]
+name = "deluge-bsp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rza1 = { path = "../rza1" }
