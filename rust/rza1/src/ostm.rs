@@ -177,8 +177,9 @@ pub unsafe fn start_free_running_cmp(n: u8, cmp: u32) {
 
 /// Start OSTM channel `n` in interval mode with a single-shot countdown.
 ///
-/// The channel counts down from `delta_ticks` to 0, fires one interrupt, then
-/// auto-reloads. Call [`stop`] inside the ISR to prevent the auto-reload.
+/// The channel counts down from `delta_ticks` to 0, fires one interrupt
+/// (at the end of counting — NOT at the start), then auto-reloads.
+/// Call [`stop`] inside the ISR to prevent the auto-reload.
 ///
 /// # Safety
 /// Writes to memory-mapped OSTM registers. Must only be called after
@@ -192,7 +193,7 @@ pub unsafe fn start_alarm(n: u8, delta_ticks: u32) {
     cmp_reg.write_volatile(delta_ticks);
 
     let ctl = (b + CTL) as *mut u8;
-    ctl.write_volatile(CTL_INTERVAL | 0x01); // interval mode with interrupt
+    ctl.write_volatile(CTL_INTERVAL); // interval mode; interrupt fires at end of count (CNT=0), not at start
 
     let ts = (b + TS) as *mut u8;
     ts.write_volatile(1);

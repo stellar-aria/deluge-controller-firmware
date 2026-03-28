@@ -12,8 +12,7 @@ use core::mem::MaybeUninit;
 use embassy_executor::{Executor, Spawner};
 use embassy_time::Timer;
 
-use rza1::gic;
-use rza1::ostm;
+use rza1::{gic, ostm};
 use deluge_bsp::uart as bsp_uart;
 
 #[panic_handler]

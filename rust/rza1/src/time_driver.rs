@@ -42,6 +42,7 @@ use crate::ostm;
 // GIC interrupt IDs for OSTM0 and OSTM1 (RZ/A1L HW Manual §12)
 const OSTM0_IRQ: u16 = 134;
 const OSTM1_IRQ: u16 = 135;
+const OSTM_IRQ_PRIORITY: u8 = 14;
 
 /// OSTM0 ticks per Embassy tick (1 µs at 33.333 MHz).
 ///
@@ -193,9 +194,11 @@ pub unsafe fn init() {
     // channel counts 0 → 1 → … → 0xFFFF_FFFF → [interrupt fires] → 0 → …
     ostm::start_free_running_cmp(0, 0);
 
-    // Register ISRs. OSTM1 interrupt is left disabled until the first alarm.
+    // Register ISRs and set priorities below PMR (default 31 = PMR, never fires).
     gic::register(OSTM0_IRQ, ostm0_overflow_isr);
     gic::register(OSTM1_IRQ, ostm1_alarm_isr);
+    gic::set_priority(OSTM0_IRQ, OSTM_IRQ_PRIORITY);
+    gic::set_priority(OSTM1_IRQ, OSTM_IRQ_PRIORITY);
     gic::enable(OSTM0_IRQ);
     // OSTM1 will be enabled by try_set_alarm when needed.
 }
