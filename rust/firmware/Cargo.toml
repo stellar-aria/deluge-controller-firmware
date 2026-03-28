@@ -1,0 +1,8 @@
+[package]
+name = "deluge-firmware"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rza1 = { path = "../rza1" }
+rtt-target = "0.6"

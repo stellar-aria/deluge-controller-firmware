@@ -1,0 +1,16 @@
+[build]
+target = "armv7a-none-eabihf"
+
+[target.armv7a-none-eabihf]
+rustflags = [
+  "-C", "target-cpu=cortex-a9",
+  # NOTE: VFP/NEON disabled until we have CPG clock init and FPEXC bringup
+  # in the Rust startup code (needed when not loading via the bootloader).
+  # Re-enable once milestone: clock init is done.
+  "-C", "link-arg=-Tlinker.ld",
+  "-C", "link-arg=--gc-sections",
+]
+
+[unstable]
+build-std = ["core"]
+build-std-features = ["compiler-builtins-mem"]

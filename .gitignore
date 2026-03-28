@@ -51,3 +51,5 @@ __pycache__/
 
 # Windows
 Thumbs.db
+
+**/target/
