@@ -17,33 +17,6 @@
 pub mod gic;
 pub mod ostm;
 
-/// Bare-metal critical section for Cortex-A9: saves and restores the CPSR
-/// I-bit (IRQ enable). Used by `rtt-target` and will be used by Embassy.
-struct CortexACriticalSection;
-critical_section::set_impl!(CortexACriticalSection);
-
-unsafe impl critical_section::Impl for CortexACriticalSection {
-    unsafe fn acquire() -> critical_section::RawRestoreState {
-        let cpsr: u32;
-        core::arch::asm!(
-            "mrs {cpsr}, cpsr",
-            "cpsid i",           // disable IRQ
-            cpsr = out(reg) cpsr,
-            options(nomem, nostack),
-        );
-        cpsr
-    }
-
-    unsafe fn release(cpsr: critical_section::RawRestoreState) {
-        // Only re-enable IRQ if it was enabled before acquire
-        core::arch::asm!(
-            "msr cpsr_c, {cpsr}",
-            cpsr = in(reg) cpsr,
-            options(nomem, nostack),
-        );
-    }
-}
-
 /// GPIO port registers (see RZ/A1L HW Manual §21).
 ///
 /// Port numbering mirrors the hardware: passes 1..=11 for ports 1–11 (P1..P11).

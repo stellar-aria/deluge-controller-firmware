@@ -243,9 +243,9 @@ pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
     if (int_id as usize) < INT_ID_TOTAL {
         if let Some(f) = HANDLERS[int_id as usize] {
             // Re-enable IRQ to allow higher-priority interrupts to preempt.
-            core::arch::asm!("cpsie i", options(nomem, nostack));
+            cortex_ar::interrupt::enable();
             f();
-            core::arch::asm!("cpsid i", options(nomem, nostack));
+            cortex_ar::interrupt::disable();
         }
     }
 }

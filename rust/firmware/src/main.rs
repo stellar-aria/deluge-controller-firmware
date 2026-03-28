@@ -48,7 +48,7 @@ pub extern "C" fn rust_main() -> ! {
     // ---- Enable global IRQ -----------------------------------------------
     // No interrupt sources are enabled yet, so this is safe. Future drivers
     // call gic::register() + gic::enable() before their peripheral starts.
-    unsafe { core::arch::asm!("cpsie i", options(nomem, nostack)) };
+    unsafe { cortex_ar::interrupt::enable() };
     rprintln!("IRQ enabled — blink loop starting");
 
     // ---- Blink loop using OSTM timing ------------------------------------
