@@ -229,6 +229,7 @@ pub unsafe fn set_priority(id: u16, priority: u8) {
 /// # Safety
 /// Must only be called from the IRQ handler assembly, with the CPU in
 /// SYS mode (as set up by the IRQ handler prologue).
+#[cfg(target_os = "none")]
 #[no_mangle]
 pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
     let int_id = (icciar & 0x3FF) as u16;
@@ -247,5 +248,69 @@ pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
             f();
             cortex_ar::interrupt::disable();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        GICC_BASE, GICC_CTLR_ADDR, GICC_IAR_ADDR, GICC_EOIR_ADDR, GICC_PMR_ADDR,
+        GICD_BASE, GICD_CTLR, GICD_ICFGR0, GICD_IPRIORITYR0, GICD_ISENABLER0,
+        ICDICFR_INIT, INT_ID_TOTAL,
+    };
+
+    #[test]
+    fn int_id_total() {
+        // RZ/A1L has 587 interrupt sources (IDs 0–586).
+        assert_eq!(INT_ID_TOTAL, 587);
+    }
+
+    #[test]
+    fn gicd_base_address() {
+        assert_eq!(GICD_BASE, 0xE820_1000);
+    }
+
+    #[test]
+    fn gicc_base_address() {
+        assert_eq!(GICC_BASE, 0xE820_2000);
+    }
+
+    /// Spot-check key CPU-interface register addresses against the HW manual.
+    #[test]
+    fn gicc_register_addresses() {
+        assert_eq!(GICC_CTLR_ADDR, 0xE820_2000); // ICCICR
+        assert_eq!(GICC_PMR_ADDR,  0xE820_2004); // ICCPMR
+        assert_eq!(GICC_IAR_ADDR,  0xE820_200C); // ICCIAR
+        assert_eq!(GICC_EOIR_ADDR, 0xE820_2010); // ICCEOIR
+    }
+
+    /// ICDICFR0 starts at GICD+0xC00; there must be exactly 37 entries to
+    /// cover all 587 interrupt sources at 2 bits each (37×16 = 592 ≥ 587).
+    #[test]
+    fn icdicfr_table_length() {
+        assert_eq!(ICDICFR_INIT.len(), 37);
+    }
+
+    #[test]
+    fn icdicfr_base_address() {
+        assert_eq!(GICD_ICFGR0, GICD_BASE + 0xC00);
+    }
+
+    /// First and last ICDICFR entries from the Renesas intc.c table.
+    #[test]
+    fn icdicfr_spot_values() {
+        assert_eq!(ICDICFR_INIT[0],  0xAAAAAAAA); // ICDICFR0 : IDs 15–0
+        assert_eq!(ICDICFR_INIT[1],  0x00000055); // ICDICFR1 : IDs 19–16
+        assert_eq!(ICDICFR_INIT[36], 0x00155555); // ICDICFR36: IDs 586–576
+    }
+
+    #[test]
+    fn gicd_isenabler_base_address() {
+        assert_eq!(GICD_ISENABLER0, GICD_BASE + 0x100);
+    }
+
+    #[test]
+    fn gicd_ipriorityr_base_address() {
+        assert_eq!(GICD_IPRIORITYR0, GICD_BASE + 0x400);
     }
 }

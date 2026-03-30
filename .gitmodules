@@ -2,3 +2,6 @@
 	path = lib/tinyusb
 	url = https://github.com/stellar-aria/tinyusb
 	branch = feature/rza1-new
+[submodule "tools/probe-rs"]
+	path = tools/probe-rs
+	url = https://github.com/stellar-aria/probe-rs

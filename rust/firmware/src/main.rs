@@ -2,8 +2,6 @@
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
 
-mod startup;
-
 use core::panic::PanicInfo;
 use rtt_target::{rprintln, rtt_init_print};
 
@@ -12,7 +10,7 @@ use core::mem::MaybeUninit;
 use embassy_executor::{Executor, Spawner};
 use embassy_time::Timer;
 
-use rza1::{gic, ostm};
+use rza1::{gic, ostm, cache, mmu, sdram, stb};
 use deluge_bsp::uart as bsp_uart;
 
 #[panic_handler]
@@ -59,10 +57,30 @@ static mut EXECUTOR: MaybeUninit<Executor> = MaybeUninit::uninit();
 
 /// Entry point called from startup assembly after BSS clear and stack setup.
 #[no_mangle]
-pub extern "C" fn rust_main() -> ! {
+pub extern "C" fn main() -> ! {
     rtt_init_print!();
     rprintln!("Deluge Rust firmware starting");
     rprintln!("CPU: Renesas RZ/A1L Cortex-A9 @ 400 MHz");
+
+    // ---- 1. Enable peripheral module clocks (CPG STBCRn) -----------------
+    unsafe { stb::init() };
+    rprintln!("STB: all module clocks enabled");
+
+    // ---- 2. Build L1 Translation Table and enable MMU --------------------
+    unsafe { mmu::init_and_enable() };
+    rprintln!("MMU enabled (flat VA=PA, 4 GB mapping)");
+
+    // ---- 3. Enable L1 I+D caches, branch prediction, D-prefetch ----------
+    unsafe { cache::l1_enable() };
+    rprintln!("L1 cache enabled");
+
+    // ---- 4. Initialise and enable L2 cache (PL310) -----------------------
+    unsafe { cache::l2_init() };
+    rprintln!("L2 cache enabled (D-ways locked, I-ways open)");
+
+    // ---- 5. Initialise SDRAM (pin-mux + BSC) -----------------------------
+    unsafe { sdram::init() };
+    rprintln!("SDRAM initialised (64 MB @ 0x0C000000)");
 
     // ---- Interrupt infrastructure ----------------------------------------
     unsafe { gic::init() };

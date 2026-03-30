@@ -8,7 +8,9 @@
 //!   - Free-running  (CTL = 0x02): counts up from 0, optionally fires at CMP
 //!
 //! ## Usage
-//! ```rust
+//! ```rust,no_run
+//! # use rza1::ostm;
+//! # use rza1::ostm::OSTM_HZ;
 //! unsafe {
 //!     ostm::enable_clock();          // ungate OSTM0+OSTM1 in CPG
 //!     ostm::start_free_running(0);   // start OSTM0 in free-running mode
@@ -95,9 +97,12 @@ fn base(n: u8) -> usize {
 pub unsafe fn start_free_running(n: u8) {
     let b = base(n);
     // Stop the timer in case it is already running (CTL can only be written
-    // when the timer is stopped).
+    // when the timer is stopped — TE must read 0 first).
     let tt = (b + TT) as *mut u8;
+    let te = (b + TE) as *const u8;
     tt.write_volatile(1);
+    // Wait for the hardware to confirm the timer has stopped.
+    while te.read_volatile() != 0 {}
 
     // Free-running mode, compare interrupt disabled.
     let ctl = (b + CTL) as *mut u8;
@@ -197,4 +202,34 @@ pub unsafe fn start_alarm(n: u8, delta_ticks: u32) {
 
     let ts = (b + TS) as *mut u8;
     ts.write_volatile(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{base, OSTM0_BASE, OSTM1_BASE, OSTM_HZ};
+
+    #[test]
+    fn ostm_hz_is_p0_frequency() {
+        // P0 = CPU / 12 = 400 MHz / 12 = 33.333... MHz
+        assert_eq!(OSTM_HZ, 33_333_333);
+    }
+
+    #[test]
+    fn ostm_base_addresses() {
+        // RZ/A1L HW Manual: OSTM0 @ 0xFCFEC000, OSTM1 @ 0xFCFEC400
+        assert_eq!(OSTM0_BASE, 0xFCFE_C000);
+        assert_eq!(OSTM1_BASE, 0xFCFE_C400);
+    }
+
+    #[test]
+    fn base_selects_correct_channel() {
+        assert_eq!(base(0), OSTM0_BASE);
+        assert_eq!(base(1), OSTM1_BASE);
+    }
+
+    /// 1 ms in OSTM ticks: OSTM_HZ / 1000 = 33_333.
+    #[test]
+    fn one_ms_ticks() {
+        assert_eq!(OSTM_HZ / 1000, 33_333);
+    }
 }

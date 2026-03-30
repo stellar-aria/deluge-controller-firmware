@@ -43,3 +43,31 @@ pub unsafe fn init_pic(baud_rate: u32) {
     rza1::gpio::set_pin_mux(1, 9, 3);  // RxD1
     rza1::uart::register_irqs_for(PIC_CH);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{MIDI_CH, PIC_CH};
+
+    #[test]
+    fn midi_channel_is_scif0() {
+        assert_eq!(MIDI_CH, 0);
+    }
+
+    #[test]
+    fn pic_channel_is_scif1() {
+        assert_eq!(PIC_CH, 1);
+    }
+
+    /// Channels must be distinct so both UARTs can operate concurrently.
+    #[test]
+    fn channels_are_distinct() {
+        assert_ne!(MIDI_CH, PIC_CH);
+    }
+
+    /// Both channels must be within the RZ/A1L SCIF range (0–4).
+    #[test]
+    fn channels_in_range() {
+        assert!(MIDI_CH < rza1::uart::NUM_CHANNELS);
+        assert!(PIC_CH  < rza1::uart::NUM_CHANNELS);
+    }
+}

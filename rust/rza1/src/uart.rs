@@ -366,3 +366,60 @@ async fn wait_tdfe(ch: usize) {
     })
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{base, scbrr, NUM_CHANNELS, P_CLK, RXI_BASE, TXI_BASE};
+
+    // SCIF0 base = 0xE800_7000, stride 0x800 per channel.
+    #[test]
+    fn scif_base_addresses() {
+        assert_eq!(base(0), 0xE800_7000);
+        assert_eq!(base(1), 0xE800_7800);
+        assert_eq!(base(2), 0xE800_8000);
+        assert_eq!(base(3), 0xE800_8800);
+        assert_eq!(base(4), 0xE800_9000);
+    }
+
+    #[test]
+    fn num_channels_is_five() {
+        assert_eq!(NUM_CHANNELS, 5);
+    }
+
+    /// MIDI baud rate (31250 bps).
+    ///
+    /// SCBRR = round(P_CLK / (16 × 31250)) − 1
+    ///       = round(66128125 / 500000) − 1
+    ///       = round(132.256) − 1 = 132 − 1 = 131
+    #[test]
+    fn scbrr_midi_31250() {
+        assert_eq!(scbrr(31_250), 131);
+    }
+
+    /// 115200 bps (debug serial).
+    ///
+    /// SCBRR = round(66128125 / 1843200) − 1 = round(35.88) − 1 = 36 − 1 = 35
+    #[test]
+    fn scbrr_115200() {
+        assert_eq!(scbrr(115_200), 35);
+    }
+
+    /// Spot-check that the resulting baud rate error is within ±2% for MIDI.
+    #[test]
+    fn scbrr_midi_accuracy() {
+        let divisor = scbrr(31_250) as u32 + 1;
+        let actual_baud = P_CLK / (16 * divisor);
+        let error_ppm = (actual_baud as i64 - 31_250) * 1_000_000 / 31_250;
+        assert!(error_ppm.abs() < 20_000, "MIDI baud error {error_ppm} ppm exceeds 2%");
+    }
+
+    /// GIC interrupt IDs follow the pattern: RXI_n = RXI_BASE + n*4.
+    /// RZ/A1L HW Manual §A.2: SCIF0 RXI=223, SCIF1 RXI=227, ...
+    #[test]
+    fn scif_irq_ids() {
+        for ch in 0..NUM_CHANNELS as u16 {
+            assert_eq!(RXI_BASE + ch * 4, 223 + ch * 4);
+            assert_eq!(TXI_BASE + ch * 4, 224 + ch * 4);
+        }
+    }
+}

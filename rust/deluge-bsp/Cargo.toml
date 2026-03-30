@@ -2,6 +2,33 @@
 name = "deluge-bsp"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
+
+# On-device integration tests — probe-rs flashes and runs these.
+[[test]]
+name = "gpio"
+harness = false
+
+[[test]]
+name = "sdram"
+harness = false
+
+[[test]]
+name = "time_driver"
+harness = false
 
 [dependencies]
 rza1 = { path = "../rza1" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-ar = "0.3"
+
+[target.'cfg(not(target_os = "none"))'.dev-dependencies]
+critical-section = { version = "1", features = ["std"] }
+
+[target.'cfg(target_os = "none")'.dev-dependencies]
+deluge-test = { path = "../deluge-test" }
+# Force executor-thread feature on embassy-executor for the async test wrapper.
+embassy-executor = { version = "0.10", features = ["nightly", "platform-cortex-ar", "executor-thread"] }
+rtt-target = "0.6"
+embassy-time = { version = "0.5", features = ["tick-hz-1_000_000"] }

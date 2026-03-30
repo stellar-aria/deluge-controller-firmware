@@ -2,10 +2,36 @@
 name = "rza1"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
+
+# On-device integration tests — probe-rs flashes and runs these.
+# harness=false disables the std test harness (incompatible with no_std);
+# embedded-test provides its own entry point via the startup in rza1.
+[[test]]
+name = "ostm"
+harness = false
+
+[[test]]
+name = "gic"
+harness = false
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-ar = { version = "0.3", features = ["critical-section-single-core"] }
 
 [dependencies]
-cortex-ar = { version = "0.3", features = ["critical-section-single-core"] }
 critical-section = "1"
-embassy-sync = "0.6"
+embassy-sync = "0.8"
 embassy-time-driver = "0.2"
 embassy-time-queue-utils = "0.3"
+
+[target.'cfg(not(target_os = "none"))'.dev-dependencies]
+critical-section = { version = "1", features = ["std"] }
+
+[target.'cfg(target_os = "none")'.dev-dependencies]
+deluge-test = { path = "../deluge-test" }
+rtt-target = "0.6"
+cortex-ar = "0.3"
+
+[[example]]
+name = "ostm-smoke"
+harness = false

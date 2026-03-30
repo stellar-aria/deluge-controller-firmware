@@ -1,0 +1,4 @@
+# Override the armv7a target from ../(.cargo/config.toml) so this crate
+# builds as a native host binary.
+[build]
+target = "x86_64-unknown-linux-gnu"

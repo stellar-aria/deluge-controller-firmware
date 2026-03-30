@@ -2,15 +2,22 @@
 target = "armv7a-none-eabihf"
 
 [target.armv7a-none-eabihf]
+# deluge-test-runner: native host binary that uses JLinkGDBServerCLExe + GDB.
+# Build:  cd rust/deluge-test-runner && cargo build --release
+# Requires arm-none-eabi-gdb and JLinkGDBServerCLExe on PATH.
+runner = "/home/kate/GitHub/deluge-embassy/rust/deluge-test-runner/target/x86_64-unknown-linux-gnu/release/deluge-test-runner --jlink-script /home/kate/GitHub/deluge-embassy/rust/rza1_debug.JLinkScript"
 rustflags = [
   "-C", "target-cpu=cortex-a9",
-  # NOTE: VFP/NEON disabled until we have CPG clock init and FPEXC bringup
-  # in the Rust startup code (needed when not loading via the bootloader).
-  # Re-enable once milestone: clock init is done.
-  "-C", "link-arg=-Tlinker.ld",
+  # -Tlinker.ld is NOT here: firmware/build.rs emits it for the firmware
+  # binary, and deluge-bsp/build.rs emits -Ttest.ld for test binaries.
+  # Keeping it here would apply it to *all* armv7a builds and override the
+  # test.ld, breaking embedded-test integration tests.
   "-C", "link-arg=--gc-sections",
 ]
 
-[unstable]
-build-std = ["core"]
-build-std-features = ["compiler-builtins-mem"]
+[alias]
+# Used when building the embedded firmware for armv7a-none-eabihf.
+# build-std cannot live in [unstable] because it applies to all targets,
+# breaking host-native `cargo test` for the rza1/deluge-bsp crates.
+build-fw = "build -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
+test-fw  = "test  -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"

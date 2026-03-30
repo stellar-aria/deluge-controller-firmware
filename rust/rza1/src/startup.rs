@@ -80,9 +80,14 @@ _reset_handler:
     mcr p15, 0, r0, c12, c0, 0   /* Write VBAR                   */
     isb
 
-    /* 1c. Now safe to clear HIVEC — exceptions will use VBAR = _start. */
+    /* 1c. Now safe to clear HIVEC — exceptions will use VBAR = _start.
+     *     Also clear TE (bit 30, Thumb Exceptions) so exception vectors
+     *     execute in ARM state.  Old firmware (e.g. Deluge) runs in Thumb
+     *     mode and sets TE=1; our vector table uses ARM `ldr pc, [pc, #n]`
+     *     entries which decode as undefined Thumb-2 when TE=1. */
     mrc p15, 0, r0, c1, c0, 0
     bic r0, r0, #(1 << 13)       /* Clear HIVEC (use low vectors) */
+    bic r0, r0, #(1 << 30)       /* Clear TE (ARM exception entry) */
     mcr p15, 0, r0, c1, c0, 0
     isb
 
@@ -110,24 +115,69 @@ _reset_handler:
     ldrb r0, [r1]                 /* Dummy read                   */
 
     /*
-     * NOTE: VFP/NEON enable is skipped here. Enabling it via CPACR +
-     * VMSR FPEXC requires either the bootloader to have run (normal path)
-     * or full CPG clock/PLL initialization first (JTAG path). This will
-     * be added when the CPG init milestone is implemented.
+     * Enable NEON/VFP coprocessor access.
      *
-     * The Rust target features (+neon,+vfp3,+d32) are also disabled in
-     * .cargo/config.toml so the compiler does not emit VFP instructions.
+     * CPACR[23:22]=CP11 and CPACR[21:20]=CP10 are set to 0b11 (full access
+     * in privileged and unprivileged modes).  Then FPEXC.EN (bit 30) is set
+     * to power on the VFP/NEON hardware.
+     *
+     * This does NOT require STB/CPG clock init — VFP is CPU-internal.
+     * It must be done here (before Rust) because stb::init() in rust_main
+     * may itself emit VFP instructions (the toolchain is free to use NEON
+     * for memset etc. once features are re-enabled).
      */
+    mrc p15, 0, r0, c1, c0, 2    /* Read CPACR                   */
+    orr r0, r0, #(0xF << 20)     /* Enable CP10 and CP11         */
+    mcr p15, 0, r0, c1, c0, 2    /* Write CPACR                  */
+    isb
+    mov r0, #0x40000000           /* FPEXC.EN = 1                 */
+    vmsr FPEXC, r0
 
-    /* 3. Set up per-mode stacks (interrupts disabled throughout) */
+    /* 3. Set up per-mode stacks and clear stale banked registers.
+     *
+     * For each exception mode: set SP, clear LR (= 0, causes PABT at known
+     * address rather than jumping to stale previous-firmware code), and set
+     * SPSR = SYS-mode ARM CPSR (0x1DF) so any spurious exception return
+     * restores SYS mode rather than whatever the previous firmware left.
+     *
+     * This guards against the case where a FIQ fires before our own interrupt
+     * initialisation is complete: `subs pc, lr, #4` in the FIQ handler uses
+     * both LR_fiq and SPSR_fiq.  If those contain stale values the return
+     * branches into random memory and/or restores a wrong CPSR mode.
+     *
+     * Safe SPSR value: SYS mode (bits[4:0]=11111), ARM state (T=0),
+     * IRQ disabled (I=1), async-abort disabled (A=1) = 0x000001DF.
+     * (NMFI means F cannot be set; write is attempted anyway.)
+     */
+    ldr r0, =0x000001DF           /* safe SPSR value (SYS ARM I+A disabled) */
+    mov r1, #0                    /* safe LR  value (PABT at 0 if misused)  */
+
     msr cpsr_c, #0xD2             /* IRQ mode, I+F masked         */
     ldr sp, =irq_stack_end
+    mov lr, r1
+    msr spsr_fsxc, r0
+
     msr cpsr_c, #0xD1             /* FIQ mode                     */
     ldr sp, =fiq_stack_end
+    mov lr, r1
+    msr spsr_fsxc, r0
+
     msr cpsr_c, #0xD3             /* SVC mode                     */
     ldr sp, =svc_stack_end
+    mov lr, r1
+    msr spsr_fsxc, r0
+
     msr cpsr_c, #0xD7             /* ABT mode                     */
     ldr sp, =abt_stack_end
+    mov lr, r1
+    msr spsr_fsxc, r0
+
+    /* Note: UNDEF mode is intentionally NOT entered here.
+     * Our UNDEF handler is a bare infinite loop with no stack.
+     * probe-rs resets SPSR_und and LR_und to safe values before restart.
+     * Entering UNDEF mode briefly to init it would create a window where
+     * a nested FIQ could return to UNDEF mode unexpectedly. */
+
     msr cpsr_c, #0xDF             /* SYS mode (application)       */
     ldr sp, =program_stack_end
 
@@ -141,7 +191,7 @@ _reset_handler:
     blt .Lbss_loop
 
     /* 6. Branch to Rust entry point (never returns) */
-    bl rust_main
+    bl main
     b .                           /* Safety: infinite loop        */
 
     /* Default exception handlers — halt the core */
@@ -154,7 +204,11 @@ _undef_handler:     b .
 _svc_handler:       b .
 _prefetch_handler:  b .
 _abort_handler:     b .
-_fiq_handler:       b .
+    /* FIQ handler: return from interrupt.
+     * On FIQ entry LR_fiq = interrupted PC + 4; subtract 4 to re-run
+     * the interrupted instruction.  SUBS restores CPSR from SPSR_fiq.
+     * Uses only the FIQ-banked r8–r12/lr so no save/restore needed. */
+_fiq_handler:       subs pc, lr, #4
 "#
 );
 
