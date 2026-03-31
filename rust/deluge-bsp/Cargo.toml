@@ -26,11 +26,14 @@ harness = false
 [dependencies]
 rza1 = { path = "../rza1" }
 embedded-sdmmc = { version = "0.9", default-features = false, features = ["defmt-log"] }
+critical-section = "1"
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-ar = "0.3"
 embassy-sync = "0.8"
 embassy-time = { version = "0.5", features = ["tick-hz-1_000_000"] }
+embassy-usb-driver = "0.2"
+embassy-usb = "0.6"
 
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
 critical-section = { version = "1", features = ["std"] }

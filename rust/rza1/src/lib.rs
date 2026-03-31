@@ -25,6 +25,7 @@ pub mod gic;
 pub mod mmu;
 pub mod dmac;
 pub mod ostm;
+pub mod rusb1;
 pub mod sdhi;
 pub mod sdram;
 pub mod rspi;

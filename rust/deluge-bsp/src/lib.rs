@@ -11,3 +11,4 @@ pub mod oled;
 pub mod pic;
 pub mod sd;
 pub mod uart;
+pub mod usb;
