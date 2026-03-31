@@ -195,6 +195,16 @@ pub async fn init() -> Result<(), SdError> {
         sdhi::send_cmd(SD_PORT, CMD2).await?;
         let _ = sdhi::read_r2(SD_PORT); // CID — discard
 
+        // ---- CMD9: get CSD (decode capacity for BlockDevice) ----
+        // CMD9 uses the broadcast address (RCA=0) at this point — the card
+        // is still in Identification state. We issue it before CMD3 (RCA assign).
+        sdhi::set_arg(SD_PORT, 0);
+        if sdhi::send_cmd(SD_PORT, 9u16).await.is_ok() {
+            let csd = sdhi::read_r2(SD_PORT);
+            let total = decode_csd_capacity(csd, hc);
+            sdhi::set_card_blocks(SD_PORT, total);
+        }
+
         // ---- CMD3: get RCA ----
         sdhi::set_arg(SD_PORT, 0);
         sdhi::send_cmd(SD_PORT, CMD3).await?;
@@ -360,5 +370,157 @@ fn lba_to_addr(lba: u32) -> u32 {
         lba           // SDHC/SDXC: block addressing
     } else {
         lba * 512     // SDSC: byte addressing
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CSD capacity decode
+// ---------------------------------------------------------------------------
+//
+// CSD v1 (SDSC): C_SIZE[73:62], C_SIZE_MULT[49:47], READ_BL_LEN[83:80].
+//   capacity = (C_SIZE + 1) × 2^(C_SIZE_MULT + 2) × 2^READ_BL_LEN  bytes.
+//   blocks (512B) = capacity / 512.
+//
+// CSD v2 (SDHC/SDXC): C_SIZE[69:48].
+//   capacity = (C_SIZE + 1) × 512 KiB  →  (C_SIZE + 1) × 1024  blocks.
+//
+// The SDHI R2 response is packed into [word0, word1, word2, word3] where
+// word0 = bits [127:96] of the 128-bit register.
+// CSD_STRUCTURE is bits [127:126] of CSD.
+
+fn decode_csd_capacity(csd: [u32; 4], hc: bool) -> u32 {
+    if hc {
+        // CSD v2: C_SIZE at bits [69:48] within the 128-bit CSD.
+        // In our layout: word0=[127:96], word1=[95:64], word2=[63:32], word3=[31:0].
+        // Bit 69 → word1 bit (69-64) = 5; bit 48 → word2 bit (48-32) = 16.
+        // C_SIZE spans word1[5:0] and word2[31:16].
+        let c_size_hi = csd[1] & 0x3F;             // bits [69:64]
+        let c_size_lo = (csd[2] >> 16) & 0xFFFF;   // bits [63:48]
+        let c_size = (c_size_hi << 16) | c_size_lo;
+        (c_size + 1) * 1024 // blocks of 512 B
+    } else {
+        // CSD v1:
+        // READ_BL_LEN at bits [83:80] → word1 bits [19:16]
+        // C_SIZE at bits [73:62] → word1 bits [9:8] + word2 bits [31:22]
+        // C_SIZE_MULT at bits [49:47] → word2 bits [17:15]
+        let read_bl_len = (csd[1] >> 16) & 0xF;
+        let c_size_hi = csd[1] & 0x3;              // bits [73:72]
+        let c_size_lo = (csd[2] >> 22) & 0x3FF;    // bits [71:62]
+        let c_size = (c_size_hi << 10) | c_size_lo;
+        let c_size_mult = (csd[2] >> 15) & 0x7;
+        let block_len = 1u32 << read_bl_len;        // bytes per block
+        let mult = 1u32 << (c_size_mult + 2);
+        let capacity_bytes = (c_size + 1) * mult * block_len;
+        capacity_bytes / 512
+    }
+}
+
+// ---------------------------------------------------------------------------
+// embedded-sdmmc BlockDevice + TimeSource
+// ---------------------------------------------------------------------------
+
+/// A synchronous `embedded_sdmmc::BlockDevice` backed by the SDHI hardware.
+///
+/// Uses polling register reads (no Embassy executor needed).  [`init`] must
+/// have completed successfully before any method is called.
+///
+/// Construct with `DelugeBlockDevice` (it is a ZST).
+pub struct DelugeBlockDevice;
+
+impl embedded_sdmmc::BlockDevice for DelugeBlockDevice {
+    type Error = SdError;
+
+    fn read(
+        &self,
+        blocks: &mut [embedded_sdmmc::Block],
+        start_block_idx: embedded_sdmmc::BlockIdx,
+    ) -> Result<(), SdError> {
+        if !CARD_READY.load(Ordering::Acquire) {
+            return Err(SdError::NotInitialized);
+        }
+        let count = blocks.len() as u32;
+        if count == 0 {
+            return Ok(());
+        }
+        let lba = start_block_idx.0;
+        let addr = lba_to_addr(lba);
+        let hc = CARD_HC.load(Ordering::Relaxed);
+        let cmd = if count > 1 {
+            if hc { CMD18_SDHC } else { CMD18 }
+        } else {
+            if hc { CMD17_SDHC } else { CMD17 }
+        };
+
+        unsafe {
+            sdhi::set_block_count(SD_PORT, count);
+            sdhi::set_arg(SD_PORT, addr);
+            sdhi::send_cmd_poll(SD_PORT, cmd)?;
+            sdhi::read_blocks_poll(
+                SD_PORT,
+                blocks.as_mut_ptr() as *mut u8,
+                count,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn write(
+        &self,
+        blocks: &[embedded_sdmmc::Block],
+        start_block_idx: embedded_sdmmc::BlockIdx,
+    ) -> Result<(), SdError> {
+        if !CARD_READY.load(Ordering::Acquire) {
+            return Err(SdError::NotInitialized);
+        }
+        let count = blocks.len() as u32;
+        if count == 0 {
+            return Ok(());
+        }
+        let lba = start_block_idx.0;
+        let addr = lba_to_addr(lba);
+        let hc = CARD_HC.load(Ordering::Relaxed);
+        let cmd = if count > 1 {
+            if hc { CMD25_SDHC } else { CMD25 }
+        } else {
+            if hc { CMD24_SDHC } else { CMD24 }
+        };
+
+        unsafe {
+            sdhi::set_block_count(SD_PORT, count);
+            sdhi::set_arg(SD_PORT, addr);
+            sdhi::send_cmd_poll(SD_PORT, cmd)?;
+            sdhi::write_blocks_poll(
+                SD_PORT,
+                blocks.as_ptr() as *const u8,
+                count,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn num_blocks(&self) -> Result<embedded_sdmmc::BlockCount, SdError> {
+        if !CARD_READY.load(Ordering::Acquire) {
+            return Err(SdError::NotInitialized);
+        }
+        let n = sdhi::card_size_blocks(SD_PORT);
+        Ok(embedded_sdmmc::BlockCount(n))
+    }
+}
+
+/// A stub [`embedded_sdmmc::TimeSource`] returning a fixed epoch-zero timestamp.
+///
+/// Replace with a real RTC implementation when one is available.
+pub struct DelugeTimeSource;
+
+impl embedded_sdmmc::TimeSource for DelugeTimeSource {
+    fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
+        embedded_sdmmc::Timestamp {
+            year_since_1970: 0,
+            zero_indexed_month: 0,
+            zero_indexed_day: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+        }
     }
 }

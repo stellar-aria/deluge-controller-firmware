@@ -376,8 +376,151 @@ pub unsafe fn wait_end(ch: u8) {
     while reg8(ch, OFF_SPSR).read_volatile() & SPSR_TEND == 0 {}
 }
 
-// ── Address tests ─────────────────────────────────────────────────────────────
+// ── embedded-hal SpiBus impls ─────────────────────────────────────────────────
 
+use core::convert::Infallible;
+use core::marker::PhantomData;
+
+/// Marker type: RSPI channel configured for 8-bit frame transfers.
+pub struct Bits8;
+/// Marker type: RSPI channel configured for 32-bit frame transfers.
+pub struct Bits32;
+
+/// A type-safe handle to an RSPI channel.
+///
+/// `CH` is the channel number (0–4).  `BITS` is either [`Bits8`] or [`Bits32`],
+/// selecting which [`embedded_hal::spi::SpiBus`] impl is active.
+///
+/// This handle **does not** own the hardware configuration; the caller must
+/// have already called [`init`] (and, for 8-bit mode, [`configure_8bit`]).
+/// The handle is zero-cost (ZST).
+pub struct Rspi<const CH: u8, BITS>(PhantomData<BITS>);
+
+impl<const CH: u8, BITS> Rspi<CH, BITS> {
+    /// Create an RSPI handle for a channel that has already been initialised.
+    ///
+    /// # Safety
+    /// `CH` must be valid (0–4) and [`init`] must have been called for it.
+    #[inline]
+    pub unsafe fn new() -> Self { Rspi(PhantomData) }
+}
+
+// ── ErrorType ─────────────────────────────────────────────────────────────────
+
+impl<const CH: u8, BITS> embedded_hal::spi::ErrorType for Rspi<CH, BITS> {
+    type Error = Infallible;
+}
+
+// ── SpiBus<u8> for Bits8 ──────────────────────────────────────────────────────
+
+impl<const CH: u8> embedded_hal::spi::SpiBus<u8> for Rspi<CH, Bits8> {
+    fn read(&mut self, words: &mut [u8]) -> Result<(), Infallible> {
+        for w in words.iter_mut() {
+            // Transmit a dummy 0x00 to clock in a byte from the peripheral.
+            unsafe {
+                send8(CH, 0x00);
+                wait_end(CH);
+                // The received byte sits in SPDR after the shift completes.
+                // RSPI SPDR lower byte contains the last received byte.
+                *w = (reg32(CH, OFF_SPDR) as *const u8).read_volatile();
+            }
+        }
+        Ok(())
+    }
+
+    fn write(&mut self, words: &[u8]) -> Result<(), Infallible> {
+        for &b in words {
+            unsafe { send8(CH, b); }
+        }
+        unsafe { wait_end(CH); }
+        Ok(())
+    }
+
+    fn transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), Infallible> {
+        let len = read.len().max(write.len());
+        for i in 0..len {
+            let tx = if i < write.len() { write[i] } else { 0x00 };
+            unsafe {
+                send8(CH, tx);
+                wait_end(CH);
+                if i < read.len() {
+                    read[i] = (reg32(CH, OFF_SPDR) as *const u8).read_volatile();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn transfer_in_place(&mut self, words: &mut [u8]) -> Result<(), Infallible> {
+        for w in words.iter_mut() {
+            unsafe {
+                let tx = *w;
+                send8(CH, tx);
+                wait_end(CH);
+                *w = (reg32(CH, OFF_SPDR) as *const u8).read_volatile();
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), Infallible> {
+        unsafe { wait_end(CH); }
+        Ok(())
+    }
+}
+
+// ── SpiBus<u32> for Bits32 ────────────────────────────────────────────────────
+
+impl<const CH: u8> embedded_hal::spi::SpiBus<u32> for Rspi<CH, Bits32> {
+    fn read(&mut self, words: &mut [u32]) -> Result<(), Infallible> {
+        for w in words.iter_mut() {
+            unsafe {
+                send32_blocking(CH, 0x0000_0000);
+                *w = reg32(CH, OFF_SPDR).read_volatile();
+            }
+        }
+        Ok(())
+    }
+
+    fn write(&mut self, words: &[u32]) -> Result<(), Infallible> {
+        for &w in words {
+            unsafe { send32_blocking(CH, w); }
+        }
+        Ok(())
+    }
+
+    fn transfer(&mut self, read: &mut [u32], write: &[u32]) -> Result<(), Infallible> {
+        let len = read.len().max(write.len());
+        for i in 0..len {
+            let tx = if i < write.len() { write[i] } else { 0 };
+            unsafe {
+                send32_blocking(CH, tx);
+                if i < read.len() {
+                    read[i] = reg32(CH, OFF_SPDR).read_volatile();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn transfer_in_place(&mut self, words: &mut [u32]) -> Result<(), Infallible> {
+        for w in words.iter_mut() {
+            unsafe {
+                let tx = *w;
+                send32_blocking(CH, tx);
+                *w = reg32(CH, OFF_SPDR).read_volatile();
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), Infallible> {
+        // send32_blocking already polls TEND; nothing left to drain.
+        Ok(())
+    }
+}
+
+// ── Address tests ─────────────────────────────────────────────────────────────
 #[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::*;

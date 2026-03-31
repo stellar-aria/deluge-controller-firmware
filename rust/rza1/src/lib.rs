@@ -132,7 +132,105 @@ pub mod gpio {
         modify(PMC_BASE,   port, pin, true);
         modify(PIPC_BASE,  port, pin, true);
     }
-}
+
+    // -------------------------------------------------------------------------
+    // Type-state GPIO pins
+    // -------------------------------------------------------------------------
+
+    use core::marker::PhantomData;
+    use core::convert::Infallible;
+
+    /// Marker for a pin configured as a software-controlled output.
+    pub struct Output;
+    /// Marker for a pin configured as a software-controlled input.
+    pub struct Input;
+
+    /// A GPIO pin with a const-generic port and bit number, typed by direction.
+    ///
+    /// `PORT` is 1-based (1–11); `BIT` is 0–15.
+    ///
+    /// Owns no resources; the hardware configuration is managed via the
+    /// underlying [`set_as_output`] / [`write`] free functions.
+    pub struct Pin<const PORT: u8, const BIT: u8, MODE>(PhantomData<MODE>);
+
+    impl<const PORT: u8, const BIT: u8, MODE> Pin<PORT, BIT, MODE> {
+        /// Create a new typed pin handle.
+        ///
+        /// # Safety
+        /// The caller must ensure the pin is not concurrently owned by another
+        /// driver and that GPIO clocks are enabled.
+        #[inline]
+        pub unsafe fn new() -> Self { Pin(PhantomData) }
+    }
+
+    impl<const PORT: u8, const BIT: u8> Pin<PORT, BIT, Output> {
+        /// Configure the underlying hardware as an output and return a typed handle.
+        ///
+        /// # Safety
+        /// Same requirements as [`set_as_output`].
+        pub unsafe fn into_output() -> Self {
+            set_as_output(PORT, BIT);
+            Pin(PhantomData)
+        }
+    }
+
+    impl<const PORT: u8, const BIT: u8> embedded_hal::digital::ErrorType
+        for Pin<PORT, BIT, Output>
+    {
+        type Error = Infallible;
+    }
+
+    impl<const PORT: u8, const BIT: u8> embedded_hal::digital::OutputPin
+        for Pin<PORT, BIT, Output>
+    {
+        #[inline]
+        fn set_high(&mut self) -> Result<(), Infallible> {
+            unsafe { write(PORT, BIT, true) };
+            Ok(())
+        }
+        #[inline]
+        fn set_low(&mut self) -> Result<(), Infallible> {
+            unsafe { write(PORT, BIT, false) };
+            Ok(())
+        }
+    }
+
+    impl<const PORT: u8, const BIT: u8> embedded_hal::digital::StatefulOutputPin
+        for Pin<PORT, BIT, Output>
+    {
+        #[inline]
+        fn is_set_high(&mut self) -> Result<bool, Infallible> {
+            let val = unsafe { core::ptr::read_volatile(p(PORT)) };
+            Ok(val & (1u16 << BIT) != 0)
+        }
+        #[inline]
+        fn is_set_low(&mut self) -> Result<bool, Infallible> {
+            let val = unsafe { core::ptr::read_volatile(p(PORT)) };
+            Ok(val & (1u16 << BIT) == 0)
+        }
+    }
+
+    impl<const PORT: u8, const BIT: u8> embedded_hal::digital::ErrorType
+        for Pin<PORT, BIT, Input>
+    {
+        type Error = Infallible;
+    }
+
+    impl<const PORT: u8, const BIT: u8> embedded_hal::digital::InputPin
+        for Pin<PORT, BIT, Input>
+    {
+        #[inline]
+        fn is_high(&mut self) -> Result<bool, Infallible> {
+            let val = unsafe { core::ptr::read_volatile(p(PORT)) };
+            Ok(val & (1u16 << BIT) != 0)
+        }
+        #[inline]
+        fn is_low(&mut self) -> Result<bool, Infallible> {
+            let val = unsafe { core::ptr::read_volatile(p(PORT)) };
+            Ok(val & (1u16 << BIT) == 0)
+        }
+    }
+} // pub mod gpio
 
 #[cfg(all(test, not(target_os = "none")))]
 mod tests {

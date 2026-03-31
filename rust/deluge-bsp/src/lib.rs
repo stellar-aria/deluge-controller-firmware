@@ -6,6 +6,7 @@
 
 pub mod audio;
 pub mod cv_gate;
+pub mod fat;
 pub mod oled;
 pub mod pic;
 pub mod sd;

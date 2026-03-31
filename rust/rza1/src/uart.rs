@@ -285,9 +285,7 @@ static TXI_HANDLERS: [HandlerFn; NUM_CHANNELS] =
 // Async API
 // ---------------------------------------------------------------------------
 
-/// Read one byte from the receive FIFO of SCIF channel `ch`.
-///
-/// Suspends the calling task if no data is available.
+/// Read a single byte from SCIF channel `ch`, waiting asynchronously.
 pub async fn read_byte(ch: usize) -> u8 {
     let b = base(ch);
     poll_fn(|cx| {
@@ -384,6 +382,68 @@ async fn wait_tdfe(ch: usize) {
         }
     })
     .await
+}
+
+// ── embedded-io-async impls ───────────────────────────────────────────────────
+
+use core::convert::Infallible;
+
+/// A type-safe handle to a SCIF UART channel exposing `embedded-io-async`
+/// `Read` and `Write` traits.
+///
+/// `CH` is the channel number (0–4).  The underlying free functions
+/// (`read_byte`, `write_bytes`) must be available (i.e., [`init`] and
+/// [`register_irqs_for`] already called for the channel).
+pub struct ScifUart<const CH: usize>;
+
+impl<const CH: usize> ScifUart<CH> {
+    /// Create a handle.
+    ///
+    /// # Safety
+    /// [`init`] and [`register_irqs_for`] must have been called for channel `CH`.
+    #[inline]
+    pub unsafe fn new() -> Self { ScifUart }
+}
+
+impl<const CH: usize> embedded_io_async::ErrorType for ScifUart<CH> {
+    type Error = Infallible;
+}
+
+impl<const CH: usize> embedded_io_async::Read for ScifUart<CH> {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Infallible> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        // Read at least one byte, then drain whatever is already in the FIFO
+        // without blocking, up to `buf.len()`.
+        buf[0] = read_byte(CH).await;
+        let mut n = 1usize;
+        while n < buf.len() {
+            let b = base(CH);
+            let scfsr = unsafe { rr16(b + SCFSR) };
+            if scfsr & (RDF | DR) == 0 {
+                break; // No more data immediately available.
+            }
+            buf[n] = unsafe { rr8(b + SCFRDR) };
+            // Clear RDF/DR after reading.
+            let scfsr2 = unsafe { rr16(b + SCFSR) };
+            unsafe { wr16(b + SCFSR, scfsr2 & !(RDF | DR)) };
+            n += 1;
+        }
+        Ok(n)
+    }
+}
+
+impl<const CH: usize> embedded_io_async::Write for ScifUart<CH> {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
+        write_bytes(CH, buf).await;
+        Ok(buf.len())
+    }
+
+    async fn flush(&mut self) -> Result<(), Infallible> {
+        wait_tdfe(CH).await;
+        Ok(())
+    }
 }
 
 #[cfg(all(test, not(target_os = "none")))]

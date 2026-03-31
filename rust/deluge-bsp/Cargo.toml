@@ -25,6 +25,7 @@ harness = false
 
 [dependencies]
 rza1 = { path = "../rza1" }
+embedded-sdmmc = { version = "0.9", default-features = false, features = ["defmt-log"] }
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-ar = "0.3"

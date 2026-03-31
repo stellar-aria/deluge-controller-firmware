@@ -32,7 +32,7 @@
 //! ```
 
 use core::future::poll_fn;
-use core::sync::atomic::{AtomicU16, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use core::task::Poll;
 
 use embassy_sync::waitqueue::AtomicWaker;
@@ -802,6 +802,217 @@ pub unsafe fn enable_card_detect_irq(port: u8) {
     // Hardware polarity: 0 = enabled, 1 = masked → clear bits to enable.
     let mask = reg16(base, OFF_INFO1_MASK).read_volatile();
     reg16(base, OFF_INFO1_MASK).write_volatile(mask & !INFO1_DET_CD);
+}
+
+// ---------------------------------------------------------------------------
+// Card capacity (set by deluge-bsp after CSD decode)
+// ---------------------------------------------------------------------------
+
+/// Total card capacity in 512-byte blocks, per port.
+///
+/// Populated by the BSP layer via [`set_card_blocks`] during card init so
+/// that the polling `BlockDevice` impl can return a reliable block count.
+static CARD_BLOCKS: [AtomicU32; NUM_PORTS] = [
+    AtomicU32::new(0),
+    AtomicU32::new(0),
+];
+
+/// Store the card capacity (in 512-byte blocks) for `port`.
+///
+/// Called by the BSP once the CSD register has been decoded.
+pub fn set_card_blocks(port: u8, blocks: u32) {
+    CARD_BLOCKS[port as usize].store(blocks, Ordering::Release);
+}
+
+/// Return the stored card capacity (in 512-byte blocks) for `port`.
+///
+/// Returns 0 if [`set_card_blocks`] has not been called yet.
+pub fn card_size_blocks(port: u8) -> u32 {
+    CARD_BLOCKS[port as usize].load(Ordering::Acquire)
+}
+
+// ---------------------------------------------------------------------------
+// Polling (synchronous, executor-free) data transfer
+// ---------------------------------------------------------------------------
+//
+// These functions mirror the async read_blocks_sw / write_blocks_sw paths
+// but spin on hardware register bits instead of using AtomicWaker.  They are
+// safe to call outside of an Embassy executor (e.g. from embedded-sdmmc's
+// synchronous BlockDevice trait impl).
+//
+// A timeout counter guards against hardware hang.  The limit is chosen to be
+// comfortably above the maximum expected transfer time for 512-byte blocks at
+// the fast SD clock (~33 MHz):  512 bytes / 33 MHz ≈ 120 µs → ≈ 4 000 ticks
+// at P0 / 8.  We use 10 000 000 to allow for card back-off without being
+// infinite.
+
+const POLL_TIMEOUT: u32 = 10_000_000;
+
+/// Issue an SD command using register polling (no IRQ / no executor).
+///
+/// Equivalent to [`send_cmd`] but spins on INFO1_RESP / INFO2_ERR_ALL.
+///
+/// # Safety
+/// Must not be called concurrently on the same port.  Writes SDHI registers.
+pub unsafe fn send_cmd_poll(port: u8, cmd_val: u16) -> Result<(), SdhiError> {
+    let base = port_base(port);
+
+    wait_clk_stable(port);
+    clear_info(port);
+
+    // Mask all interrupts (we poll instead).
+    reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
+    reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
+
+    // Issue command.
+    reg16(base, OFF_CMD).write_volatile(cmd_val);
+
+    // Spin until RESP or error.
+    for _ in 0..POLL_TIMEOUT {
+        let info1 = reg16(base, OFF_INFO1).read_volatile();
+        let info2 = reg16(base, OFF_INFO2).read_volatile();
+
+        if info2 & INFO2_ERR_ALL != 0 {
+            // Clear before returning.
+            reg16(base, OFF_INFO1).write_volatile(!info1);
+            reg16(base, OFF_INFO2).write_volatile(!info2);
+            clear_info(port);
+            return check_info2_errors(info2);
+        }
+        if info1 & INFO1_RESP != 0 {
+            reg16(base, OFF_INFO1).write_volatile(!info1);
+            reg16(base, OFF_INFO2).write_volatile(!info2);
+            clear_info(port);
+            return Ok(());
+        }
+    }
+
+    clear_info(port);
+    Err(SdhiError::ResponseTimeout)
+}
+
+/// Read `count` 512-byte blocks from the card using register polling.
+///
+/// The caller must have already:
+///   1. Set block count via [`set_block_count`].
+///   2. Issued the read command via [`send_cmd_poll`].
+///
+/// # Safety
+/// Must not be called concurrently on the same port.
+pub unsafe fn read_blocks_poll(
+    port: u8,
+    buf: *mut u8,
+    count: u32,
+) -> Result<(), SdhiError> {
+    let base = port_base(port);
+
+    let mut dst = buf;
+    for _block in 0..count {
+        // Wait for Buffer Read Enable (INFO2_BRE).
+        let mut ready = false;
+        for _ in 0..POLL_TIMEOUT {
+            let info2 = reg16(base, OFF_INFO2).read_volatile();
+            if info2 & INFO2_ERR_ALL != 0 {
+                reg16(base, OFF_INFO2).write_volatile(!info2);
+                return check_info2_errors(info2);
+            }
+            if info2 & INFO2_BRE != 0 {
+                // Clear only BRE.
+                reg16(base, OFF_INFO2).write_volatile(!(INFO2_BRE));
+                ready = true;
+                break;
+            }
+        }
+        if !ready {
+            return Err(SdhiError::DataTimeout);
+        }
+
+        // Drain 512 bytes from 32-bit FIFO (128 × 32-bit reads).
+        let fifo = reg32(base, OFF_BUF0);
+        for w in 0..128usize {
+            let word = fifo.read_volatile();
+            let p = dst.add(w * 4) as *mut u32;
+            p.write_unaligned(word);
+        }
+        dst = dst.add(512);
+    }
+
+    // Wait for access end (INFO1_DATA_TRNS).
+    for _ in 0..POLL_TIMEOUT {
+        let info2 = reg16(base, OFF_INFO2).read_volatile();
+        if info2 & INFO2_ERR_ALL != 0 {
+            reg16(base, OFF_INFO2).write_volatile(!info2);
+            return check_info2_errors(info2);
+        }
+        let info1 = reg16(base, OFF_INFO1).read_volatile();
+        if info1 & INFO1_DATA_TRNS != 0 {
+            reg16(base, OFF_INFO1).write_volatile(!info1);
+            reg16(base, OFF_INFO2).write_volatile(!info2);
+            return Ok(());
+        }
+    }
+
+    Err(SdhiError::DataTimeout)
+}
+
+/// Write `count` 512-byte blocks to the card using register polling.
+///
+/// The caller must have already set block count and issued the write command.
+///
+/// # Safety
+/// Must not be called concurrently on the same port.
+pub unsafe fn write_blocks_poll(
+    port: u8,
+    buf: *const u8,
+    count: u32,
+) -> Result<(), SdhiError> {
+    let base = port_base(port);
+
+    let mut src = buf;
+    for _block in 0..count {
+        // Wait for Buffer Write Enable (INFO2_BWE).
+        let mut ready = false;
+        for _ in 0..POLL_TIMEOUT {
+            let info2 = reg16(base, OFF_INFO2).read_volatile();
+            if info2 & INFO2_ERR_ALL != 0 {
+                reg16(base, OFF_INFO2).write_volatile(!info2);
+                return check_info2_errors(info2);
+            }
+            if info2 & INFO2_BWE != 0 {
+                reg16(base, OFF_INFO2).write_volatile(!(INFO2_BWE));
+                ready = true;
+                break;
+            }
+        }
+        if !ready {
+            return Err(SdhiError::DataTimeout);
+        }
+
+        // Fill 512 bytes into 32-bit FIFO (128 × 32-bit writes).
+        let fifo = reg32(base, OFF_BUF0);
+        for w in 0..128usize {
+            let p = src.add(w * 4) as *const u32;
+            fifo.write_volatile(p.read_unaligned());
+        }
+        src = src.add(512);
+    }
+
+    // Wait for access end.
+    for _ in 0..POLL_TIMEOUT {
+        let info2 = reg16(base, OFF_INFO2).read_volatile();
+        if info2 & INFO2_ERR_ALL != 0 {
+            reg16(base, OFF_INFO2).write_volatile(!info2);
+            return check_info2_errors(info2);
+        }
+        let info1 = reg16(base, OFF_INFO1).read_volatile();
+        if info1 & INFO1_DATA_TRNS != 0 {
+            reg16(base, OFF_INFO1).write_volatile(!info1);
+            reg16(base, OFF_INFO2).write_volatile(!info2);
+            return Ok(());
+        }
+    }
+
+    Err(SdhiError::DataTimeout)
 }
 
 // ---------------------------------------------------------------------------

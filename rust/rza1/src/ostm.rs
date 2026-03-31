@@ -145,6 +145,33 @@ pub unsafe fn delay_ms(ms: u32) {
     delay_ticks(ms * (OSTM_HZ / 1000));
 }
 
+/// A `DelayNs` implementation backed by the OSTM0 free-running counter.
+///
+/// [`start_free_running(0)`](start_free_running) must have been called before
+/// constructing or using a `Delay`.
+pub struct Delay;
+
+impl Delay {
+    /// Create a new `Delay`.  Does not start OSTM0; caller must have done
+    /// that already via [`start_free_running`]`(0)`.
+    #[inline]
+    pub fn new() -> Self { Delay }
+}
+
+impl Default for Delay {
+    fn default() -> Self { Self::new() }
+}
+
+impl embedded_hal::delay::DelayNs for Delay {
+    fn delay_ns(&mut self, ns: u32) {
+        // OSTM_HZ = 33_333_333 ticks/s → 1 tick ≈ 30 ns.
+        // ticks = ceil(ns * OSTM_HZ / 1_000_000_000)
+        // Use u64 to avoid overflow: max ns = u32::MAX ≈ 4.3 s → 143 M ticks, fits u32.
+        let ticks = ((ns as u64 * OSTM_HZ as u64 + 999_999_999) / 1_000_000_000) as u32;
+        unsafe { delay_ticks(ticks) };
+    }
+}
+
 /// Stop OSTM channel `n`.
 ///
 /// # Safety
