@@ -84,8 +84,10 @@ pub const INTENB0_RSME:  u16 = 0x4000;
 pub const INTENB0_VBSE:  u16 = 0x8000;
 
 // ---------------------------------------------------------------------------
-// INTENB1 (host-mode attach/detach)
+// INTENB1 (host-mode attach/detach/setup)
 // ---------------------------------------------------------------------------
+pub const INTENB1_SACKE:  u16 = 0x0010; // Setup ACK enable
+pub const INTENB1_SIGNE:  u16 = 0x0020; // Setup IGNORE (NAK/error) enable
 pub const INTENB1_ATTCHE: u16 = 0x0800;
 pub const INTENB1_DTCHE:  u16 = 0x1000;
 pub const INTENB1_BCHGE:  u16 = 0x4000;
@@ -125,6 +127,8 @@ pub const CTSQ_WRITE_ZLP:    u16 = 0b101;
 // ---------------------------------------------------------------------------
 // INTSTS1
 // ---------------------------------------------------------------------------
+pub const INTSTS1_SACK:  u16 = 0x0010; // Setup ACK received
+pub const INTSTS1_SIGN:  u16 = 0x0020; // Setup IGNORE (NAK/error)
 pub const INTSTS1_ATTCH: u16 = 0x0800;
 pub const INTSTS1_DTCH:  u16 = 0x1000;
 
@@ -138,7 +142,20 @@ pub const FRMNUM_OVRN: u16 = 0x8000;
 // ---------------------------------------------------------------------------
 // DCPMAXP
 // ---------------------------------------------------------------------------
-pub const DCPMAXP_MXPS_MASK: u16 = 0x007F;
+pub const DCPMAXP_MXPS_MASK:  u16 = 0x007F;
+pub const DCPMAXP_DEVSEL_SHIFT: u32 = 12; // host: device address in DCPMAXP[15:12]
+
+// ---------------------------------------------------------------------------
+// DCPCFG (host mode)
+// ---------------------------------------------------------------------------
+pub const DCPCFG_DIR:    u16 = 0x0010; // bit 4: data stage direction (1=host OUT)
+pub const DCPCFG_SHTNAK: u16 = 0x0080; // NAK on short packet
+
+// ---------------------------------------------------------------------------
+// DCPCTR (DCP control — some bits overlap with PIPEnCTR)
+// ---------------------------------------------------------------------------
+pub const DCPCTR_SUREQ:    u16 = 0x4000; // bit 14: issue SETUP token
+pub const DCPCTR_SUREQCLR: u16 = 0x0800; // bit 11: cancel pending SETUP
 
 // ---------------------------------------------------------------------------
 // DCPCTR / PIPEnCTR
@@ -183,6 +200,46 @@ pub const PIPEBUF_BUFSIZE_SHIFT: u32 = 10;
 // ---------------------------------------------------------------------------
 pub const PIPEMAXP_MXPS_MASK:   u16 = 0x07FF;
 pub const PIPEMAXP_DEVSEL_SHIFT: u32 = 12;
+
+// ---------------------------------------------------------------------------
+// PIPEPERI
+// ---------------------------------------------------------------------------
+// Layout (TRM §28.3.35):
+//   [15:13] — reserved
+//   [12]    IFIS — isochronous IN buffer flush (host mode: must be 0)
+//   [11:3]  — reserved
+//   [2:0]   IITV[2:0] — interval as 2^n frames (0..=7)
+//
+// IITV is only meaningful for interrupt/isochronous pipes (6-9 in host mode).
+// For bulk pipes (3-5) and pipes 10-15, the TRM requires IITV=0b000.
+//
+// Conversion from USB bInterval (FS device, 1-255 frames) to IITV:
+//   IITV = floor(log2(bInterval)).min(7)   (so bInterval=1 → 0, =2 → 1, =4 → 2, ...)
+pub const PIPEPERI_IITV_MASK: u16 = 0x0007;
+
+// ---------------------------------------------------------------------------
+// DEVADD (host mode — per-device speed + hub configuration)
+// ---------------------------------------------------------------------------
+// Layout (TRM §28.3 DEVADDn):
+//   [15]    — reserved
+//   [14:11] UPPHUB[3:0] — USB address of the hub the device is behind
+//                          (0000 = directly attached to this port)
+//   [10:8]  HUBPORT[2:0] — hub port number
+//                          (000 = directly attached to this port)
+//   [7:6]   USBSPD[1:0]  — 00=unused, 01=LS, 10=FS, 11=HS
+//   [5:0]   — reserved
+//
+// When UPPHUB/HUBPORT are non-zero the controller automatically issues
+// split transactions (SSPLIT/CSPLIT) for the device — no firmware action
+// beyond writing the register is needed.
+/// USBSPD field in DEVADDn: bits [7:6] = 01 → LS, 10 → FS.
+pub const DEVADD_USBSPD_SHIFT: u32 = 6;
+pub const DEVADD_USBSPD_LS: u16 = 1 << 6; // Low-speed  (01)
+pub const DEVADD_USBSPD_FS: u16 = 2 << 6; // Full-speed (10)
+/// UPPHUB field in DEVADDn: bits [14:11] — hub USB address (0 = direct).
+pub const DEVADD_UPPHUB_SHIFT: u32 = 11;
+/// HUBPORT field in DEVADDn: bits [10:8] — hub port number (0 = direct).
+pub const DEVADD_HUBPORT_SHIFT: u32 = 8;
 
 // ---------------------------------------------------------------------------
 // SUSPMODE
@@ -413,6 +470,15 @@ pub unsafe fn pipectr_ptr(regs: *mut Rusb1Regs, n: usize) -> *mut u16 {
         // PIPE1CTR is at +0x70; pipes are contiguous u16 words.
         core::ptr::addr_of_mut!((*regs).pipe1ctr).add(n - 1)
     }
+}
+
+/// Return a pointer to the `DEVADDn` register for device address `dev_addr` (0-10).
+///
+/// # Safety
+/// `regs` must be valid.  `dev_addr` must be in the range 0-10.
+pub unsafe fn devadd_ptr(regs: *mut Rusb1Regs, dev_addr: u8) -> *mut u16 {
+    debug_assert!((dev_addr as usize) <= 10);
+    core::ptr::addr_of_mut!((*regs).devadd0).add(dev_addr as usize)
 }
 
 // ---------------------------------------------------------------------------

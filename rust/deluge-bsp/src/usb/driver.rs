@@ -42,6 +42,7 @@ use core::sync::atomic::{AtomicU16, AtomicU8, Ordering};
 use core::task::{Context, Poll};
 
 use embassy_sync::waitqueue::AtomicWaker;
+use embassy_time::Timer;
 use embassy_usb_driver::{
     Bus, ControlPipe, Direction, Driver, EndpointAddress, EndpointAllocError,
     EndpointError, EndpointInfo, EndpointOut, EndpointIn, EndpointType, Event,
@@ -363,11 +364,28 @@ impl Bus for Rusb1Bus {
     }
 
     async fn disable(&mut self) {
+        // TRM §28.3 (3): when disconnection from the USB host is recognised
+        // (device mode), DPRPU and DCFM must be toggled in this exact sequence
+        // before the bus can be reused (e.g. switching to host mode).
+        //
+        // Step 1: clear DPRPU — pull-up off; host sees SE0 (disconnect).
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
-            // Disable pull-up to signal disconnect.
-            rmw(core::ptr::addr_of_mut!((*regs).syscfg0),
-                SYSCFG_DPRPU, 0);
+            rmw(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_DPRPU, 0);
+        }
+        // Step 2: wait ≥ 1 µs.
+        Timer::after_micros(1).await;
+        unsafe {
+            let regs = Rusb1Regs::ptr(self.port);
+            // Step 3: pulse DCFM to 1 (resets PHY data-line state machine).
+            rmw(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_DCFM, SYSCFG_DCFM);
+        }
+        // Step 4: wait ≥ 200 ns (timer minimum is 1 µs — safe to over-wait).
+        Timer::after_micros(1).await;
+        unsafe {
+            let regs = Rusb1Regs::ptr(self.port);
+            // Step 5: clear DCFM back to function (device) mode.
+            rmw(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_DCFM, 0);
             // Disable all interrupts.
             wr(core::ptr::addr_of_mut!((*regs).intenb0), 0);
             wr(core::ptr::addr_of_mut!((*regs).brdyenb), 0);
