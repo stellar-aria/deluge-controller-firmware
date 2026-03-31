@@ -50,6 +50,7 @@ pub const DVSTCTR0_VBUSEN: u16 = 0x0200; // Host mode: enable VBUS power (bit 9)
 
 pub const DVSTCTR0_RHST_LS: u16 = 0b001;
 pub const DVSTCTR0_RHST_FS: u16 = 0b010;
+pub const DVSTCTR0_RHST_HS: u16 = 0b011;
 
 // ---------------------------------------------------------------------------
 // FIFO SEL / CTR  (shared shape between CFIFOSEL and DnFIFOSEL)
@@ -236,6 +237,7 @@ pub const PIPEPERI_IITV_MASK: u16 = 0x0007;
 pub const DEVADD_USBSPD_SHIFT: u32 = 6;
 pub const DEVADD_USBSPD_LS: u16 = 1 << 6; // Low-speed  (01)
 pub const DEVADD_USBSPD_FS: u16 = 2 << 6; // Full-speed (10)
+pub const DEVADD_USBSPD_HS: u16 = 3 << 6; // High-speed (11)
 /// UPPHUB field in DEVADDn: bits [14:11] — hub USB address (0 = direct).
 pub const DEVADD_UPPHUB_SHIFT: u32 = 11;
 /// HUBPORT field in DEVADDn: bits [10:8] — hub port number (0 = direct).

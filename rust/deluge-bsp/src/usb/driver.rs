@@ -51,8 +51,8 @@ use embassy_usb_driver::{
 
 use super::regs::{
     Rusb1Regs,
-    SYSCFG_USBE, SYSCFG_DPRPU, SYSCFG_DRPD, SYSCFG_DCFM,
-    BUSWAIT_VALUE,
+    SYSCFG_USBE, SYSCFG_UPLLE, SYSCFG_HSE, SYSCFG_DPRPU, SYSCFG_DRPD, SYSCFG_DCFM,
+    BUSWAIT_VALUE, SUSPMODE_SUSPM,
     INTENB0_BRDYE, INTENB0_BEMPE, INTENB0_CTRE, INTENB0_DVSE, INTENB0_VBSE,
     INTSTS0_VBSTS, INTSTS0_VBINT, INTSTS0_DVST, INTSTS0_CTRT, INTSTS0_BRDY,
     INTSTS0_BEMP, INTSTS0_CTSQ_MASK, INTSTS0_DVSQ_MASK, INTSTS0_DVSQ_SHIFT,
@@ -290,12 +290,38 @@ impl<'d> Driver<'d> for Rusb1Driver {
     fn start(self, control_max_packet_size: u16) -> (Self::Bus, Self::ControlPipe) {
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
-            // Enable USB module and oscillator.
-            wr(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_USBE);
-            // Device mode: DCFM=0, DPRPU=1 (pull-up on D+).
-            rmw(core::ptr::addr_of_mut!((*regs).syscfg0),
-                SYSCFG_DCFM | SYSCFG_DRPD | SYSCFG_DPRPU,
-                SYSCFG_DPRPU);
+
+            // ── PLL / clock init (TRM §28.4.1 (5)) ─────────────────────────
+            // Stop clock supply to this port while touching the PLL.
+            rmw(core::ptr::addr_of_mut!((*regs).suspmode), SUSPMODE_SUSPM, 0);
+
+            // UPLLE lives in USB0's SYSCFG0 regardless of which port we are
+            // initialising (C reference: always writes to rusb0->SYSCFG0).
+            let regs0 = Rusb1Regs::ptr(0);
+            rmw(core::ptr::addr_of_mut!((*regs0).syscfg0), SYSCFG_UPLLE, SYSCFG_UPLLE);
+
+            // Wait >= 1 ms for PLL lock (at ~400 MHz ≈ 400 K spin iterations).
+            for _ in 0u32..400_000 {
+                core::hint::spin_loop();
+            }
+
+            // CPU-bus wait cycles and clock re-enable.
+            wr(core::ptr::addr_of_mut!((*regs).buswait), BUSWAIT_VALUE);
+            rmw(core::ptr::addr_of_mut!((*regs).suspmode), SUSPMODE_SUSPM, SUSPMODE_SUSPM);
+
+            // ── Mode / PHY config ────────────────────────────────────────────
+            // HSE=1: module auto-negotiates HS or FS during the reset handshake.
+            // Must be set while DPRPU=0 (TRM §28.3 SYSCFG.HSE).
+            rmw(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_HSE, SYSCFG_HSE);
+
+            // DCFM=0 (function/device mode), DRPD=0 (no pull-downs in device mode).
+            rmw(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_DCFM | SYSCFG_DRPD, 0);
+
+            // Enable USB module.
+            rmw(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_USBE, SYSCFG_USBE);
+
+            // D+ pull-up: notifies host of connection.
+            rmw(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_DPRPU, SYSCFG_DPRPU);
 
             // DCPMAXP (control endpoint max packet size).
             wr(core::ptr::addr_of_mut!((*regs).dcpmaxp),

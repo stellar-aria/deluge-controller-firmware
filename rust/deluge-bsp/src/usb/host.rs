@@ -56,9 +56,9 @@ use embassy_time::Timer;
 
 use super::regs::{
     Rusb1Regs,
-    SYSCFG_USBE, SYSCFG_DCFM, SYSCFG_DRPD, SYSCFG_DPRPU,
-    DVSTCTR0_UACT, DVSTCTR0_USBRST, DVSTCTR0_VBUSEN,
-    BUSWAIT_VALUE,
+    SYSCFG_USBE, SYSCFG_DCFM, SYSCFG_DRPD, SYSCFG_DPRPU, SYSCFG_UPLLE, SYSCFG_HSE,
+    DVSTCTR0_UACT, DVSTCTR0_USBRST, DVSTCTR0_VBUSEN, DVSTCTR0_RHST, DVSTCTR0_RHST_LS,
+    BUSWAIT_VALUE, SUSPMODE_SUSPM,
     INTENB0_BRDYE, INTENB0_BEMPE, INTENB0_NRDYE,
     INTENB1_SACKE, INTENB1_SIGNE, INTENB1_ATTCHE, INTENB1_DTCHE,
     INTSTS0_BRDY, INTSTS0_NRDY, INTSTS0_BEMP,
@@ -73,7 +73,7 @@ use super::regs::{
     DCPCFG_DIR, DCPCFG_SHTNAK,
     DCPMAXP_MXPS_MASK, DCPMAXP_DEVSEL_SHIFT,
     DCPCTR_SUREQ, DCPCTR_SUREQCLR,
-    DEVADD_USBSPD_LS, DEVADD_USBSPD_FS,
+    DEVADD_USBSPD_LS, DEVADD_USBSPD_FS, DEVADD_USBSPD_HS,
     DEVADD_UPPHUB_SHIFT, DEVADD_HUBPORT_SHIFT,
     FIFOCTR_BCLR, FIFOCTR_BVAL,
     FIFOSEL_ISEL,
@@ -289,11 +289,29 @@ impl Rusb1HostDriver {
         debug_assert!(port <= 1);
         let regs = Rusb1Regs::ptr(port);
 
-        wr(core::ptr::addr_of_mut!((*regs).buswait), BUSWAIT_VALUE);
+        // ── PLL / clock init (TRM §28.4.1 (5)) ─────────────────────────
+        // Stop clock supply to this port first.
+        rmw(core::ptr::addr_of_mut!((*regs).suspmode), SUSPMODE_SUSPM, 0);
 
+        // UPLLE lives in USB0's SYSCFG0 (C reference always writes rusb0->SYSCFG0).
+        let regs0 = Rusb1Regs::ptr(0);
+        rmw(core::ptr::addr_of_mut!((*regs0).syscfg0), SYSCFG_UPLLE, SYSCFG_UPLLE);
+
+        // Wait >= 1 ms for PLL lock (~400 K iterations at 400 MHz).
+        for _ in 0u32..400_000 {
+            core::hint::spin_loop();
+        }
+
+        // CPU-bus wait cycles and clock re-enable.
+        wr(core::ptr::addr_of_mut!((*regs).buswait), BUSWAIT_VALUE);
+        rmw(core::ptr::addr_of_mut!((*regs).suspmode), SUSPMODE_SUSPM, SUSPMODE_SUSPM);
+
+        // ── Mode / PHY config ────────────────────────────────────────────
         // Host mode: DCFM=1, DRPD=1 (pull-downs enabled), DPRPU=0 (no pull-up).
+        // HSE is NOT set here; TRM requires it to be set after ATTCH and before
+        // USBRST — it is written in bus_reset() based on the detected device speed.
         rmw(core::ptr::addr_of_mut!((*regs).syscfg0),
-            SYSCFG_DCFM | SYSCFG_DRPD | SYSCFG_DPRPU,
+            SYSCFG_DCFM | SYSCFG_DRPD | SYSCFG_DPRPU | SYSCFG_HSE,
             SYSCFG_DCFM | SYSCFG_DRPD);
 
         // Power VBUS.
@@ -404,6 +422,14 @@ impl Rusb1HostDriver {
             rza1::rusb1::int_enable(self.port);
 
             // Assert reset for ~20 ms.
+            // Set HSE before asserting USBRST (TRM §28.3 SYSCFG.HSE).
+            // LS devices cannot do HS negotiation — skip HSE for them.
+            let rhst_now = rd(core::ptr::addr_of!((*regs).dvstctr0)) & DVSTCTR0_RHST;
+            if rhst_now == DVSTCTR0_RHST_LS {
+                rmw(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_HSE, 0);
+            } else {
+                rmw(core::ptr::addr_of_mut!((*regs).syscfg0), SYSCFG_HSE, SYSCFG_HSE);
+            }
             rmw(core::ptr::addr_of_mut!((*regs).dvstctr0),
                 DVSTCTR0_USBRST, DVSTCTR0_USBRST);
             // At ~400 MHz ≈ 8 M iterations ≈ 20 ms.
@@ -427,11 +453,13 @@ impl Rusb1HostDriver {
     pub fn port_speed(&self) -> UsbSpeed {
         const RHST_LS: u16 = 0x0001;
         const RHST_FS: u16 = 0x0002;
+        const RHST_HS: u16 = 0x0003;
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
             match rd(core::ptr::addr_of!((*regs).dvstctr0)) & 0x0007 {
                 RHST_LS => UsbSpeed::LowSpeed,
                 RHST_FS => UsbSpeed::FullSpeed,
+                RHST_HS => UsbSpeed::HighSpeed,
                 _       => UsbSpeed::Unknown,
             }
         }
@@ -480,6 +508,7 @@ impl Rusb1HostDriver {
             // All three must be written together before communication starts.
             let usbspd = match speed {
                 UsbSpeed::LowSpeed  => DEVADD_USBSPD_LS,
+                UsbSpeed::HighSpeed => DEVADD_USBSPD_HS,
                 _                   => DEVADD_USBSPD_FS,
             };
             let devadd_val = ((hub_addr as u16) << DEVADD_UPPHUB_SHIFT)
