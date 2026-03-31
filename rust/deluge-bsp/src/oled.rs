@@ -87,7 +87,13 @@ impl FrameBuffer {
     pub const fn new() -> Self {
         Self { pages: [[0u8; WIDTH]; PAGES] }
     }
+}
 
+impl Default for FrameBuffer {
+    fn default() -> Self { Self::new() }
+}
+
+impl FrameBuffer {
     /// Set or clear the pixel at column `x` (0–127), row `y` (0–47).
     ///
     /// Silently ignores out-of-bounds coordinates.
@@ -136,10 +142,6 @@ impl FrameBuffer {
             core::slice::from_raw_parts(self.pages.as_ptr() as *const u8, FRAME_BYTES)
         }
     }
-}
-
-impl Default for FrameBuffer {
-    fn default() -> Self { Self::new() }
 }
 
 // ── SSD1309 init sequence helpers ─────────────────────────────────────────────

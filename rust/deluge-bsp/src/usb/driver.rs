@@ -632,7 +632,7 @@ impl EndpointOut for Rusb1EndpointOut {
         // Store the transfer state so the ISR can fill the buffer.
         critical_section::with(|cs| {
             let state = unsafe { &mut *PIPE_XFER[pipe].borrow(cs).get() };
-            state.buf = buf.as_mut_ptr();
+            state.buf = unsafe { core::ptr::NonNull::new_unchecked(buf.as_mut_ptr()) };
             state.length = buf.len() as u16;
             state.remaining = buf.len() as u16;
             state.mps = mps;
@@ -712,7 +712,7 @@ impl EndpointIn for Rusb1EndpointIn {
         critical_section::with(|cs| {
             let state = unsafe { &mut *PIPE_XFER[pipe].borrow(cs).get() };
             // Cast away const — we only read this pointer in the ISR.
-            state.buf = buf.as_ptr() as *mut u8;
+            state.buf = unsafe { core::ptr::NonNull::new_unchecked(buf.as_ptr() as *mut u8) };
             state.length = buf.len() as u16;
             state.remaining = buf.len() as u16;
             state.mps = mps;
@@ -952,8 +952,9 @@ unsafe fn process_bus_reset(port: u8) {
 
                 // Signal transfer failure to any waiting task.
                 let state = &mut *PIPE_XFER[n].borrow(cs).get();
-                if !state.buf.is_null() {
-                    state.buf = core::ptr::null_mut();
+                if state.remaining != 0 {
+                    state.remaining = 0;
+                    state.buf = core::ptr::NonNull::dangling();
                     abort_mask |= 1u16 << n;
                 }
             }

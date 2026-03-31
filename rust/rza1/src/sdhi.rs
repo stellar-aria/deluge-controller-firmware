@@ -1016,6 +1016,79 @@ pub unsafe fn write_blocks_poll(
 }
 
 // ---------------------------------------------------------------------------
+// Owned typed wrapper
+// ---------------------------------------------------------------------------
+
+/// Owned handle for SDHI port `PORT` (0 or 1).
+///
+/// Wraps the free functions in an object-oriented API.  The type parameter
+/// `PORT` encodes the port number at compile time.
+pub struct Sdhi<const PORT: u8>;
+
+impl<const PORT: u8> Sdhi<PORT> {
+    /// Claim ownership of SDHI port `PORT`.
+    ///
+    /// # Safety
+    /// The caller must ensure no other code uses port `PORT` concurrently, and
+    /// that the SDHI clock has been enabled (via `stb::init` or equivalent).
+    pub unsafe fn new() -> Self { Sdhi }
+
+    /// Initialise the hardware for this port.
+    ///
+    /// # Safety
+    /// Writes memory-mapped SDHI registers.
+    pub unsafe fn init(&self) { init(PORT) }
+
+    /// Switch the SD clock to high speed (12.5 MHz with MPB3 = 25 MHz).
+    ///
+    /// # Safety
+    /// Writes memory-mapped SDHI registers.
+    pub unsafe fn set_clock_fast(&self) { set_clock_fast(PORT) }
+
+    /// Register GIC IRQs for this port's interrupt handler.
+    ///
+    /// # Safety
+    /// Writes GIC registers.
+    pub unsafe fn register_irqs(&self) { register_irqs(PORT) }
+
+    /// Returns `true` if a card is detected in the slot.
+    ///
+    /// # Safety
+    /// Reads memory-mapped SDHI registers.
+    pub unsafe fn card_inserted(&self) -> bool { card_inserted(PORT) }
+
+    /// Set the number of blocks for a multi-block transfer command.
+    ///
+    /// # Safety
+    /// Writes memory-mapped SDHI registers.
+    pub unsafe fn set_block_count(&self, count: u32) { set_block_count(PORT, count) }
+
+    /// Issue an SD command and wait (polling) for a response.
+    ///
+    /// # Safety
+    /// Must not be called concurrently.  Writes SDHI registers.
+    pub unsafe fn send_cmd_poll(&self, cmd_val: u16) -> Result<(), SdhiError> {
+        send_cmd_poll(PORT, cmd_val)
+    }
+
+    /// Read `count` 512-byte blocks into `buf` using register polling.
+    ///
+    /// # Safety
+    /// Must not be called concurrently.  `buf` must be valid for `count * 512` bytes.
+    pub unsafe fn read_blocks_poll(&self, buf: *mut u8, count: u32) -> Result<(), SdhiError> {
+        read_blocks_poll(PORT, buf, count)
+    }
+
+    /// Write `count` 512-byte blocks from `buf` using register polling.
+    ///
+    /// # Safety
+    /// Must not be called concurrently.  `buf` must be valid for `count * 512` bytes.
+    pub unsafe fn write_blocks_poll(&self, buf: *const u8, count: u32) -> Result<(), SdhiError> {
+        write_blocks_poll(PORT, buf, count)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests (host-side, register address verification only)
 // ---------------------------------------------------------------------------
 

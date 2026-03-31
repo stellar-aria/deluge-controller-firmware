@@ -48,13 +48,41 @@ pub const INT_ID_TOTAL: usize = 587;
 /// (nested interrupts supported), already in SYS mode.
 pub type Handler = fn();
 
+/// Wrapper making `UnsafeCell<Option<Handler>>` `Sync`.
+///
+/// Sound on this target because access is single-core: registration happens
+/// before `cpsie i`, and dispatch only runs in the IRQ context (IRQ masked
+/// for the caller).
+struct HandlerCell(core::cell::UnsafeCell<Option<Handler>>);
+
+// SAFETY: bare-metal single-core; no actual concurrent access.
+unsafe impl Sync for HandlerCell {}
+
+impl HandlerCell {
+    const fn new() -> Self {
+        HandlerCell(core::cell::UnsafeCell::new(None))
+    }
+    /// Write a new handler.  Caller must ensure no concurrent read.
+    unsafe fn set(&self, h: Handler) {
+        *self.0.get() = Some(h);
+    }
+    /// Read the current handler.  Caller must ensure no concurrent write.
+    unsafe fn get(&self) -> Option<Handler> {
+        *self.0.get()
+    }
+}
+
 /// IRQ handler dispatch table — one slot per interrupt ID.
 /// Initialized to `None` (unhandled = silently EOI'd).
 ///
 /// # Safety contract
-/// Must only be mutated (via [`register`]) before global IRQ is enabled.
-/// Read only from the IRQ handler (single-core, so no data race).
-static mut HANDLERS: [Option<Handler>; INT_ID_TOTAL] = [None; INT_ID_TOTAL];
+/// [`register`] must only be called before global IRQ is enabled.
+/// [`gic_dispatch`] is only called from the IRQ handler with IRQ masked,
+/// so no data race is possible on single-core.
+static HANDLERS: [HandlerCell; INT_ID_TOTAL] = {
+    const NONE: HandlerCell = HandlerCell::new();
+    [NONE; INT_ID_TOTAL]
+};
 
 /// Initial ICDICFR edge/level configuration values (37 registers × 32 bits).
 /// Taken verbatim from the Renesas `intc_icdicfrn_table[]` in `intc.c`.
@@ -172,7 +200,7 @@ pub unsafe fn init() {
 /// See struct-level safety note. Must be called before IRQ is enabled.
 pub unsafe fn register(id: u16, handler: Handler) {
     if (id as usize) < INT_ID_TOTAL {
-        HANDLERS[id as usize] = Some(handler);
+        HANDLERS[id as usize].set(handler);
     }
 }
 
@@ -242,7 +270,7 @@ pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
     }
 
     if (int_id as usize) < INT_ID_TOTAL {
-        if let Some(f) = HANDLERS[int_id as usize] {
+        if let Some(f) = HANDLERS[int_id as usize].get() {
             // Re-enable IRQ to allow higher-priority interrupts to preempt.
             cortex_ar::interrupt::enable();
             f();

@@ -70,6 +70,10 @@ const STBCR5: usize = 0xFCFE_0428;
 /// those two bits so it is safe to call even if the rest of STBCR5 was set
 /// by an earlier boot stage.
 ///
+/// In production firmware, prefer [`rza1::stb::init`] which enables all
+/// peripheral clocks at once. Call this function directly only in isolated
+/// tests or examples that do not call `stb::init()`.
+///
 /// # Safety
 /// Writes to memory-mapped CPG registers. Safe to call once before starting
 /// any OSTM channel.
@@ -229,6 +233,61 @@ pub unsafe fn start_alarm(n: u8, delta_ticks: u32) {
 
     let ts = (b + TS) as *mut u8;
     ts.write_volatile(1);
+}
+
+// ---------------------------------------------------------------------------
+// Owned typed wrapper
+// ---------------------------------------------------------------------------
+
+/// Owned handle for OSTM channel `N` (0 or 1).
+///
+/// Wraps the free functions in an object-oriented API.  The type parameter `N`
+/// encodes the channel at compile time, preventing accidental mix-ups.
+pub struct Ostm<const N: u8>;
+
+impl<const N: u8> Ostm<N> {
+    /// Claim ownership of OSTM channel `N`.
+    ///
+    /// # Safety
+    /// The caller must ensure no other code uses channel `N` concurrently.
+    /// [`enable_clock`] must have been called before any method that accesses
+    /// hardware registers.
+    pub unsafe fn new() -> Self { Ostm }
+
+    /// Read the current counter value (increments at ~33.33 MHz).
+    ///
+    /// # Safety
+    /// Reads a memory-mapped register.
+    pub unsafe fn count(&self) -> u32 { count(N) }
+
+    /// Configure channel `N` for free-running mode and start it.
+    ///
+    /// # Safety
+    /// Writes memory-mapped registers.
+    pub unsafe fn start_free_running(&self) { start_free_running(N) }
+
+    /// Configure channel `N` for free-running mode with a compare interrupt.
+    ///
+    /// # Safety
+    /// Writes memory-mapped registers.
+    pub unsafe fn start_free_running_cmp(&self, cmp: u32) { start_free_running_cmp(N, cmp) }
+
+    /// Configure channel `N` for single-shot interval mode.
+    ///
+    /// # Safety
+    /// Writes memory-mapped registers.
+    pub unsafe fn start_alarm(&self, delta_ticks: u32) { start_alarm(N, delta_ticks) }
+
+    /// Stop channel `N`.
+    ///
+    /// # Safety
+    /// Writes memory-mapped registers.
+    pub unsafe fn stop(&self) { stop(N) }
+
+    /// Return a [`Delay`] backed by this channel.
+    ///
+    /// Channel `N` must already be running in free-running mode.
+    pub fn delay(&self) -> Delay { Delay }
 }
 
 #[cfg(all(test, not(target_os = "none")))]

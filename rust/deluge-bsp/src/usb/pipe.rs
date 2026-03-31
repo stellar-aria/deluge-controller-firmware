@@ -74,8 +74,8 @@ pub static PIPE_NRDY: AtomicU16 = AtomicU16::new(0);
 ///
 /// Guarded by `critical_section` whenever ISR and task must both access it.
 pub struct PipeXferState {
-    /// Current position in the user buffer.
-    pub buf: *mut u8,
+    /// Current position in the user buffer.  `NonNull::dangling()` when idle.
+    pub buf: core::ptr::NonNull<u8>,
     /// Total transfer length in bytes.
     pub length: u16,
     /// Bytes remaining (counts down as packets are transferred).
@@ -94,7 +94,7 @@ unsafe impl Sync for PipeXferState {}
 
 impl PipeXferState {
     const IDLE: Self = Self {
-        buf: core::ptr::null_mut(),
+        buf: core::ptr::NonNull::dangling(),
         length: 0,
         remaining: 0,
         mps: 0,
@@ -276,7 +276,7 @@ pub unsafe fn pipe_xfer_in_start(regs: *mut Rusb1Regs, n: usize, mps: u16) -> bo
     critical_section::with(|cs| {
         let state = &mut *PIPE_XFER[n].borrow(cs).get();
         if state.remaining == 0 {
-            state.buf = core::ptr::null_mut();
+            state.buf = core::ptr::NonNull::dangling();
             return true;
         }
 
@@ -288,13 +288,13 @@ pub unsafe fn pipe_xfer_in_start(regs: *mut Rusb1Regs, n: usize, mps: u16) -> bo
         }
 
         let len = (state.remaining as usize).min(mps as usize);
-        sw_to_hw_fifo(&fifo, state.buf, len);
+        sw_to_hw_fifo(&fifo, state.buf.as_ptr(), len);
 
         if len < mps as usize {
             fifo_bval(&fifo); // Short packet — commit the buffer.
         }
 
-        state.buf = state.buf.add(len);
+        state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
         state.remaining = state.remaining.saturating_sub(len as u16);
         state.remaining == 0
     })
@@ -321,7 +321,7 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
 
     let is_iso = state.xfer_type == XferType::Isochronous;
 
-    if state.buf.is_null() {
+    if state.remaining == 0 {
         if is_iso {
             // ISO double-buffer: release the current bank so the SIE can reuse
             // it, preventing a permanent FIFO lock-up when no application
@@ -361,8 +361,8 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
     let len = rem.min(mps).min(vld);
 
     if len > 0 {
-        hw_to_sw_fifo(&fifo, state.buf, len);
-        state.buf = state.buf.add(len);
+        hw_to_sw_fifo(&fifo, state.buf.as_ptr(), len);
+        state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
         state.remaining = state.remaining.saturating_sub(len as u16);
     }
 
@@ -371,7 +371,7 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
 
     let done = len < mps || state.remaining == 0;
     if done {
-        state.buf = core::ptr::null_mut();
+        state.buf = core::ptr::NonNull::dangling();
         return true;
     }
 
@@ -398,7 +398,7 @@ pub unsafe fn pipe_xfer_in_bemp(regs: *mut Rusb1Regs, n: usize) -> bool {
     };
 
     if state.remaining == 0 {
-        state.buf = core::ptr::null_mut();
+        state.buf = core::ptr::NonNull::dangling();
         return true;
     }
 
@@ -411,13 +411,13 @@ pub unsafe fn pipe_xfer_in_bemp(regs: *mut Rusb1Regs, n: usize) -> bool {
     }
 
     let len = (state.remaining as usize).min(mps);
-    sw_to_hw_fifo(&fifo, state.buf, len);
+    sw_to_hw_fifo(&fifo, state.buf.as_ptr(), len);
 
     if len < mps {
         fifo_bval(&fifo);
     }
 
-    state.buf = state.buf.add(len);
+    state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
     state.remaining = state.remaining.saturating_sub(len as u16);
     false
 }

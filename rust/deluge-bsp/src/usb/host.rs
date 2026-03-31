@@ -272,6 +272,13 @@ static HCD_ALLOC: [critical_section::Mutex<core::cell::UnsafeCell<HcdAlloc>>; 2]
 ///
 /// Provides an async API over the RUSB1 host controller hardware.
 /// Based on the reference TinyUSB `hcd_rusb1.c` for the RZ/A1L peripheral.
+///
+/// > **Status — not yet integrated**: The `UsbHostDriver` trait that this type
+/// > is intended to implement is pending [Embassy PR #5633]. Use the raw async
+/// > methods (`wait_for_event`, `setup_send`, `xfer_in`, `xfer_out`, …)
+/// > directly for now.
+///
+/// [Embassy PR #5633]: https://github.com/embassy-rs/embassy/pull/5633
 pub struct Rusb1HostDriver {
     port: u8,
 }

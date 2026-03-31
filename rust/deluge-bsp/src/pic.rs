@@ -146,7 +146,13 @@ impl Parser {
             firmware_version_next: false,
         }
     }
+}
 
+impl Default for Parser {
+    fn default() -> Self { Self::new() }
+}
+
+impl Parser {
     /// Push one byte received from the PIC.  Returns a decoded event, if any.
     pub fn push(&mut self, byte: u8) -> Option<Event> {
         // ---- Second byte of a two-byte encoder sequence --------------------
