@@ -19,5 +19,6 @@ rustflags = [
 # Used when building the embedded firmware for armv7a-none-eabihf.
 # build-std cannot live in [unstable] because it applies to all targets,
 # breaking host-native `cargo test` for the rza1/deluge-bsp crates.
-build-fw = "build -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
-test-fw  = "test  -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
+build-fw      = "build -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
+test-fw       = "test  -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
+run-hw-tests  = "run   -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem -p deluge-hw-tests"

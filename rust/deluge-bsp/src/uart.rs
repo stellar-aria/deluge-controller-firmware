@@ -44,7 +44,7 @@ pub unsafe fn init_pic(baud_rate: u32) {
     rza1::uart::register_irqs_for(PIC_CH);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::{MIDI_CH, PIC_CH};
 

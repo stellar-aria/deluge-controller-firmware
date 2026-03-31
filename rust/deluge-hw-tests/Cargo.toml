@@ -1,0 +1,19 @@
+[package]
+name = "deluge-hw-tests"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "deluge-hw-tests"
+# Not a cargo test binary — built and run directly by the test runner.
+test = false
+
+[dependencies]
+rza1        = { path = "../rza1" }
+deluge-bsp  = { path = "../deluge-bsp" }
+deluge-test = { path = "../deluge-test" }
+rtt-target  = "0.6"
+cortex-ar   = "0.3"
+embassy-executor = { version = "0.10", features = ["nightly", "platform-cortex-ar", "executor-thread"] }
+embassy-time     = { version = "0.5",  features = ["tick-hz-1_000_000"] }

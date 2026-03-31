@@ -3,6 +3,10 @@ name = "deluge-firmware"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "deluge-firmware"
+test = false
+
 [dependencies]
 rza1 = { path = "../rza1" }
 deluge-bsp = { path = "../deluge-bsp" }

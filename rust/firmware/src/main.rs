@@ -10,7 +10,7 @@ use core::mem::MaybeUninit;
 use embassy_executor::{Executor, Spawner};
 use embassy_time::Timer;
 
-use rza1::{gic, ostm, cache, mmu, sdram, stb};
+use rza1::{gic, ostm, cache, mmu, sdram, ssi, stb};
 use deluge_bsp::uart as bsp_uart;
 
 #[panic_handler]
@@ -34,6 +34,60 @@ async fn blink_task() {
         led_on = !led_on;
         unsafe { rza1::gpio::write(SYNC_PORT, SYNC_PIN, led_on) };
         Timer::after_millis(500).await;
+    }
+}
+
+/// Continuous audio output task.
+///
+/// Tracks the DMA read pointer and refills the TX buffer ahead of it with a
+/// 1 kHz test tone (square wave at ±25% full scale).  At 44.1 kHz with a
+/// 1 024-frame circular buffer (~23 ms), the task refills 256 frames every
+/// ~3 ms, staying comfortably ahead of the DMA.
+///
+/// Replace the tone generator here with real DSP once the hardware is verified.
+#[embassy_executor::task]
+async fn audio_task() {
+    // Period of the test tone in stereo half-frames.
+    // 1 kHz → 44 100 / 1000 = 44 frames per cycle; half-period = 22 frames.
+    const HALF_PERIOD: usize = 22;
+    const AMPLITUDE:   i32   = i32::MAX / 4; // ±25 % full scale
+
+    let buf_start = ssi::tx_buf_start();
+    let buf_end   = ssi::tx_buf_end();
+
+    rprintln!("Audio task started. TX buffer {:p}..{:p}", buf_start, buf_end);
+
+    // Let the DMA engine warm up before we start tracking its position.
+    Timer::after_millis(5).await;
+
+    let mut write_ptr: *mut i32 = buf_start;
+    let mut phase:     usize    = 0;
+
+    loop {
+        // Fill 256 stereo frames (512 samples) per iteration ≈ 5.8 ms of audio.
+        // The buffer is 1 024 frames deep, so we stay well ahead of the DMA.
+        for _ in 0..256usize {
+            let sample = if phase < HALF_PERIOD { AMPLITUDE } else { -AMPLITUDE };
+            phase = (phase + 1) % (HALF_PERIOD * 2);
+
+            unsafe {
+                // Left channel
+                write_ptr.write_volatile(sample);
+                write_ptr = write_ptr.add(1);
+                if write_ptr >= buf_end {
+                    write_ptr = buf_start;
+                }
+                // Right channel (same as left for a mono test tone)
+                write_ptr.write_volatile(sample);
+                write_ptr = write_ptr.add(1);
+                if write_ptr >= buf_end {
+                    write_ptr = buf_start;
+                }
+            }
+        }
+
+        // Sleep until just before the DMA catches up (~3 ms per 256-frame chunk).
+        Timer::after_millis(3).await;
     }
 }
 
@@ -104,6 +158,10 @@ pub extern "C" fn main() -> ! {
     }
     rprintln!("UART SCIF0/1 initialized at 31250 baud");
 
+    // ---- Audio: SSI0 pin-mux, DMA init, codec power-on -------------------
+    unsafe { deluge_bsp::audio::init() };
+    rprintln!("Audio: SSI0 + DMA running, codec enabled");
+
     // ---- Enable global IRQ -----------------------------------------------
     unsafe { cortex_ar::interrupt::enable() };
     rprintln!("IRQ enabled — starting Embassy executor");
@@ -118,6 +176,7 @@ pub extern "C" fn main() -> ! {
     };
     executor.run(|spawner: Spawner| {
         spawner.spawn(blink_task().unwrap());
+        spawner.spawn(audio_task().unwrap());
         spawner.spawn(midi_echo_task().unwrap());
     });
 }

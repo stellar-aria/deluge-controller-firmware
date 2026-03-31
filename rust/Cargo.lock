@@ -173,6 +173,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "deluge-hw-tests"
+version = "0.1.0"
+dependencies = [
+ "cortex-ar",
+ "deluge-bsp",
+ "deluge-test",
+ "embassy-executor",
+ "embassy-time",
+ "rtt-target",
+ "rza1",
+]
+
+[[package]]
 name = "deluge-test"
 version = "0.1.0"
 dependencies = [

@@ -1,5 +1,5 @@
 [workspace]
-members = ["firmware", "rza1", "deluge-bsp", "deluge-test"]
+members = ["firmware", "rza1", "deluge-bsp", "deluge-test", "deluge-hw-tests"]
 resolver = "2"
 
 [profile.release]

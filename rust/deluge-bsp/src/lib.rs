@@ -4,4 +4,5 @@
 // startup.rs is included automatically because _start and the vector table
 // are referenced by the linker script.
 
+pub mod audio;
 pub mod uart;

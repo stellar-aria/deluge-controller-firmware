@@ -370,7 +370,7 @@ pub fn tests(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let _executor: &'static mut embassy_executor::Executor =
                     unsafe { _EXECUTOR_STORAGE.write(#executor_expr) };
                 _executor.run(|_spawner| {
-                    _spawner.must_spawn(_deluge_test_runner_task());
+                    _spawner.spawn(_deluge_test_runner_task().unwrap());
                 });
             }
         }

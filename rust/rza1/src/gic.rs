@@ -251,7 +251,7 @@ pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::{
         GICC_BASE, GICC_CTLR_ADDR, GICC_IAR_ADDR, GICC_EOIR_ADDR, GICC_PMR_ADDR,

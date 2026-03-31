@@ -204,7 +204,7 @@ pub unsafe fn start_alarm(n: u8, delta_ticks: u32) {
     ts.write_volatile(1);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::{base, OSTM0_BASE, OSTM1_BASE, OSTM_HZ};
 

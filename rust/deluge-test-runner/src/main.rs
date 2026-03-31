@@ -187,7 +187,7 @@ fn gdb_flash_and_run(args: &Args, elf: &Path, entry_addr: u32, rtt_addr: Option<
     let cpsr = format!("set $cpsr = {CPSR_SYS_ARM:#010x}");
     let pc   = format!("set $pc = {entry_addr:#010x}");
 
-    eprintln!("[deluge-test-runner] GDB: flash + run @ {entry_addr:#010x}");
+    eprintln!("[deluge-test-runner] GDB: flash {} + run @ {entry_addr:#010x}", elf.display());
     gdb_spawn(&args.gdb, &[
         target, "monitor reset".into(), sctlr, vbar,
         load, rtt_hint, cpsr, pc, "continue".into(),

@@ -101,7 +101,7 @@ unsafe fn rd8(addr: usize) -> u8 {
     core::ptr::read_volatile(addr as *const u8)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::{
         STBCR2, STBCR3, STBCR4, STBCR5, STBCR6, STBCR7,

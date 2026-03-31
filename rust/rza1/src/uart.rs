@@ -367,7 +367,7 @@ async fn wait_tdfe(ch: usize) {
     .await
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::{base, scbrr, NUM_CHANNELS, P_CLK, RXI_BASE, TXI_BASE};
 

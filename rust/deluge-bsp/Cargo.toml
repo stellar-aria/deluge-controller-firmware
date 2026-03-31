@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 build = "build.rs"
 
+[lib]
+# Unit tests (in #[cfg(all(test, not(target_os="none")))]) run natively via
+# `cargo test` (host target). They cannot compile for armv7a-none-eabihf
+# because the `test` crate requires std.
+test = false
+
 # On-device integration tests — probe-rs flashes and runs these.
 [[test]]
 name = "gpio"

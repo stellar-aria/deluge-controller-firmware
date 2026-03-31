@@ -10,7 +10,7 @@
 //!   3. OSTM  — free-running timer ✅ → Embassy `time_driver` impl
 //!   4. UART  — async MIDI (UART0) and PIC32 (UART1) drivers ✅
 //!   5. MMU + SDRAM — TTB, L1/L2 caches, BSC/SDRAM init ✅
-//!   6. SSI   — I2S audio codec at 44.1 kHz
+//!   6. SSI   — I2S audio codec at 44.1 kHz ✅
 //!   7. USB   — CDC/MIDI/Audio composite device
 
 #![cfg_attr(target_os = "none", no_std)]
@@ -23,8 +23,10 @@ pub mod cache;
 pub mod gic;
 #[cfg(target_os = "none")]
 pub mod mmu;
+pub mod dmac;
 pub mod ostm;
 pub mod sdram;
+pub mod ssi;
 pub mod stb;
 pub mod time_driver;
 pub mod uart;
@@ -130,7 +132,7 @@ pub mod gpio {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::gpio;
 
