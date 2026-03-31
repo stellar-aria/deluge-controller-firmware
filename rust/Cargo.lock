@@ -155,6 +155,7 @@ dependencies = [
  "critical-section",
  "deluge-test",
  "embassy-executor",
+ "embassy-sync",
  "embassy-time",
  "rtt-target",
  "rza1",

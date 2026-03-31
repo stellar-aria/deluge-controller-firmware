@@ -199,6 +199,25 @@ pub unsafe fn init(ch: usize, baud_rate: u32) {
 // GIC interrupt registration
 // ---------------------------------------------------------------------------
 
+/// Change the baud rate of an already-initialised SCIF channel without
+/// resetting the FIFOs or GIC interrupt registration.
+///
+/// The SCIF must briefly stop TX/RX while SCBRR is updated.  Any bytes
+/// currently being shifted out will be lost; the caller must ensure the TX
+/// FIFO has drained (e.g. via `Timer::after_millis`) before calling this.
+///
+/// # Safety
+/// Writes to memory-mapped SCIF registers. Caller must ensure `ch` < [`NUM_CHANNELS`].
+pub unsafe fn set_baud(ch: usize, baud_rate: u32) {
+    debug_assert!(ch < NUM_CHANNELS);
+    let b = base(ch);
+    // Stop TE/RE so the baud rate change takes effect cleanly.
+    wr16(b + SCSCR, 0x0000);
+    wr8(b + SCBRR, scbrr(baud_rate));
+    // Re-enable TX and RX (leave TIE/RIE off; they are set on demand by futures).
+    wr16(b + SCSCR, TE | RE);
+}
+
 /// Register and enable the RXI and TXI GIC interrupt sources for SCIF
 /// channel `ch`.
 ///
