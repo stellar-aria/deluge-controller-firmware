@@ -71,6 +71,7 @@ fn dmars_reg(ch: u8) -> *mut u32 {
 ///   descriptor whose lifetime extends past the end of the DMA operation.
 /// - Must be called before [`channel_start`] for the same channel.
 pub unsafe fn init_with_link_descriptor(ch: u8, descriptor: *const u32, dmars_val: u32) {
+    log::trace!("dmac: ch{} init, desc={:#010x}, dmars={:#06x}", ch, descriptor as usize, dmars_val);
     // 1. Clear group DCTRL (priority mode / round-robin reset)
     dctrl_reg(ch).write_volatile(0);
 
@@ -97,6 +98,7 @@ pub unsafe fn init_with_link_descriptor(ch: u8, descriptor: *const u32, dmars_va
 /// # Safety
 /// The channel must have been initialised with [`init_with_link_descriptor`].
 pub unsafe fn channel_start(ch: u8) {
+    log::trace!("dmac: ch{} start (SWRST + SETEN)", ch);
     let chctrl = ch_reg(ch, OFF_CHCTRL);
     chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SWRST);
     chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SETEN);

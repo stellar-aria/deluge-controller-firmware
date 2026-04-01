@@ -95,6 +95,7 @@ fn dac_word(ch: u8, value: u16) -> u32 {
 /// # Safety
 /// Writes to memory-mapped GPIO and RSPI registers.
 pub unsafe fn init() {
+    log::debug!("cv_gate: init");
     // ---- SPI pin-mux ---------------------------------------------------------
     gpio::set_pin_mux(SCK_PORT,  SCK_PIN,  SCK_MUX);
     gpio::set_pin_mux(MOSI_PORT, MOSI_PIN, MOSI_MUX);
@@ -111,6 +112,7 @@ pub unsafe fn init() {
 
     // ---- Initialise RSPI0 as 10 MHz SPI master ------------------------------
     rspi::init(SPI_CH, SPI_RATE_HZ);
+    log::trace!("cv_gate: RSPI0 init at {} Hz", SPI_RATE_HZ);
 
     // ---- MAX5136 linearity initialisation -----------------------------------
     // Step 1: LIN=1 (linear ramp mode)
@@ -125,6 +127,7 @@ pub unsafe fn init() {
     gpio::write(CS_PORT, CS_PIN, false);
     rspi::send32_blocking(SPI_CH, 0x0540_0000);
     gpio::write(CS_PORT, CS_PIN, true);
+    log::trace!("cv_gate: MAX5136 linearity init done");
 
     // ---- Zero all CV outputs ------------------------------------------------
     for ch in 0..NUM_CV_CHANNELS as u8 {

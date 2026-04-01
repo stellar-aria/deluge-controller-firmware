@@ -75,12 +75,91 @@ _reset_handler:
     isb
     dsb
 
-    /* 1b. Set VBAR to our vector table BEFORE clearing HIVEC. */
+    /*
+     * 1b. Invalidate TLBs, I-cache, and D-cache.
+     *
+     * ARM mandates these invalidations before re-enabling caches/MMU because
+     * the cache and TLB state is UNDEFINED after reset (or after a soft
+     * reset from previous firmware).  Stale "valid" tags would cause the
+     * CPU to return garbage on the first cached load.
+     *
+     * Mirrors R_CACHE_L1Init / reset_handler.S from the Renesas C BSP.
+     */
+    /* Invalidate entire Unified/Data TLB */
+    mov  r0, #0
+    mcr  p15, 0, r0, c8, c7, 0   /* TLBIALL                      */
+
+    /* Invalidate I-cache (also flushes branch target cache) */
+    mov  r0, #0
+    mcr  p15, 0, r0, c7, c5, 0   /* ICIALLU                      */
+    isb
+
+    /*
+     * Invalidate all D-cache levels by iterating every Set and Way.
+     *
+     * Faithfully ported from reset_handler.S (both Deluge and Azure RTOS
+     * BSPs are identical here — Renesas reference implementation).
+     *
+     * Register usage (mirrors original):
+     *   r0  = CLIDR
+     *   r1  = CCSIDR
+     *   r2  = line-length shift
+     *   r3  = number of cache levels << 1 (from CLIDR LoC field)
+     *   r4  = max way index (CCSIDR[12:3])
+     *   r5  = CLZ(max_way) — way bit-position in DCISW word
+     *   r7  = current set counter (outer loop, counts down to 0)
+     *   r9  = current way counter (inner loop, counts down to 0)
+     *   r10 = current cache level << 1
+     *   r11 = DCISW argument
+     *
+     * Loop structure (outer = set, inner = way) matches the original exactly.
+     * r7 must NOT be inside the way loop or it resets on every way iteration.
+     */
+    mrc  p15, 1, r0, c0, c0, 1   /* Read CLIDR                   */
+    ands r3, r0, #0x07000000      /* Extract LoC field            */
+    mov  r3, r3, lsr #23          /* Total cache levels << 1      */
+    beq  .Ldcache_inval_done
+    mov  r10, #0                  /* Start at level 0             */
+.Ldcache_level_loop:
+    add  r2, r10, r10, lsr #1     /* r2 = 3 × level               */
+    mov  r1, r0, lsr r2           /* Shift CLIDR to this level    */
+    and  r1, r1, #7               /* Isolate 3-bit cache type     */
+    cmp  r1, #2
+    blt  .Ldcache_skip            /* No D-cache at this level     */
+    mcr  p15, 2, r10, c0, c0, 0  /* CSSELR = this level          */
+    isb                           /* Sync before reading CCSIDR   */
+    mrc  p15, 1, r1, c0, c0, 0   /* Read CCSIDR                  */
+    and  r2, r1, #7               /* Line-length field            */
+    add  r2, r2, #4               /* +4 → log2(bytes per line)    */
+    ldr  r4, =0x3FF
+    ands r4, r4, r1, lsr #3       /* Max way  = CCSIDR[12:3]      */
+    clz  r5, r4                   /* Way bit-position in DCISW    */
+    ldr  r7, =0x7FFF
+    ands r7, r7, r1, lsr #13      /* Max set  = CCSIDR[27:13]     */
+.Ldcache_set_loop:                /* Outer loop: iterate sets     */
+    mov  r9, r4                   /* Reset way counter each set   */
+.Ldcache_way_loop:                /* Inner loop: iterate ways     */
+    orr  r11, r10, r9, lsl r5    /* Encode level | way           */
+    orr  r11, r11, r7, lsl r2    /* Encode set                   */
+    mcr  p15, 0, r11, c7, c6, 2  /* DCISW — invalidate by S/W    */
+    subs r9, r9, #1
+    bge  .Ldcache_way_loop        /* Next way                     */
+    subs r7, r7, #1
+    bge  .Ldcache_set_loop        /* Next set                     */
+.Ldcache_skip:
+    add  r10, r10, #2
+    cmp  r3, r10
+    bgt  .Ldcache_level_loop      /* Next cache level             */
+.Ldcache_inval_done:
+    dsb
+    isb
+
+    /* 1d. Set VBAR to our vector table BEFORE clearing HIVEC. */
     ldr r0, =_start
     mcr p15, 0, r0, c12, c0, 0   /* Write VBAR                   */
     isb
 
-    /* 1c. Now safe to clear HIVEC — exceptions will use VBAR = _start.
+    /* 1e. Now safe to clear HIVEC — exceptions will use VBAR = _start.
      *     Also clear TE (bit 30, Thumb Exceptions) so exception vectors
      *     execute in ARM state.  Old firmware (e.g. Deluge) runs in Thumb
      *     mode and sets TE=1; our vector table uses ARM `ldr pc, [pc, #n]`

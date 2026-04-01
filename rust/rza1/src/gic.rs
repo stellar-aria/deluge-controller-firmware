@@ -140,6 +140,7 @@ static ICDICFR_INIT: [u32; 37] = [
 /// Writes to memory-mapped GIC registers. Must run exactly once before
 /// `cpsie i`.
 pub unsafe fn init() {
+    log::debug!("gic: init ({} IRQ sources)", INT_ID_TOTAL);
     let n_isr  = (INT_ID_TOTAL / 32) + 1; // 19 — ICDISR count
     let _n_icfr = ICDICFR_INIT.len();      // 37 — ICDICFR count
     let n_ipr  = (INT_ID_TOTAL / 4) + 1;  // 147 — ICDIPR count
@@ -190,6 +191,7 @@ pub unsafe fn init() {
 
     // 9. Enable GIC distributor.
     (GICD_CTLR as *mut u32).write_volatile(1);
+    log::debug!("gic: distributor + CPU interface enabled");
 }
 
 /// Register a Rust function as the handler for interrupt `id`.
@@ -199,6 +201,7 @@ pub unsafe fn init() {
 /// # Safety
 /// See struct-level safety note. Must be called before IRQ is enabled.
 pub unsafe fn register(id: u16, handler: Handler) {
+    log::trace!("gic: register IRQ {}", id);
     if (id as usize) < INT_ID_TOTAL {
         HANDLERS[id as usize].set(handler);
     }

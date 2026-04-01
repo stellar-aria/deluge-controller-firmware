@@ -5,6 +5,10 @@ ENTRY(_start)
 MEMORY {
     /* 3 MB on-chip SRAM */
     RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 0x00300000
+    /* Uncached mirror of RAM — same physical SRAM, but VA 0x60000000 maps to
+       PA 0x20000000 via area 10 of the MMU TTB (PARA_NORMAL_NOT_CACHE).
+       The debug probe reads/writes here directly, bypassing the CPU cache. */
+    NCACHE_RAM (rw) : ORIGIN = 0x60000000, LENGTH = 0x00300000
     /* 64 MB external SDRAM (CS3) — used in later milestones */
     SDRAM (rwx) : ORIGIN = 0x0C000000, LENGTH = 0x04000000
 }
@@ -19,6 +23,13 @@ ABT_STACK_SIZE     = 0x2000;   /*  8 KB */
 INTERNAL_RAM_END = 0x20300000;
 
 SECTIONS {
+    /* _SEGGER_RTT control block in the uncached SRAM mirror so the debug
+       probe can always see RTT writes, even after D-cache is enabled. */
+    .rtt_buffer (NOLOAD) : ALIGN(4) {
+        KEEP(*(.rtt_buffer .rtt_buffer.*))
+        . = ALIGN(4);
+    } > NCACHE_RAM
+
     /*
      * Vector table + bootloader metadata.
      * Must be the very first bytes of the binary at 0x20000000.

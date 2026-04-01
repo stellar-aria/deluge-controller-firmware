@@ -98,6 +98,7 @@ const STBCR12_INIT: u8 = 0b11111011;
 /// # Safety
 /// Writes to memory-mapped CPG registers.
 pub unsafe fn init() {
+    log::debug!("stb: enabling module clocks");
     // Port level is keep in standby mode, [1], [1], [0], [1], [0], [1], CoreSight
     wr8(STBCR2, STBCR2_INIT);
     let _: u8 = rd8(STBCR2); // dummy read
@@ -141,6 +142,7 @@ pub unsafe fn init() {
     // [1], [1], [1], [1], SDHI00, SDHI01, SDHI10, SDHI11
     wr8(STBCR12, STBCR12_INIT);
     let _: u8 = rd8(STBCR12);
+    log::debug!("stb: done (STBCR2-12 written)");
 }
 
 #[inline(always)]

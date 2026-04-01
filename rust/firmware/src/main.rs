@@ -13,12 +13,12 @@
 //! ## OLED layout (128 × 48 px)
 //! ```text
 //! ┌────────────────────────────────────────────────┐  128 px
-//! │  ████   ████   ████        ████          ████   │
-//! │  ████   ████   ████        ████          ████   │  row 0  (6 px)
-//! │  ████   ████   ████        ████          ████   │
-//! │  ████   ████   ████        ████          ████   │
-//! │                                                  │  row 1  (empty)
-//! │  …18 columns × 7 px, 8 rows × 6 px…             │
+//! │  ████   ████   ████        ████          ████  │
+//! │  ████   ████   ████        ████          ████  │  row 0  (6 px)
+//! │  ████   ████   ████        ████          ████  │
+//! │  ████   ████   ████        ████          ████  │
+//! │                                                │  row 1  (empty)
+//! │  …18 columns × 7 px, 8 rows × 6 px…            │
 //! └────────────────────────────────────────────────┘  48 px
 //! ```
 //! Each lit pad = filled 5 × 4 px rect with a 1 px gap on all sides.
@@ -38,7 +38,7 @@
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use rtt_target::{rprintln, rtt_init_print};
+use log::{info, error};
 use core::mem::MaybeUninit;
 
 use embassy_executor::{Executor, Spawner};
@@ -53,7 +53,7 @@ use deluge_bsp::sd;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    rprintln!("PANIC: {}", info);
+    error!("PANIC: {}", info);
     loop { core::hint::spin_loop(); }
 }
 
@@ -164,7 +164,7 @@ async fn audio_task() {
     let buf_start = ssi::tx_buf_start();
     let buf_end   = ssi::tx_buf_end();
 
-    rprintln!("audio: TX buffer {:p}..{:p}", buf_start, buf_end);
+    info!("audio: TX buffer {:p}..{:p}", buf_start, buf_end);
     Timer::after_millis(5).await;
 
     let mut write_ptr: *mut i32 = buf_start;
@@ -201,9 +201,9 @@ async fn audio_task() {
 /// | `OledDeselected`       | Forward to [`pic::notify_oled_deselected()`]        |
 #[embassy_executor::task]
 async fn pic_task() {
-    rprintln!("PIC: init (31 250 → 200 000 baud)");
+    info!("PIC: init (31 250 → 200 000 baud)");
     pic::init().await;
-    rprintln!("PIC: ready");
+    info!("PIC: ready");
 
     let mut parser = pic::Parser::new();
 
@@ -216,14 +216,14 @@ async fn pic_task() {
             pic::Event::PadPress { id } => {
                 let lit = pad_toggle(id);
                 let (x, y) = pic::pad_coords(id);
-                rprintln!("pad {} ({},{}) → {}", id, x, y, if lit { "on" } else { "off" });
+                info!("pad {} ({},{}) → {}", id, x, y, if lit { "on" } else { "off" });
                 oled::notify_redraw();
             }
             pic::Event::PadRelease { .. } => {}
 
             // ---- Buttons ---------------------------------------------------
             pic::Event::ButtonPress { id } => {
-                rprintln!("button {} press", id);
+                info!("button {} press", id);
                 pic::led_on(id).await;
                 match id {
                     0 => {
@@ -249,7 +249,7 @@ async fn pic_task() {
 
             // ---- Encoders --------------------------------------------------
             pic::Event::EncoderDelta { id, delta } => {
-                rprintln!("encoder {} Δ{}", id, delta);
+                info!("encoder {} Δ{}", id, delta);
             }
 
             // ---- OLED CS handshake — must be forwarded --------------------
@@ -257,7 +257,7 @@ async fn pic_task() {
             pic::Event::OledDeselected => pic::notify_oled_deselected(),
 
             // ---- Misc ------------------------------------------------------
-            pic::Event::FirmwareVersion(v) => rprintln!("PIC fw v{}", v),
+            pic::Event::FirmwareVersion(v) => info!("PIC fw v{}", v),
             pic::Event::NoPresses          => {}
         }
     }
@@ -270,14 +270,14 @@ async fn pic_task() {
 /// the card is being read correctly.
 #[embassy_executor::task]
 async fn sd_task() {
-    rprintln!("SD: initialising");
+    info!("SD: initialising");
     match sd::init().await {
         Ok(()) => {
-            rprintln!("SD: card ready (HC={})", sd::is_ready());
+            info!("SD: card ready (HC={})", sd::is_ready());
             let mut buf = [0u8; 512];
             match sd::read_sector(0, &mut buf).await {
                 Ok(()) => {
-                    rprintln!(
+                    info!(
                         "SD: sector 0 first 16 bytes: {:02x} {:02x} {:02x} {:02x} \
                          {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} \
                          {:02x} {:02x} {:02x} {:02x}",
@@ -287,10 +287,10 @@ async fn sd_task() {
                         buf[12], buf[13], buf[14], buf[15],
                     );
                 }
-                Err(e) => rprintln!("SD: read_sector(0) failed: {:?}", e),
+                Err(e) => error!("SD: read_sector(0) failed: {:?}", e),
             }
         }
-        Err(e) => rprintln!("SD: init failed: {:?}", e),
+        Err(e) => error!("SD: init failed: {:?}", e),
     }
 }
 
@@ -300,9 +300,9 @@ async fn sd_task() {
 /// pad-state change before rendering and pushing a full 768-byte frame.
 #[embassy_executor::task]
 async fn oled_task() {
-    rprintln!("OLED: init");
+    info!("OLED: init");
     oled::init().await;
-    rprintln!("OLED: ready");
+    info!("OLED: ready");
 
     let mut fb = oled::FrameBuffer::new();
 
@@ -325,50 +325,74 @@ static mut EXECUTOR: MaybeUninit<Executor> = MaybeUninit::uninit();
 
 #[no_mangle]
 pub extern "C" fn main() -> ! {
-    rtt_init_print!();
-    rprintln!("Deluge demo firmware starting");
-    rprintln!("Pad paint demo: press pads to toggle, buttons 0/1/2 to clear/fill/invert");
+    let channels = rtt_target::rtt_init! {
+        up: {
+            0: {
+                size: 4096,
+                name: "Terminal",
+                section: ".rtt_buffer"   // ring buffer bytes in uncached RAM
+            }
+        }
+        section_cb: ".rtt_buffer"        // _SEGGER_RTT control block in uncached RAM
+    };
+    rtt_target::set_print_channel(channels.up.0);
+    rtt_target::init_logger();
+    info!("Deluge demo firmware starting");
+    info!("Pad paint demo: press pads to toggle, buttons 0/1/2 to clear/fill/invert");
 
     unsafe { stb::init() };
-    rprintln!("STB: module clocks enabled");
+    info!("STB: module clocks enabled");
 
     unsafe { mmu::init_and_enable() };
-    rprintln!("MMU: enabled");
+    info!("MMU: enabled");
 
+    info!("cache: enabling L1...");
     unsafe { cache::l1_enable() };
+    info!("cache: L1 enabled");
+
+    info!("cache: enabling L2...");
     unsafe { cache::l2_init() };
-    rprintln!("caches: L1 + L2 enabled");
+    info!("cache: L2 enabled");
 
+    info!("SDRAM: initialising...");
     unsafe { sdram::init() };
-    rprintln!("SDRAM: initialised");
+    info!("SDRAM: initialised");
 
+    info!("GIC: initialising...");
     unsafe { gic::init() };
-    rprintln!("GIC: initialised");
+    info!("GIC: initialised");
 
-    unsafe {
-        ostm::enable_clock();
-        rza1::time_driver::init();
-    }
-    rprintln!("time driver: ready");
+    info!("OSTM: enabling clock...");
+    unsafe { ostm::enable_clock() };
+    info!("OSTM: clock enabled");
 
-    unsafe { rza1::gpio::set_as_output(6, 7) };   // heartbeat LED P6_7
+    info!("time driver: initialising...");
+    unsafe { rza1::time_driver::init() };
+    info!("time driver: ready");
 
-    unsafe {
-        bsp_uart::init_midi(31_250);   // SCIF0 — kept idle in this demo
-        bsp_uart::init_pic(31_250);    // SCIF1 — PIC32
-    }
-    rprintln!("UART: SCIF0/1 @ 31 250 baud");
+    info!("GPIO: configuring heartbeat LED...");
+    unsafe { rza1::gpio::set_as_output(6, 7) };
+    info!("GPIO: heartbeat LED P6_7 configured");
 
+    info!("UART: initialising MIDI...");
+    unsafe { bsp_uart::init_midi(31_250) };
+    info!("UART: MIDI ready");
+
+    info!("UART: initialising PIC...");
+    unsafe { bsp_uart::init_pic(31_250) };
+    info!("UART: SCIF0/1 @ 31 250 baud");
+
+    info!("audio: initialising SSI0...");
     unsafe { deluge_bsp::audio::init() };
-    rprintln!("audio: SSI0 + DMA + codec running");
+    info!("audio: SSI0 + DMA + codec running");
 
     // RSPI0 init — shared between OLED (8-bit) and CV DAC (32-bit).
     // cv_gate::init() puts it in 32-bit mode; oled::init() will switch to 8-bit.
     unsafe { cv_gate::init() };
-    rprintln!("RSPI0: initialised via cv_gate::init");
+    info!("RSPI0: initialised via cv_gate::init");
 
     unsafe { cortex_ar::interrupt::enable() };
-    rprintln!("IRQ: enabled — starting Embassy tasks");
+    info!("IRQ: enabled — starting Embassy tasks");
 
     #[allow(static_mut_refs)]
     let executor = unsafe {

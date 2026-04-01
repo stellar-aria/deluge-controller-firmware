@@ -24,6 +24,7 @@ pub use rza1::uart::{read_byte, write_bytes};
 /// # Safety
 /// Must be called with global IRQs disabled, before the Embassy executor starts.
 pub unsafe fn init_midi(baud_rate: u32) {
+    log::debug!("bsp uart: MIDI SCIF{} @ {} bps", MIDI_CH, baud_rate);
     rza1::uart::init(MIDI_CH, baud_rate);
     rza1::gpio::set_pin_mux(6, 15, 5); // TxD0
     rza1::gpio::set_pin_mux(6, 14, 5); // RxD0
@@ -38,6 +39,7 @@ pub unsafe fn init_midi(baud_rate: u32) {
 /// # Safety
 /// Must be called with global IRQs disabled, before the Embassy executor starts.
 pub unsafe fn init_pic(baud_rate: u32) {
+    log::debug!("bsp uart: PIC SCIF{} @ {} bps", PIC_CH, baud_rate);
     rza1::uart::init(PIC_CH, baud_rate);
     rza1::gpio::set_pin_mux(3, 15, 5); // TxD1
     rza1::gpio::set_pin_mux(1, 9, 3);  // RxD1

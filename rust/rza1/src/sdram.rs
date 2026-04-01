@@ -62,6 +62,7 @@ const SDRAM_MODE_CS3: usize = 0x3FFF_E040;
 /// Writes to memory-mapped GPIO, BSC, and SDRAM mode registers.
 /// Must not be called while the SDRAM is actively in use.
 pub unsafe fn init() {
+    log::debug!("sdram: init");
     // ---- SDRAM address pins: P3[0..14] mux1 ----
     for pin in 0..=14u8 {
         set_pin_mux(3, pin, 1);
@@ -79,6 +80,7 @@ pub unsafe fn init() {
     }
 
     // ---- BSC configuration (from userdef_bsc_cs2_init, ramSize=0 = 64 MB) ----
+    log::debug!("sdram: pin-mux done, configuring BSC");
 
     // CS2BCR / CS3BCR: SDRAM, 16-bit bus, 0 idle cycles between W/R and W/W.
     wr32(CS2BCR, 0x0000_4C00);
@@ -103,8 +105,10 @@ pub unsafe fn init() {
     // SDRAM mode register: burst-length 1, sequential, CAS-latency 2.
     // A write to the mode address (offset 0x040 from CS base, BA0=1)
     // generates a Mode Register Set (MRS) command.
+    log::debug!("sdram: BSC configured, sending MRS");
     wr16(SDRAM_MODE_CS2, 0);
     wr16(SDRAM_MODE_CS3, 0);
+    log::debug!("sdram: ready");
 }
 
 #[inline(always)]

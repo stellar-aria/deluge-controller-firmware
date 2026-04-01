@@ -231,6 +231,7 @@ impl Parser {
 #[cfg(target_os = "none")]
 pub async fn init() {
     use embassy_time::Timer;
+    log::debug!("pic: init at 31250 bps, will switch to {} bps", BAUD_FAST);
 
     // ---- Configure PIC while still at 31 250 bps --------------------------
     // Enable OLED
@@ -261,6 +262,7 @@ pub async fn init() {
 
     // Give PIC time to respond
     Timer::after_millis(50).await;
+    log::debug!("pic: ready at {} bps", BAUD_FAST);
 }
 
 // ── Outbound helpers ──────────────────────────────────────────────────────────

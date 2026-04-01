@@ -32,8 +32,7 @@ const CODEC_POWER_DELAY_MS: u32 = 5;
 /// # Safety
 /// Must be called exactly once from the single-threaded boot context, before
 /// interrupts are enabled and before any audio task starts.
-pub unsafe fn init() {
-    // ── Pin-mux: SSI peripheral signals ──────────────────────────────────────
+pub unsafe fn init() {    log::debug!("audio: pin-mux SSI0 (P7.11, P6.8-11)");    // ── Pin-mux: SSI peripheral signals ──────────────────────────────────────
     //
     // set_pin_mux sets PMC=1 (peripheral mode), the three mux-select bits
     // (PFC/PFCE/PFCAE), and PIPC=1 so the peripheral controls the buffer
@@ -53,8 +52,6 @@ pub unsafe fn init() {
 
     // ── 5 ms clock-stable delay before enabling the codec ────────────────────
     // OSTM0 must already be running in free-running mode.
-    ostm::delay_ms(CODEC_POWER_DELAY_MS);
-
+    ostm::delay_ms(CODEC_POWER_DELAY_MS);    log::debug!("audio: codec power-on delay done");
     // ── Assert CODEC_POWER — codec begins normal operation ───────────────────
-    gpio::write(CODEC_PORT, CODEC_PIN, true);
-}
+    gpio::write(CODEC_PORT, CODEC_PIN, true);    log::debug!("audio: CODEC_POWER asserted, codec active");}

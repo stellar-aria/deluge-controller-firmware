@@ -201,6 +201,7 @@ fn ssi_reg(off: usize) -> *mut u32 {
 /// Must be called exactly once, from a single-threaded boot context, before
 /// any audio task accesses the buffer pointers.
 pub unsafe fn init() {
+    log::debug!("ssi: init SSI0 (44.1 kHz I\u{00B2}S, DMA ch{}/{})", TX_DMA_CH, RX_DMA_CH);
     // 1. Patch self-referential fields in the link descriptors now that their
     //    static addresses are available.
     TX_DESC.0[1] = core::ptr::addr_of!(TX_BUF.0[0]) as u32;
@@ -237,6 +238,7 @@ pub unsafe fn init() {
     // 5. Start both DMA channels (software-reset then enable).
     dmac::channel_start(TX_DMA_CH);
     dmac::channel_start(RX_DMA_CH);
+    log::debug!("ssi: DMA TX ch{} + RX ch{} started", TX_DMA_CH, RX_DMA_CH);
 
     // 6. Release the FIFOs from reset and enable TX/RX.
     //    This mirrors `ssiStart()` from the C firmware exactly.
@@ -254,6 +256,7 @@ pub unsafe fn init() {
     // Enable transmit and receive (TEN = bit 1, REN = bit 0 of SSICR)
     let cr = ssi_reg(SSICR_OFF);
     cr.write_volatile(cr.read_volatile() | 0b11);
+    log::debug!("ssi: TX+RX enabled, streaming");
 }
 
 // ── Buffer pointer accessors ─────────────────────────────────────────────────

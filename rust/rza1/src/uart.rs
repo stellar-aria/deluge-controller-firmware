@@ -157,6 +157,7 @@ fn scbrr(baud: u32) -> u8 {
 /// Writes to memory-mapped SCIF registers. Caller must ensure `ch` < [`NUM_CHANNELS`].
 pub unsafe fn init(ch: usize, baud_rate: u32) {
     debug_assert!(ch < NUM_CHANNELS);
+    log::debug!("uart: ch{} init at {} bps (SCBRR={})", ch, baud_rate, scbrr(baud_rate));
     let b = base(ch);
 
     // 1. Stop all SCIF operations.
@@ -193,6 +194,7 @@ pub unsafe fn init(ch: usize, baud_rate: u32) {
 
     // 11. Enable TX and RX; leave TIE/RIE off (enabled on demand by futures).
     wr16(b + SCSCR, TE | RE);
+    log::debug!("uart: ch{} ready", ch);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +232,7 @@ pub unsafe fn register_irqs_for(ch: usize) {
     debug_assert!(ch < NUM_CHANNELS);
     let rxi = RXI_BASE + (ch as u16) * 4;
     let txi = TXI_BASE + (ch as u16) * 4;
+    log::trace!("uart: ch{} registering RXI={} TXI={}", ch, rxi, txi);
     gic::register(rxi, RXI_HANDLERS[ch]);
     gic::register(txi, TXI_HANDLERS[ch]);
     gic::set_priority(rxi, UART_IRQ_PRIORITY);

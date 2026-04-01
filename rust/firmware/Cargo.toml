@@ -10,7 +10,8 @@ test = false
 [dependencies]
 rza1 = { path = "../rza1" }
 deluge-bsp = { path = "../deluge-bsp" }
-rtt-target = "0.6"
 cortex-ar = "0.3"
 embassy-executor = { version = "0.10", features = ["nightly", "platform-cortex-ar", "executor-thread"] }
 embassy-time = { version = "0.5", features = ["tick-hz-1_000_000"] }
+rtt-target = { version = "0.6", features = ["log"] }
+log = "0.4.29"

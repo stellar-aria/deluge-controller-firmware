@@ -200,6 +200,7 @@ unsafe fn send_init_commands() {
 #[cfg(target_os = "none")]
 pub async fn init() {
     use embassy_time::Timer;
+    log::debug!("oled: init");
 
     // ---- 1. Configure RSPI0 for 8-bit SPI mode ----------------------------
     unsafe { rspi::configure_8bit(SPI_CH) };
@@ -220,6 +221,7 @@ pub async fn init() {
 
     // ---- 6. Deselect -------------------------------------------------------
     pic::oled_deselect().await;
+    log::debug!("oled: ready");
 }
 
 /// Send a full 768-byte frame to the display.

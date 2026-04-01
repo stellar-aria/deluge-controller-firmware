@@ -75,6 +75,10 @@ MEMORY
 	/* RAM4U (rwx)   : ORIGIN = 0x20900000, LENGTH = 0x00100000 * Page 4 Upper bank (1024KB) H'20900000 to H'209FFFFF */
 
 	RAM012L   (rwx) : ORIGIN = 0x20000000, LENGTH =  0x00300000
+
+	/* Uncached mirror of RAM012L — DMA and debug probe access this without going
+	   through the CPU cache.  VA 0x60000000 = PA 0x20000000 (area 10 in MMU TTB). */
+	NCACHE_RAM (rw) : ORIGIN = 0x60000000, LENGTH = 0x00300000
 	/* RAM01234L (rwx) : ORIGIN = 0x20020000, LENGTH = 0x007E0000 */
 	/* RAM012U   (rwx) : ORIGIN = 0x20500000, LENGTH = 0x00300000 */
 
@@ -94,6 +98,16 @@ INTERNAL_RAM_END = 0x20300000;
 
 SECTIONS
 {
+	/* _SEGGER_RTT control block placed in the uncached SRAM mirror so the
+	   debug probe can always read/write it directly, even after D-cache is
+	   enabled.  rtt-target looks for this symbol by name via the probe. */
+	.rtt_buffer (NOLOAD) :
+	{
+		. = ALIGN(4);
+		KEEP(*(.rtt_buffer .rtt_buffer.*))
+		. = ALIGN(4);
+	} > NCACHE_RAM
+
 	.frunk_bss (NOLOAD) :
 	{
         . = ALIGN(4);

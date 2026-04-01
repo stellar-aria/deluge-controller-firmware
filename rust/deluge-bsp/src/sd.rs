@@ -144,6 +144,7 @@ async unsafe fn send_acmd(acmd: u16, arg: u32) -> Result<(), SdError> {
 /// # Returns
 /// `Ok(())` on success; `Err(SdError)` on any failure.
 pub async fn init() -> Result<(), SdError> {
+    log::debug!("sd: init port {}", SD_PORT);
     CARD_READY.store(false, Ordering::Release);
 
     unsafe {
@@ -232,6 +233,7 @@ pub async fn init() -> Result<(), SdError> {
     }
 
     CARD_READY.store(true, Ordering::Release);
+    log::debug!("sd: card ready, HC={}", CARD_HC.load(Ordering::Relaxed));
     Ok(())
 }
 
