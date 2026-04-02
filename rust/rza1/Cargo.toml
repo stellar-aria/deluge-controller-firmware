@@ -27,6 +27,8 @@ cortex-ar = { version = "0.3", features = ["critical-section-single-core"] }
 [dependencies]
 critical-section = "1"
 embassy-sync = "0.8"
+linked_list_allocator = { version = "0.10", default-features = false }
+embassy-time = "0.5"
 embassy-time-driver = "0.2"
 embassy-time-queue-utils = "0.3"
 embedded-hal = "1"

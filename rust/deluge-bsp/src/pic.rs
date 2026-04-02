@@ -61,26 +61,26 @@ const PIC_CLK_HZ: u32 = 4_000_000;
 
 // ── Command byte constants ────────────────────────────────────────────────────
 
-const CMD_SET_DEBOUNCE_TIME:          u8 = 18;
-const CMD_SET_REFRESH_TIME:           u8 = 19;
+const CMD_SET_DEBOUNCE_TIME: u8 = 18;
+const CMD_SET_REFRESH_TIME: u8 = 19;
 const CMD_SET_GOLD_KNOB_0_INDICATORS: u8 = 20;
 const CMD_SET_GOLD_KNOB_1_INDICATORS: u8 = 21;
-const CMD_RESEND_BUTTON_STATES:       u8 = 22;
-const CMD_SET_FLASH_LENGTH:           u8 = 23;
-const CMD_SET_UART_SPEED:             u8 = 225;
+const CMD_RESEND_BUTTON_STATES: u8 = 22;
+const CMD_SET_FLASH_LENGTH: u8 = 23;
+const CMD_SET_UART_SPEED: u8 = 225;
 const CMD_SET_MIN_INTERRUPT_INTERVAL: u8 = 244;
-const CMD_REQUEST_FIRMWARE_VERSION:   u8 = 245;
-const CMD_ENABLE_OLED:                u8 = 247;
-const CMD_SELECT_OLED:                u8 = 248;
-const CMD_DESELECT_OLED:              u8 = 249;
-const CMD_SET_DC_LOW:                 u8 = 250;
-const CMD_SET_DC_HIGH:                u8 = 251;
+const CMD_REQUEST_FIRMWARE_VERSION: u8 = 245;
+const CMD_ENABLE_OLED: u8 = 247;
+const CMD_SELECT_OLED: u8 = 248;
+const CMD_DESELECT_OLED: u8 = 249;
+const CMD_SET_DC_LOW: u8 = 250;
+const CMD_SET_DC_HIGH: u8 = 251;
 
 // ── Response byte sentinels ───────────────────────────────────────────────────
 
-const RESP_NEXT_PAD_OFF:        u8 = 252;
-const RESP_NO_PRESSES:          u8 = 254;
-const RESP_FIRMWARE_VERSION:    u8 = 245;
+const RESP_NEXT_PAD_OFF: u8 = 252;
+const RESP_NO_PRESSES: u8 = 254;
+const RESP_FIRMWARE_VERSION: u8 = 245;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -88,15 +88,15 @@ const RESP_FIRMWARE_VERSION:    u8 = 245;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     /// A pad was pressed.  `id` is 0–143.
-    PadPress   { id: u8 },
+    PadPress { id: u8 },
     /// A pad was released.  `id` is 0–143.
     PadRelease { id: u8 },
     /// A button was pressed.  `id` is 0–35 (raw PIC value − 144).
-    ButtonPress   { id: u8 },
+    ButtonPress { id: u8 },
     /// A button was released.  `id` is 0–35.
     ButtonRelease { id: u8 },
     /// A rotary encoder turned.  `id` is 0–5; `delta` is signed (+ = CW).
-    EncoderDelta  { id: u8, delta: i8 },
+    EncoderDelta { id: u8, delta: i8 },
     /// PIC firmware version byte (one-off, received after [`request_firmware_version`]).
     FirmwareVersion(u8),
     /// OLED chip-select asserted (PIC is ready for SPI data).
@@ -133,23 +133,25 @@ pub fn pad_coords(id: u8) -> (u8, u8) {
 /// - Whether the next pad/button byte is a release (preceded by 0xFC).
 /// - Whether we are waiting for the second byte of an encoder sequence.
 pub struct Parser {
-    next_is_off:      bool,
-    pending_encoder:  Option<u8>,
+    next_is_off: bool,
+    pending_encoder: Option<u8>,
     firmware_version_next: bool,
 }
 
 impl Parser {
     pub const fn new() -> Self {
         Self {
-            next_is_off:           false,
-            pending_encoder:       None,
+            next_is_off: false,
+            pending_encoder: None,
             firmware_version_next: false,
         }
     }
 }
 
 impl Default for Parser {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Parser {
@@ -191,8 +193,11 @@ impl Parser {
                     Some(Event::ButtonPress { id })
                 }
             }
-            180..=244 | 246..=247 => {
-                // Encoder — need one more byte for the delta (byte 245 = firmware version, excluded)
+            180..=244 | 246 => {
+                // Encoder — need one more byte for the delta.
+                // 245 = firmware-version prefix (excluded above).
+                // 247 = CMD_ENABLE_OLED echo — NOT an encoder; excluded so the
+                // following SELECT_OLED echo (248) is parsed as OledSelected.
                 self.pending_encoder = Some(byte);
                 None
             }
@@ -263,6 +268,9 @@ pub async fn init() {
     // Give PIC time to respond
     Timer::after_millis(50).await;
     log::debug!("pic: ready at {} bps", BAUD_FAST);
+
+    // Signal that init is complete — other tasks waiting on wait_ready() unblock.
+    ready_signal::signal();
 }
 
 // ── Outbound helpers ──────────────────────────────────────────────────────────
@@ -277,6 +285,39 @@ pub async fn led_on(id: u8) {
 #[inline]
 pub async fn led_off(id: u8) {
     uart::write_bytes(UART_CH, &[152u8 + id]).await;
+}
+
+/// Set RGB colours for one column-pair of the main pad grid.
+///
+/// `pair` is 0–8:
+/// - 0–7 → main pad column pairs 0–15 (pair n = physical columns 2n, 2n+1)
+/// - 8   → sidebar columns 16–17
+///
+/// `colours[0..8]`  = rows 0–7 of the **left** column (col 2n).
+/// `colours[8..16]` = rows 0–7 of the **right** column (col 2n+1).
+///
+/// Each entry is `[r, g, b]` with 0–255 per channel.
+///
+/// After sending all 9 pairs, call [`done_sending_rows`] to trigger the
+/// PIC's display refresh.
+pub async fn set_column_pair_rgb(pair: u8, colours: &[[u8; 3]; 16]) {
+    // 1 command byte + 16 × 3 colour bytes = 49 bytes per pair
+    let mut buf = [0u8; 49];
+    buf[0] = 1u8 + pair; // SET_COLOUR_FOR_TWO_COLUMNS + pair index
+    for (i, [r, g, b]) in colours.iter().enumerate() {
+        buf[1 + i * 3] = *r;
+        buf[2 + i * 3] = *g;
+        buf[3 + i * 3] = *b;
+    }
+    uart::write_bytes(UART_CH, &buf).await;
+}
+
+/// Signal the PIC that all column-pair colour data has been sent for this
+/// frame, triggering a display refresh.  Call after the last
+/// [`set_column_pair_rgb`] for a complete grid update.
+#[inline]
+pub async fn done_sending_rows() {
+    uart::write_bytes(UART_CH, &[240u8]).await; // DONE_SENDING_ROWS
 }
 
 /// Request the PIC to re-send all button/pad pressed states.
@@ -296,8 +337,22 @@ pub async fn request_firmware_version() {
 /// `knob`: 0 or 1.  `brightnesses`: four brightness values (0–255).
 #[inline]
 pub async fn set_gold_knob_indicators(knob: u8, brightnesses: [u8; 4]) {
-    let cmd = if knob == 0 { CMD_SET_GOLD_KNOB_0_INDICATORS } else { CMD_SET_GOLD_KNOB_1_INDICATORS };
-    uart::write_bytes(UART_CH, &[cmd, brightnesses[0], brightnesses[1], brightnesses[2], brightnesses[3]]).await;
+    let cmd = if knob == 0 {
+        CMD_SET_GOLD_KNOB_0_INDICATORS
+    } else {
+        CMD_SET_GOLD_KNOB_1_INDICATORS
+    };
+    uart::write_bytes(
+        UART_CH,
+        &[
+            cmd,
+            brightnesses[0],
+            brightnesses[1],
+            brightnesses[2],
+            brightnesses[3],
+        ],
+    )
+    .await;
 }
 
 // ── OLED SPI handshake helpers ────────────────────────────────────────────────
@@ -334,6 +389,45 @@ pub async fn oled_dc_high() {
     uart::write_bytes(UART_CH, &[CMD_SET_DC_HIGH]).await;
 }
 
+// ── PIC-ready signal ─────────────────────────────────────────────────────────
+//
+// Set by `pic::init()` once the full initialisation sequence has completed
+// (baud switched, firmware version and button-state resend requested, 50 ms
+// settling time elapsed).  Any task that depends on the PIC being fully
+// configured (notably `oled_task`) should `pic::wait_ready().await` before
+// issuing its own PIC commands.
+
+#[cfg(target_os = "none")]
+mod ready_signal {
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    static READY_FLAG: AtomicBool = AtomicBool::new(false);
+
+    /// Called once by `pic::init()` when the sequence is complete.
+    pub fn signal() {
+        READY_FLAG.store(true, Ordering::Release);
+    }
+
+    /// Poll until `signal()` has been called.  Returns immediately if it
+    /// was already called (safe to call multiple times, from any number of tasks).
+    pub async fn wait() {
+        while !READY_FLAG.load(Ordering::Acquire) {
+            embassy_time::Timer::after_millis(1).await;
+        }
+    }
+}
+
+/// Suspend until [`init()`] has completed on this PIC channel.
+///
+/// Call this at the start of any task that issues PIC UART commands, to
+/// ensure the baud-rate handshake and initial configuration have already
+/// finished.  Returns immediately if `init()` has already run.
+#[cfg(target_os = "none")]
+#[inline]
+pub async fn wait_ready() {
+    ready_signal::wait().await;
+}
+
 // ── OLED chip-select handshake signals ───────────────────────────────────────
 //
 // The PIC echoes SELECT_OLED (248) and DESELECT_OLED (249) back when it has
@@ -350,9 +444,9 @@ mod oled_signal {
     use core::task::Poll;
     use embassy_sync::waitqueue::AtomicWaker;
 
-    static SELECTED_FLAG:   AtomicBool   = AtomicBool::new(false);
-    static SELECTED_WAKER:  AtomicWaker  = AtomicWaker::new();
-    static DESELECTED_FLAG: AtomicBool   = AtomicBool::new(false);
+    static SELECTED_FLAG: AtomicBool = AtomicBool::new(false);
+    static SELECTED_WAKER: AtomicWaker = AtomicWaker::new();
+    static DESELECTED_FLAG: AtomicBool = AtomicBool::new(false);
     static DESELECTED_WAKER: AtomicWaker = AtomicWaker::new();
 
     /// Called by `pic_task` when it receives an OledSelected event (byte 248).
@@ -424,6 +518,48 @@ pub async fn wait_oled_selected() {
 #[inline]
 pub async fn wait_oled_deselected() {
     oled_signal::wait_deselected().await;
+}
+
+// ── Named button ID constants ───────────────────────────────────────────────
+
+/// Named button IDs (raw PIC byte − 144 = `ButtonPress { id }`).
+///
+/// These are derived from `hid/button.h` in DelugeFirmware and verified against
+/// the Spark front-end `protocol.rs` `led_to_index` table.  For all physical
+/// buttons (non-encoder-push) the LED index equals the button ID, so
+/// `pic::led_on(button::BACK)` lights the Back button's LED.
+///
+/// Encoder push-buttons (IDs 0, 9, 13, 18, 27, 31) are not listed here because
+/// they have no indicator LED.
+pub mod button {
+    pub const ENCODER_FUNCTION_1: u8 = 1; // Zmod0
+    pub const ENCODER_FUNCTION_5: u8 = 2; // Zmod4
+    pub const SCOPE: u8 = 3;
+    pub const TIME: u8 = 5;
+    pub const SCALE: u8 = 6;
+    pub const COPY: u8 = 7;
+    pub const SHIFT: u8 = 8;
+    pub const ENCODER_FUNCTION_2: u8 = 10; // Zmod1
+    pub const ENCODER_FUNCTION_6: u8 = 11; // Zmod5
+    pub const SESSION: u8 = 12;
+    pub const QUANTIZE: u8 = 14;
+    pub const LOAD: u8 = 15;
+    pub const BACK: u8 = 16;
+    pub const SELECT: u8 = 17;
+    pub const ENCODER_FUNCTION_3: u8 = 19; // Zmod2
+    pub const ENCODER_FUNCTION_7: u8 = 20; // Zmod6
+    pub const CLIP: u8 = 21;
+    pub const AUTOMATION: u8 = 23;
+    pub const LOOP: u8 = 24;
+    pub const FILL: u8 = 25;
+    pub const RECORD: u8 = 26;
+    pub const ENCODER_FUNCTION_4: u8 = 28; // Zmod3
+    pub const ENCODER_FUNCTION_8: u8 = 29; // Zmod7
+    pub const KEYBOARD: u8 = 30;
+    pub const TRANSFORM: u8 = 32;
+    pub const SAVE: u8 = 33;
+    pub const TAP_TEMPO: u8 = 34;
+    pub const PLAY: u8 = 35;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -527,7 +663,7 @@ mod tests {
         // OFF prefix affects only the NEXT 0–179 byte
         p.push(RESP_NEXT_PAD_OFF);
         p.push(10); // release
-        // No prefix now — next should be a press
+                    // No prefix now — next should be a press
         assert_eq!(p.push(10), Some(Event::PadPress { id: 10 }));
     }
 

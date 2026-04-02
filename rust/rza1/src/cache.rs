@@ -25,7 +25,7 @@
 use core::arch::asm;
 
 // PL310 register addresses
-const L2C_BASE:         usize = 0x3FFF_F000;
+const L2C_BASE: usize = 0x3FFF_F000;
 const L2C_REG1_CONTROL: usize = L2C_BASE + 0x100;
 const L2C_REG2_INT_CLR: usize = L2C_BASE + 0x220;
 const L2C_REG7_INV_WAY: usize = L2C_BASE + 0x77C;

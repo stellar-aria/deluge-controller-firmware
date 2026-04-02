@@ -5,10 +5,14 @@ ENTRY(_start)
 MEMORY {
     /* 3 MB on-chip SRAM */
     RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 0x00300000
-    /* Uncached mirror of RAM — same physical SRAM, but VA 0x60000000 maps to
-       PA 0x20000000 via area 10 of the MMU TTB (PARA_NORMAL_NOT_CACHE).
-       The debug probe reads/writes here directly, bypassing the CPU cache. */
-    NCACHE_RAM (rw) : ORIGIN = 0x60000000, LENGTH = 0x00300000
+
+    /* 64 KB reserved at the top of SRAM for the RTT ring buffer.
+       Placed just below the stacks (stacks occupy the top 160 KB).
+       Cached alias: 0x202B0000–0x202BFFFF
+       The uncached mirror is the same physical page + 0x40000000. */
+    RTT_RAM  (rw)  : ORIGIN = 0x202B0000, LENGTH = 0x00010000  /* 64 KB cached   */
+    NCACHE_RAM (rw): ORIGIN = 0x602B0000, LENGTH = 0x00010000  /* 64 KB uncached  */
+
     /* 64 MB external SDRAM (CS3) — used in later milestones */
     SDRAM (rwx) : ORIGIN = 0x0C000000, LENGTH = 0x04000000
 }
@@ -24,7 +28,10 @@ INTERNAL_RAM_END = 0x20300000;
 
 SECTIONS {
     /* _SEGGER_RTT control block in the uncached SRAM mirror so the debug
-       probe can always see RTT writes, even after D-cache is enabled. */
+       probe can always see RTT writes, even after D-cache is enabled.
+       RTT_RAM (cached) and NCACHE_RAM (uncached) are the same physical page;
+       reserving both prevents BSS or stacks from being placed there. */
+    .rtt_cached_reserve (NOLOAD) : ALIGN(4) { . += 0x10000; } > RTT_RAM
     .rtt_buffer (NOLOAD) : ALIGN(4) {
         KEEP(*(.rtt_buffer .rtt_buffer.*))
         . = ALIGN(4);
@@ -74,6 +81,10 @@ SECTIONS {
     . = ALIGN(0x10000);
     end = .;
     _end = .;
+
+    /* SRAM heap: free space between the image and the RTT/stack reservation */
+    __sram_heap_start = end;
+    __sram_heap_end   = ORIGIN(RTT_RAM);  /* 0x202B0000 */
 
     /*
      * Exception-mode stacks — NOLOAD, placed just below the program stack.

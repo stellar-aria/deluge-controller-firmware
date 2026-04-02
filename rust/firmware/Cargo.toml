@@ -13,5 +13,6 @@ deluge-bsp = { path = "../deluge-bsp" }
 cortex-ar = "0.3"
 embassy-executor = { version = "0.10", features = ["nightly", "platform-cortex-ar", "executor-thread"] }
 embassy-time = { version = "0.5", features = ["tick-hz-1_000_000"] }
+embassy-usb = "0.6"
 rtt-target = { version = "0.6", features = ["log"] }
 log = "0.4.29"

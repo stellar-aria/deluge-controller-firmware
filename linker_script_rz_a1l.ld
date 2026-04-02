@@ -76,9 +76,11 @@ MEMORY
 
 	RAM012L   (rwx) : ORIGIN = 0x20000000, LENGTH =  0x00300000
 
-	/* Uncached mirror of RAM012L — DMA and debug probe access this without going
-	   through the CPU cache.  VA 0x60000000 = PA 0x20000000 (area 10 in MMU TTB). */
-	NCACHE_RAM (rw) : ORIGIN = 0x60000000, LENGTH = 0x00300000
+	/* Uncached mirror of on-chip RAM pages 0–4.
+	   0x6000_0000–0x6001_FFFF is RESERVED on RZ/A1L (TRM §5 address map).
+	   Mirror begins at 0x6002_0000 (page 0) through 0x602F_FFFF (page 4 end).
+	   VA 0x60020000 = PA 0x20020000.  Total usable: 0x2E0000 (2944 KB). */
+	NCACHE_RAM (rw) : ORIGIN = 0x60020000, LENGTH = 0x002E0000
 	/* RAM01234L (rwx) : ORIGIN = 0x20020000, LENGTH = 0x007E0000 */
 	/* RAM012U   (rwx) : ORIGIN = 0x20500000, LENGTH = 0x00300000 */
 

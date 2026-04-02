@@ -13,24 +13,20 @@
 //! All mutable access to the per-pipe state in IRQ + task must go through
 //! critical sections (`critical_section::with`).
 
-use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
+use core::sync::atomic::AtomicU16;
 use embassy_sync::waitqueue::AtomicWaker;
 
-use super::regs::{
-    Rusb1Regs, PIPECFG_TYPE_BULK, PIPECFG_TYPE_INTR, PIPECFG_TYPE_ISO,
-    PIPECFG_DIR, PIPECFG_EPNUM_MASK, PIPECFG_SHTNAK, PIPECFG_DBLB,
-    PIPECTR_PID_NAK, PIPECTR_PID_BUF, PIPECTR_PID_STALL,
-    PIPECTR_ACLRM, PIPECTR_SQCLR, PIPECTR_SQSET,
-    PIPEBUF_BUFSIZE_SHIFT,
-    PIPEMAXP_MXPS_MASK,
-    INTENB0_BRDYE, INTENB0_BEMPE,
-    FIFOCTR_BVAL, FIFOCTR_BCLR,
-    PKT_BUF_BLOCKS, PKT_BUF_BLOCK_SIZE,
-    pipectr_ptr, rd, wr, rmw,
+use super::fifo::{
+    fifo_bclr, fifo_bval, fifo_dtln, fifo_for_pipe, fifo_is_ready, fifo_select_pipe, hw_to_sw_fifo,
+    sw_to_hw_fifo,
 };
-use super::fifo::{FifoPort, fifo_for_pipe, fifo_is_ready, fifo_dtln,
-                  fifo_bclr, fifo_bval, fifo_select_pipe,
-                  sw_to_hw_fifo, hw_to_sw_fifo};
+use super::regs::{
+    pipectr_ptr, rd, wr, Rusb1Regs,
+    PIPEBUF_BUFSIZE_SHIFT, PIPECFG_DBLB, PIPECFG_DIR, PIPECFG_EPNUM_MASK, PIPECFG_SHTNAK,
+    PIPECFG_TYPE_BULK, PIPECFG_TYPE_INTR, PIPECFG_TYPE_ISO, PIPECTR_ACLRM, PIPECTR_PID_BUF,
+    PIPECTR_PID_NAK, PIPECTR_PID_STALL, PIPECTR_SQCLR, PIPEMAXP_MXPS_MASK,
+    PKT_BUF_BLOCKS,
+};
 
 // ---------------------------------------------------------------------------
 // Pipe count
@@ -108,8 +104,7 @@ pub static PIPE_XFER: [critical_section::Mutex<core::cell::UnsafeCell<PipeXferSt
     // so we use the same trick as PIPE_WAKERS.
     use core::cell::UnsafeCell;
     use critical_section::Mutex;
-    const IDLE: Mutex<UnsafeCell<PipeXferState>> =
-        Mutex::new(UnsafeCell::new(PipeXferState::IDLE));
+    const IDLE: Mutex<UnsafeCell<PipeXferState>> = Mutex::new(UnsafeCell::new(PipeXferState::IDLE));
     [IDLE; PIPE_COUNT]
 };
 
@@ -130,9 +125,9 @@ impl XferType {
     /// PIPECFG TYPE field value (0b00 = control for DCP, not programmed here).
     pub fn pipecfg_type_bits(self) -> u16 {
         match self {
-            XferType::Control     => 0,
-            XferType::Bulk        => PIPECFG_TYPE_BULK,
-            XferType::Interrupt   => PIPECFG_TYPE_INTR,
+            XferType::Control => 0,
+            XferType::Bulk => PIPECFG_TYPE_BULK,
+            XferType::Interrupt => PIPECFG_TYPE_INTR,
             XferType::Isochronous => PIPECFG_TYPE_ISO,
         }
     }
@@ -216,7 +211,7 @@ impl BufAllocator {
 /// `regs` must be a valid pointer to the USB register block with USBE=1.
 /// Caller must ensure no transfer is active on this pipe.
 pub unsafe fn pipe_configure(regs: *mut Rusb1Regs, n: usize, cfg: &PipeConfig) {
-    debug_assert!(n >= 1 && n <= 15, "pipe_configure: invalid pipe number");
+    debug_assert!((1..=15).contains(&n), "pipe_configure: invalid pipe number");
 
     // Deactivate the pipe before reconfiguring.
     wr(pipectr_ptr(regs, n), PIPECTR_PID_NAK);
@@ -255,7 +250,10 @@ pub unsafe fn pipe_configure(regs: *mut Rusb1Regs, n: usize, cfg: &PipeConfig) {
     wr(core::ptr::addr_of_mut!((*regs).pipebuf), pipebuf);
 
     // PIPEMAXP: max packet size.
-    wr(core::ptr::addr_of_mut!((*regs).pipemaxp), cfg.mps & PIPEMAXP_MXPS_MASK);
+    wr(
+        core::ptr::addr_of_mut!((*regs).pipemaxp),
+        cfg.mps & PIPEMAXP_MXPS_MASK,
+    );
 
     // Deselect pipe.
     wr(core::ptr::addr_of_mut!((*regs).pipesel), 0);
@@ -316,7 +314,9 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
     let state = &mut *{
         // Access state without critical_section — we're already in IRQ context
         // where the task cannot run (single-core).
-        PIPE_XFER[n].borrow(critical_section::CriticalSection::new()).get()
+        PIPE_XFER[n]
+            .borrow(critical_section::CriticalSection::new())
+            .get()
     };
 
     let is_iso = state.xfer_type == XferType::Isochronous;
@@ -340,7 +340,10 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
     // the CPU is reading it (matches C `process_pipe_brdy` NAK-before-read).
     if !is_iso {
         let cur = rd(ctr_ptr);
-        wr(ctr_ptr, (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_NAK);
+        wr(
+            ctr_ptr,
+            (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_NAK,
+        );
     }
 
     let fifo = fifo_for_pipe(regs, n);
@@ -350,7 +353,10 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
         // FIFO port not ready; re-arm and retry next BRDY.
         if !is_iso {
             let cur = rd(ctr_ptr);
-            wr(ctr_ptr, (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF);
+            wr(
+                ctr_ptr,
+                (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF,
+            );
         }
         return false;
     }
@@ -379,7 +385,10 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
     // next packet (non-ISO only — ISO stays at BUF/auto-managed).
     if !is_iso {
         let cur = rd(ctr_ptr);
-        wr(ctr_ptr, (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF);
+        wr(
+            ctr_ptr,
+            (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF,
+        );
     }
 
     false
@@ -394,7 +403,9 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
 /// `regs` must be valid.  Called from ISR context.
 pub unsafe fn pipe_xfer_in_bemp(regs: *mut Rusb1Regs, n: usize) -> bool {
     let state = &mut *{
-        PIPE_XFER[n].borrow(critical_section::CriticalSection::new()).get()
+        PIPE_XFER[n]
+            .borrow(critical_section::CriticalSection::new())
+            .get()
     };
 
     if state.remaining == 0 {
@@ -433,7 +444,10 @@ pub unsafe fn pipe_xfer_in_bemp(regs: *mut Rusb1Regs, n: usize) -> bool {
 pub unsafe fn pipe_enable(regs: *mut Rusb1Regs, n: usize) {
     let ctr = pipectr_ptr(regs, n);
     let cur = rd(ctr);
-    wr(ctr, (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF);
+    wr(
+        ctr,
+        (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF,
+    );
 }
 
 /// Set PID=NAK to halt data transfer on pipe `n`.
@@ -443,7 +457,10 @@ pub unsafe fn pipe_enable(regs: *mut Rusb1Regs, n: usize) {
 pub unsafe fn pipe_disable(regs: *mut Rusb1Regs, n: usize) {
     let ctr = pipectr_ptr(regs, n);
     let cur = rd(ctr);
-    wr(ctr, (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_NAK);
+    wr(
+        ctr,
+        (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_NAK,
+    );
 }
 
 /// Set PID=STALL on pipe `n`.
@@ -453,7 +470,10 @@ pub unsafe fn pipe_disable(regs: *mut Rusb1Regs, n: usize) {
 pub unsafe fn pipe_stall(regs: *mut Rusb1Regs, n: usize) {
     let ctr = pipectr_ptr(regs, n);
     let cur = rd(ctr);
-    wr(ctr, (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_STALL);
+    wr(
+        ctr,
+        (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_STALL,
+    );
 }
 
 /// Clear the data toggle and FIFO on pipe `n`, then set PID=NAK.

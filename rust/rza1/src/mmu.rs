@@ -39,18 +39,18 @@ const PARA_NORMAL_CACHE: u32 = 0x1DEE;
 // Area table — (size_in_mb, attribute) pairs, low address → high address.
 // ---------------------------------------------------------------------------
 const AREAS: &[(u32, u32)] = &[
-    (128, PARA_NORMAL_CACHE),     // area  0  CS0/CS1 NOR flash
-    (128, PARA_NORMAL_CACHE),     // area  1  CS2/CS3 SDRAM
-    (128, PARA_STRONGLY_ORDERED), // area  2  CS4/CS5
-    (128, PARA_NORMAL_CACHE),     // area  3  SPI / SPI2 serial flash
-    (10,  PARA_NORMAL_CACHE),     // area  4  internal SRAM (3 MB phys + guard)
-    (502, PARA_STRONGLY_ORDERED), // area  5  I/O area 1
-    (128, PARA_NORMAL_NOT_CACHE), // area  6  CS0/CS1 mirror
-    (128, PARA_NORMAL_NOT_CACHE), // area  7  CS2/CS3 mirror (SDRAM mirror)
-    (128, PARA_STRONGLY_ORDERED), // area  8  CS4/CS5 mirror
-    (128, PARA_NORMAL_NOT_CACHE), // area  9  SPI mirror
-    (10,  PARA_NORMAL_NOT_CACHE), // area 10  SRAM mirror
-    (2550,PARA_STRONGLY_ORDERED), // area 11  I/O area 2
+    (128, PARA_NORMAL_CACHE),      // area  0  CS0/CS1 NOR flash
+    (128, PARA_NORMAL_CACHE),      // area  1  CS2/CS3 SDRAM
+    (128, PARA_STRONGLY_ORDERED),  // area  2  CS4/CS5
+    (128, PARA_NORMAL_CACHE),      // area  3  SPI / SPI2 serial flash
+    (10, PARA_NORMAL_CACHE),       // area  4  internal SRAM (3 MB phys + guard)
+    (502, PARA_STRONGLY_ORDERED),  // area  5  I/O area 1
+    (128, PARA_NORMAL_NOT_CACHE),  // area  6  CS0/CS1 mirror
+    (128, PARA_NORMAL_NOT_CACHE),  // area  7  CS2/CS3 mirror (SDRAM mirror)
+    (128, PARA_STRONGLY_ORDERED),  // area  8  CS4/CS5 mirror
+    (128, PARA_NORMAL_NOT_CACHE),  // area  9  SPI mirror
+    (10, PARA_NORMAL_NOT_CACHE), // area 10  SRAM mirror (0x60020000 is first valid byte; 0x60000000-0x6001FFFF reserved)
+    (2550, PARA_STRONGLY_ORDERED), // area 11  I/O area 2
 ];
 
 // ---------------------------------------------------------------------------
@@ -83,7 +83,11 @@ pub unsafe fn init_and_enable() {
     // SAFETY: TTB is static mut; we call this exactly once at startup before
     // any other core accesses it.
     let table_ptr = core::ptr::addr_of_mut!(TTB) as *mut u32;
-    log::debug!("mmu: building TTB ({} entries) at {:#010x}", 4096usize, table_ptr as usize);
+    log::debug!(
+        "mmu: building TTB ({} entries) at {:#010x}",
+        4096usize,
+        table_ptr as usize
+    );
     // Descriptor[n] = (n_mb << 20) | attr  →  flat VA=PA mapping.
     let mut idx: u32 = 0;
     for &(size_mb, attr) in AREAS {

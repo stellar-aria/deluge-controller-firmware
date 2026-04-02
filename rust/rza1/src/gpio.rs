@@ -9,8 +9,8 @@
 //! - PMCn  (mux: 0=GPIO, 1=periph) : `0xFCFE_3400 + n*4`
 //! - PIPCn (ctrl: 0=sw, 1=periph)  : `0xFCFE_7204 + (n-1)*4`
 
-use core::marker::PhantomData;
 use core::convert::Infallible;
+use core::marker::PhantomData;
 
 const GPIO_BASE: usize = 0xFCFE_3000;
 
@@ -31,7 +31,7 @@ pub fn pmc(port: u8) -> *mut u16 {
 /// Port Data Register n (Pn) — output data.
 /// `port` is 1-based (1..=11).
 pub fn p(port: u8) -> *mut u16 {
-    (GPIO_BASE + 0x000 + (port as usize) * 4) as *mut u16
+    (GPIO_BASE + (port as usize) * 4) as *mut u16
 }
 
 /// Port Input Peripheral Control Register n (PIPCn): bit=0 → software ctrl.
@@ -39,6 +39,19 @@ pub fn p(port: u8) -> *mut u16 {
 /// Address: PIPC1 = 0xFCFE_7204, stride 4.
 pub fn pipc(port: u8) -> *mut u16 {
     (0xFCFE_7204usize + (port as usize - 1) * 4) as *mut u16
+}
+
+/// Port Pin Read register n (PPRn) — reflects actual pin voltage regardless of direction.
+/// Read-only. `port` is 1-based (1..=11). Address: PPR1 = 0xFCFE_3204.
+fn ppr(port: u8) -> *const u16 {
+    (GPIO_BASE + 0x200 + (port as usize) * 4) as *const u16
+}
+
+/// Port Input Buffer Control register n (PIBCn): bit=1 enables the input buffer.
+/// Must be 1 to read external pin state via PPR. `port` is 0-based (PIBC0 exists).
+/// Address: PIBC0 = 0xFCFE_7000, PIBC1 = 0xFCFE_7004, stride 4.
+fn pibc(port: u8) -> *mut u16 {
+    (0xFCFE_7000usize + (port as usize) * 4) as *mut u16
 }
 
 // ── Low-level free functions ───────────────────────────────────────────────────
@@ -60,6 +73,38 @@ pub unsafe fn set_as_output(port: u8, pin: u8) {
     // PIPC = 0: software (not hardware-peripheral) control
     let v = core::ptr::read_volatile(pipc(port));
     core::ptr::write_volatile(pipc(port), v & !(1u16 << pin));
+}
+
+/// Configure a pin as a software-controlled GPIO input.
+///
+/// Sets PMC=0 (GPIO mode), PM=1 (input direction), PIBC=1 (enable input buffer).
+/// After this call, the pin voltage can be read via [`read_pin`].
+///
+/// # Safety
+/// Writes to memory-mapped peripheral registers; must run with the pin not
+/// already owned by another driver.
+pub unsafe fn set_as_input(port: u8, pin: u8) {
+    // PMC = 0: GPIO (not peripheral multiplexed)
+    let v = core::ptr::read_volatile(pmc(port));
+    core::ptr::write_volatile(pmc(port), v & !(1u16 << pin));
+
+    // PM = 1: input direction
+    let v = core::ptr::read_volatile(pm(port));
+    core::ptr::write_volatile(pm(port), v | (1u16 << pin));
+
+    // PIBC = 1: enable input buffer so PPR reflects the live pin state
+    let v = core::ptr::read_volatile(pibc(port));
+    core::ptr::write_volatile(pibc(port), v | (1u16 << pin));
+}
+
+/// Read the current logic level of a GPIO pin via the Port Pin Read (PPR) register.
+///
+/// Works after [`set_as_input`] has been called for the pin.
+///
+/// # Safety
+/// Reads a memory-mapped peripheral register; `port` must be 1-based (1..=11).
+pub unsafe fn read_pin(port: u8, pin: u8) -> bool {
+    (core::ptr::read_volatile(ppr(port)) >> pin) & 1 != 0
 }
 
 /// Drive a GPIO output pin high (`true`) or low (`false`).
@@ -85,24 +130,29 @@ pub unsafe fn write(port: u8, pin: u8, high: bool) {
 /// Writes to memory-mapped GPIO registers.
 pub unsafe fn set_pin_mux(port: u8, pin: u8, mux: u8) {
     // Base address for port 1 of each mux register group; stride 4 per port.
-    const PFC_BASE:   usize = 0xFCFE_3504;
-    const PFCE_BASE:  usize = 0xFCFE_3604;
+    const PFC_BASE: usize = 0xFCFE_3504;
+    const PFCE_BASE: usize = 0xFCFE_3604;
     const PFCAE_BASE: usize = 0xFCFE_3A04;
-    const PMC_BASE:   usize = 0xFCFE_3404; // PMC1 = 0x3404, PMCn = +4*(n-1)
-    const PIPC_BASE:  usize = 0xFCFE_7204;
+    const PMC_BASE: usize = 0xFCFE_3404; // PMC1 = 0x3404, PMCn = +4*(n-1)
+    const PIPC_BASE: usize = 0xFCFE_7204;
 
     fn modify(base: usize, port: u8, pin: u8, set: bool) {
         let addr = (base + (port as usize - 1) * 4) as *mut u16;
         let v = unsafe { core::ptr::read_volatile(addr) };
-        let new = if set { v | (1u16 << pin) } else { v & !(1u16 << pin) };
+        let new = if set {
+            v | (1u16 << pin)
+        } else {
+            v & !(1u16 << pin)
+        };
         unsafe { core::ptr::write_volatile(addr, new) };
     }
 
+    log::trace!("gpio: set_pin_mux port={} pin={} mux={}", port, pin, mux);
     modify(PFCAE_BASE, port, pin, mux >= 5);
-    modify(PFCE_BASE,  port, pin, ((mux - 1) >> 1) & 1 != 0);
-    modify(PFC_BASE,   port, pin, (mux - 1) & 1 != 0);
-    modify(PMC_BASE,   port, pin, true);
-    modify(PIPC_BASE,  port, pin, true);
+    modify(PFCE_BASE, port, pin, ((mux - 1) >> 1) & 1 != 0);
+    modify(PFC_BASE, port, pin, (mux - 1) & 1 != 0);
+    modify(PMC_BASE, port, pin, true);
+    modify(PIPC_BASE, port, pin, true);
 }
 
 // ── Type-state GPIO pins ───────────────────────────────────────────────────────
@@ -127,7 +177,9 @@ impl<const PORT: u8, const BIT: u8, MODE> Pin<PORT, BIT, MODE> {
     /// The caller must ensure the pin is not concurrently owned by another
     /// driver and that GPIO clocks are enabled.
     #[inline]
-    pub unsafe fn new() -> Self { Pin(PhantomData) }
+    pub unsafe fn new() -> Self {
+        Pin(PhantomData)
+    }
 }
 
 impl<const PORT: u8, const BIT: u8> Pin<PORT, BIT, Output> {
@@ -141,15 +193,11 @@ impl<const PORT: u8, const BIT: u8> Pin<PORT, BIT, Output> {
     }
 }
 
-impl<const PORT: u8, const BIT: u8> embedded_hal::digital::ErrorType
-    for Pin<PORT, BIT, Output>
-{
+impl<const PORT: u8, const BIT: u8> embedded_hal::digital::ErrorType for Pin<PORT, BIT, Output> {
     type Error = Infallible;
 }
 
-impl<const PORT: u8, const BIT: u8> embedded_hal::digital::OutputPin
-    for Pin<PORT, BIT, Output>
-{
+impl<const PORT: u8, const BIT: u8> embedded_hal::digital::OutputPin for Pin<PORT, BIT, Output> {
     #[inline]
     fn set_high(&mut self) -> Result<(), Infallible> {
         unsafe { write(PORT, BIT, true) };
@@ -177,15 +225,11 @@ impl<const PORT: u8, const BIT: u8> embedded_hal::digital::StatefulOutputPin
     }
 }
 
-impl<const PORT: u8, const BIT: u8> embedded_hal::digital::ErrorType
-    for Pin<PORT, BIT, Input>
-{
+impl<const PORT: u8, const BIT: u8> embedded_hal::digital::ErrorType for Pin<PORT, BIT, Input> {
     type Error = Infallible;
 }
 
-impl<const PORT: u8, const BIT: u8> embedded_hal::digital::InputPin
-    for Pin<PORT, BIT, Input>
-{
+impl<const PORT: u8, const BIT: u8> embedded_hal::digital::InputPin for Pin<PORT, BIT, Input> {
     #[inline]
     fn is_high(&mut self) -> Result<bool, Infallible> {
         let val = unsafe { core::ptr::read_volatile(p(PORT)) };
@@ -212,17 +256,17 @@ mod tests {
 
     #[test]
     fn gpio_p_addr() {
-        assert_eq!(p(1) as usize,  0xFCFE_3004);
-        assert_eq!(p(2) as usize,  0xFCFE_3008);
-        assert_eq!(p(6) as usize,  0xFCFE_3018);
+        assert_eq!(p(1) as usize, 0xFCFE_3004);
+        assert_eq!(p(2) as usize, 0xFCFE_3008);
+        assert_eq!(p(6) as usize, 0xFCFE_3018);
         assert_eq!(p(11) as usize, 0xFCFE_302C);
     }
 
     #[test]
     fn gpio_pm_addr() {
-        assert_eq!(pm(1) as usize,  0xFCFE_3304);
-        assert_eq!(pm(2) as usize,  0xFCFE_3308);
-        assert_eq!(pm(6) as usize,  0xFCFE_3318);
+        assert_eq!(pm(1) as usize, 0xFCFE_3304);
+        assert_eq!(pm(2) as usize, 0xFCFE_3308);
+        assert_eq!(pm(6) as usize, 0xFCFE_3318);
         assert_eq!(pm(11) as usize, 0xFCFE_332C);
     }
 
@@ -248,9 +292,9 @@ mod tests {
     fn gpio_pin_mux_encoding() {
         for mux in 1u8..=7 {
             let pfcae = mux >= 5;
-            let pfce  = ((mux - 1) >> 1) & 1 != 0;
-            let pfc   = (mux - 1) & 1 != 0;
-            let bits  = ((pfcae as u8) << 2) | ((pfce as u8) << 1) | (pfc as u8);
+            let pfce = ((mux - 1) >> 1) & 1 != 0;
+            let pfc = (mux - 1) & 1 != 0;
+            let bits = ((pfcae as u8) << 2) | ((pfce as u8) << 1) | (pfc as u8);
             assert_eq!(bits, mux - 1, "mux={mux}");
         }
     }

@@ -44,9 +44,9 @@ use crate::gpio::set_pin_mux;
 const CS2BCR: usize = 0x3FFF_C00C;
 const CS3BCR: usize = 0x3FFF_C010;
 const CS3WCR: usize = 0x3FFF_C034;
-const SDCR:   usize = 0x3FFF_C04C;
-const RTCSR:  usize = 0x3FFF_C050;
-const RTCOR:  usize = 0x3FFF_C058;
+const SDCR: usize = 0x3FFF_C04C;
+const RTCSR: usize = 0x3FFF_C050;
+const RTCOR: usize = 0x3FFF_C058;
 
 // SDRAM mode register access addresses (write-only, triggers MRS command)
 const SDRAM_MODE_CS2: usize = 0x3FFF_D040;

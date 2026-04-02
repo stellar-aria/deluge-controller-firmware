@@ -35,17 +35,15 @@
 //! }
 //! ```
 
-pub mod regs;
-pub mod fifo;
-pub mod pipe;
-pub mod driver;
-pub mod host;
 pub mod classes;
+pub mod driver;
+pub mod fifo;
+pub mod host;
+pub mod pipe;
+pub mod regs;
 
 pub use driver::{
-    Rusb1Driver, Rusb1Bus, Rusb1ControlPipe,
-    Rusb1EndpointIn, Rusb1EndpointOut,
-    dcd_int_handler,
+    dcd_int_handler, Rusb1Bus, Rusb1ControlPipe, Rusb1Driver, Rusb1EndpointIn, Rusb1EndpointOut,
 };
 pub use host::Rusb1HostDriver;
 
@@ -79,7 +77,9 @@ pub struct UsbPort<MODE> {
 
 impl<M> UsbPort<M> {
     /// The hardware port index (0 or 1).
-    pub fn port_index(&self) -> u8 { self.port }
+    pub fn port_index(&self) -> u8 {
+        self.port
+    }
 }
 
 impl UsbPort<Device> {
@@ -90,7 +90,13 @@ impl UsbPort<Device> {
     pub unsafe fn into_host_mode(self) -> (UsbPort<Host>, Rusb1HostDriver) {
         quiesce_port(self.port);
         let hd = Rusb1HostDriver::new(self.port);
-        (UsbPort { port: self.port, _mode: PhantomData }, hd)
+        (
+            UsbPort {
+                port: self.port,
+                _mode: PhantomData,
+            },
+            hd,
+        )
     }
 }
 
@@ -102,7 +108,13 @@ impl UsbPort<Host> {
     pub unsafe fn into_device_mode(self) -> (UsbPort<Device>, Rusb1Driver) {
         quiesce_port(self.port);
         let drv = Rusb1Driver::new(self.port);
-        (UsbPort { port: self.port, _mode: PhantomData }, drv)
+        (
+            UsbPort {
+                port: self.port,
+                _mode: PhantomData,
+            },
+            drv,
+        )
     }
 }
 
@@ -123,7 +135,13 @@ impl UsbPort<Host> {
 pub unsafe fn init_device_mode(port: u8) -> (UsbPort<Device>, Rusb1Driver) {
     rusb1::module_clock_enable(port);
     let drv = Rusb1Driver::new(port);
-    (UsbPort { port, _mode: PhantomData }, drv)
+    (
+        UsbPort {
+            port,
+            _mode: PhantomData,
+        },
+        drv,
+    )
 }
 
 /// Enable the USB clock, initialise the RUSB1 hardware in **host** mode, and
@@ -138,7 +156,13 @@ pub unsafe fn init_device_mode(port: u8) -> (UsbPort<Device>, Rusb1Driver) {
 pub unsafe fn init_host_mode(port: u8) -> (UsbPort<Host>, Rusb1HostDriver) {
     rusb1::module_clock_enable(port);
     let hd = Rusb1HostDriver::new(port);
-    (UsbPort { port, _mode: PhantomData }, hd)
+    (
+        UsbPort {
+            port,
+            _mode: PhantomData,
+        },
+        hd,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +172,7 @@ pub unsafe fn init_host_mode(port: u8) -> (UsbPort<Host>, Rusb1HostDriver) {
 /// Bring a port to a quiescent state (USBE=0, interrupts off) before a mode
 /// switch.
 unsafe fn quiesce_port(port: u8) {
-    use regs::{Rusb1Regs, SYSCFG_USBE, wr};
+    use regs::{wr, Rusb1Regs, SYSCFG_USBE};
     rusb1::int_disable(port);
     let regs = Rusb1Regs::ptr(port);
     wr(core::ptr::addr_of_mut!((*regs).intenb0), 0);

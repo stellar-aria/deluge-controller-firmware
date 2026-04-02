@@ -51,26 +51,26 @@ const RSPI0_BASE: usize = 0xE800_C800;
 const RSPI_STRIDE: usize = 0x800;
 
 // ── Register offsets ──────────────────────────────────────────────────────────
-const OFF_SPCR:  usize = 0x00;
-const OFF_SSLP:  usize = 0x01;
+const OFF_SPCR: usize = 0x00;
+const OFF_SSLP: usize = 0x01;
 const OFF_SPPCR: usize = 0x02;
-const OFF_SPSR:  usize = 0x03;
-const OFF_SPDR:  usize = 0x04;
+const OFF_SPSR: usize = 0x03;
+const OFF_SPDR: usize = 0x04;
 const OFF_SPSCR: usize = 0x08;
 const OFF_SPSSR: usize = 0x09;
-const OFF_SPBR:  usize = 0x0A;
+const OFF_SPBR: usize = 0x0A;
 const OFF_SPDCR: usize = 0x0B;
 const OFF_SPCKD: usize = 0x0C;
 const OFF_SSLND: usize = 0x0D;
-const OFF_SPND:  usize = 0x0E;
+const OFF_SPND: usize = 0x0E;
 const OFF_SPCMD0: usize = 0x10;
 const OFF_SPBFCR: usize = 0x20;
 
 // ── SPCR bits ─────────────────────────────────────────────────────────────────
 /// SPE — SPI function enable
-const SPCR_SPE:   u8 = 1 << 6;
+const SPCR_SPE: u8 = 1 << 6;
 /// MSTR — master mode select
-const SPCR_MSTR:  u8 = 1 << 3;
+const SPCR_MSTR: u8 = 1 << 3;
 /// SPTIE — SPI transmit interrupt enable (used for DMA trigger; set here as C does)
 const SPCR_SPTIE: u8 = 1 << 5;
 /// SPRIE — SPI receive interrupt enable (enabled per-transfer, then disabled in ISR)
@@ -80,17 +80,17 @@ const SPCR_SPRIE: u8 = 1 << 7;
 /// SPTEF — transmit buffer empty (TX has room for 4 bytes)
 const SPSR_SPTEF: u8 = 1 << 5;
 /// TEND  — transmit end (all bits shifted out)
-const SPSR_TEND:  u8 = 1 << 6;
+const SPSR_TEND: u8 = 1 << 6;
 
 // ── SPDCR values ──────────────────────────────────────────────────────────────
-const SPDCR_8BIT:  u8 = 0x20;
+const SPDCR_8BIT: u8 = 0x20;
 const SPDCR_32BIT: u8 = 0x60;
 
 // ── SPBFCR values ─────────────────────────────────────────────────────────────
 /// 8-bit OLED mode: TX trigger = 4 bytes free, RX trigger = 1 byte
-const SPBFCR_8BIT:        u8 = 0b0110_0000;
+const SPBFCR_8BIT: u8 = 0b0110_0000;
 /// Initial value: TX trigger = 4 bytes free, RX trigger = 2 bytes available
-const SPBFCR_INIT_32BIT:  u8 = 0b0010_0010;
+const SPBFCR_INIT_32BIT: u8 = 0b0010_0010;
 /// CV-transfer value: disable RX reset (so we get the SPRI interrupt)
 const SPBFCR_CV_TRANSFER: u8 = 0b0011_0010;
 /// Reset RX buffer (bit 6 = RXRST)
@@ -99,9 +99,9 @@ const SPBFCR_RX_RESET: u8 = 1 << 6;
 // ── SPCMD0 values ─────────────────────────────────────────────────────────────
 /// 8-bit, CPHA=0, CPOL=0, SSL0 — used for OLED SSD1309 commands and pixel data.
 /// SPB field (bits 11:8) = 0b0111 → 8 bits per frame.
-const SPCMD0_8BIT:  u16 = 0b0000_0111_0000_0010;
+const SPCMD0_8BIT: u16 = 0b0000_0111_0000_0000;
 /// 32-bit, CPHA=0, CPOL=0, SSL0, frame-length field = 32 bits
-const SPCMD0_32BIT: u16 = 0b0000_0011_0000_0010;
+const SPCMD0_32BIT: u16 = 0b0000_0011_0000_0000;
 
 // ── P1 clock frequency ────────────────────────────────────────────────────────
 /// P1 = CPU / 6 = 400 MHz / 6 = 66.666... MHz
@@ -163,7 +163,7 @@ pub unsafe fn init(ch: u8, bit_rate: u32) {
     let _ = reg8(ch, OFF_SPPCR).read_volatile();
 
     // SPBR: baud rate divisor. P1 = 66.666 MHz → SPBR = ceil(P1/(bitRate×2)) - 1
-    let spbr = ((P1_HZ + bit_rate * 2 - 1) / (bit_rate * 2)).saturating_sub(1) as u8;
+    let spbr = P1_HZ.div_ceil(bit_rate * 2).saturating_sub(1) as u8;
     reg8(ch, OFF_SPBR).write_volatile(spbr);
     let _ = reg8(ch, OFF_SPBR).read_volatile();
 
@@ -216,7 +216,7 @@ pub unsafe fn init(ch: u8, bit_rate: u32) {
 /// # Safety
 /// Must be called after [`crate::gic::init`] and before interrupts are enabled.
 pub unsafe fn register_irq(ch: u8, handler: fn()) {
-    let id = irq_spri(ch) as u16;
+    let id = irq_spri(ch);
     gic::register(id, handler);
     gic::set_priority(id, 5);
     gic::enable(id);
@@ -287,8 +287,15 @@ pub unsafe fn send32(ch: u8, data: u32) {
 /// # Safety
 /// Channel must have been initialised with [`init`].
 pub unsafe fn send32_blocking(ch: u8, data: u32) {
+    log::debug!(
+        "rspi: ch{} blocking send {:#010x}, SPSR={:#04x}",
+        ch,
+        data,
+        reg8(ch, OFF_SPSR).read_volatile()
+    );
     // Wait for TX buffer space
     while reg8(ch, OFF_SPSR).read_volatile() & SPSR_SPTEF == 0 {}
+    log::debug!("rspi: ch{} SPTEF ok", ch);
 
     // Reset RX buffer (prevents overflow)
     let v = reg8(ch, OFF_SPBFCR).read_volatile();
@@ -296,9 +303,11 @@ pub unsafe fn send32_blocking(ch: u8, data: u32) {
 
     // Write data
     reg32(ch, OFF_SPDR).write_volatile(data);
+    log::debug!("rspi: ch{} SPDR written, waiting TEND", ch);
 
     // Wait for all bits to be shifted out
     while reg8(ch, OFF_SPSR).read_volatile() & SPSR_TEND == 0 {}
+    log::debug!("rspi: ch{} TEND ok", ch);
 }
 
 /// Reset the RSPI receive FIFO buffer (set RXRST in SPBFCR).
@@ -402,7 +411,9 @@ impl<const CH: u8, BITS> Rspi<CH, BITS> {
     /// # Safety
     /// `CH` must be valid (0–4) and [`init`] must have been called for it.
     #[inline]
-    pub unsafe fn new() -> Self { Rspi(PhantomData) }
+    pub unsafe fn new() -> Self {
+        Rspi(PhantomData)
+    }
 }
 
 // ── ErrorType ─────────────────────────────────────────────────────────────────
@@ -430,9 +441,13 @@ impl<const CH: u8> embedded_hal::spi::SpiBus<u8> for Rspi<CH, Bits8> {
 
     fn write(&mut self, words: &[u8]) -> Result<(), Infallible> {
         for &b in words {
-            unsafe { send8(CH, b); }
+            unsafe {
+                send8(CH, b);
+            }
         }
-        unsafe { wait_end(CH); }
+        unsafe {
+            wait_end(CH);
+        }
         Ok(())
     }
 
@@ -464,7 +479,9 @@ impl<const CH: u8> embedded_hal::spi::SpiBus<u8> for Rspi<CH, Bits8> {
     }
 
     fn flush(&mut self) -> Result<(), Infallible> {
-        unsafe { wait_end(CH); }
+        unsafe {
+            wait_end(CH);
+        }
         Ok(())
     }
 }
@@ -484,7 +501,9 @@ impl<const CH: u8> embedded_hal::spi::SpiBus<u32> for Rspi<CH, Bits32> {
 
     fn write(&mut self, words: &[u32]) -> Result<(), Infallible> {
         for &w in words {
-            unsafe { send32_blocking(CH, w); }
+            unsafe {
+                send32_blocking(CH, w);
+            }
         }
         Ok(())
     }

@@ -15,7 +15,8 @@ fn main() {}
 #[cfg(target_os = "none")]
 use deluge_test as _;
 
-#[cfg(target_os = "none")]#[deluge_test::tests]
+#[cfg(target_os = "none")]
+#[deluge_test::tests]
 mod tests {
     use rza1::{ostm, stb};
 
@@ -27,19 +28,27 @@ mod tests {
 
             // Diagnostic: print OSTM0 register state before and after init
             let base = 0xFCFEC000usize;
-            let ctl_before  = ((base + 0x20) as *const u8).read_volatile();
-            let te_before   = ((base + 0x10) as *const u8).read_volatile();
-            let cnt_before  = ((base + 0x04) as *const u32).read_volatile();
-            rtt_target::rprintln!("[ostm init] before start: CTL={:#04x} TE={} CNT={:#010x}",
-                ctl_before, te_before, cnt_before);
+            let ctl_before = ((base + 0x20) as *const u8).read_volatile();
+            let te_before = ((base + 0x10) as *const u8).read_volatile();
+            let cnt_before = ((base + 0x04) as *const u32).read_volatile();
+            rtt_target::rprintln!(
+                "[ostm init] before start: CTL={:#04x} TE={} CNT={:#010x}",
+                ctl_before,
+                te_before,
+                cnt_before
+            );
 
             ostm::start_free_running(0);
 
-            let ctl_after  = ((base + 0x20) as *const u8).read_volatile();
-            let te_after   = ((base + 0x10) as *const u8).read_volatile();
-            let cnt_after  = ((base + 0x04) as *const u32).read_volatile();
-            rtt_target::rprintln!("[ostm init] after  start: CTL={:#04x} TE={} CNT={:#010x}",
-                ctl_after, te_after, cnt_after);
+            let ctl_after = ((base + 0x20) as *const u8).read_volatile();
+            let te_after = ((base + 0x10) as *const u8).read_volatile();
+            let cnt_after = ((base + 0x04) as *const u32).read_volatile();
+            rtt_target::rprintln!(
+                "[ostm init] after  start: CTL={:#04x} TE={} CNT={:#010x}",
+                ctl_after,
+                te_after,
+                cnt_after
+            );
         }
     }
 
@@ -50,7 +59,12 @@ mod tests {
         let t0 = unsafe { ostm::count(0) };
         let t1 = unsafe { ostm::count(0) };
         let t2 = unsafe { ostm::count(0) };
-        rtt_target::rprintln!("[counter_increments] t0={:#010x} t1={:#010x} t2={:#010x}", t0, t1, t2);
+        rtt_target::rprintln!(
+            "[counter_increments] t0={:#010x} t1={:#010x} t2={:#010x}",
+            t0,
+            t1,
+            t2
+        );
         // busy-wait ~1 ms (OSTM_HZ / 1000 ticks)
         let target = ostm::OSTM_HZ / 1000;
         while unsafe { ostm::count(0) }.wrapping_sub(t0) < target {}

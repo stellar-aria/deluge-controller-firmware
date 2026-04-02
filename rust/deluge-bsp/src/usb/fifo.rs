@@ -21,10 +21,8 @@
 //! the returned word instead of narrowing.
 
 use super::regs::{
-    Rusb1Regs, MBW_8, MBW_16, MBW_32,
-    FIFOSEL_CURPIPE_MASK, FIFOSEL_MBW_MASK, FIFOSEL_MBW_SHIFT,
-    FIFOCTR_DTLN_MASK, FIFOCTR_FRDY, FIFOCTR_BCLR, FIFOCTR_BVAL,
-    rd, wr, rd32, wr32,
+    rd, rd32, wr, wr32, Rusb1Regs, FIFOCTR_BCLR, FIFOCTR_BVAL, FIFOCTR_DTLN_MASK, FIFOCTR_FRDY,
+    FIFOSEL_CURPIPE_MASK, FIFOSEL_MBW_MASK, FIFOSEL_MBW_SHIFT, MBW_16, MBW_32, MBW_8,
 };
 
 /// Hardware FIFO port: data register + SEL register + CTR register.
@@ -32,9 +30,9 @@ pub struct FifoPort {
     /// Pointer to the 32-bit data register (CFIFO / D0FIFO / D1FIFO).
     pub data: *mut u32,
     /// Pointer to the 16-bit select register (CFIFOSEL / D0FIFOSEL / D1FIFOSEL).
-    pub sel:  *mut u16,
+    pub sel: *mut u16,
     /// Pointer to the 16-bit control register (CFIFOCTR / D0FIFOCTR / D1FIFOCTR).
-    pub ctr:  *mut u16,
+    pub ctr: *mut u16,
 }
 
 // Safety: FifoPort is a bundle of raw pointers to memory-mapped registers.
@@ -49,8 +47,8 @@ impl FifoPort {
     pub unsafe fn cfifo(regs: *mut Rusb1Regs) -> Self {
         Self {
             data: core::ptr::addr_of_mut!((*regs).cfifo) as *mut u32,
-            sel:  core::ptr::addr_of_mut!((*regs).cfifosel),
-            ctr:  core::ptr::addr_of_mut!((*regs).cfifoctr),
+            sel: core::ptr::addr_of_mut!((*regs).cfifosel),
+            ctr: core::ptr::addr_of_mut!((*regs).cfifoctr),
         }
     }
 
@@ -61,8 +59,8 @@ impl FifoPort {
     pub unsafe fn d0fifo(regs: *mut Rusb1Regs) -> Self {
         Self {
             data: core::ptr::addr_of_mut!((*regs).d0fifo) as *mut u32,
-            sel:  core::ptr::addr_of_mut!((*regs).d0fifosel),
-            ctr:  core::ptr::addr_of_mut!((*regs).d0fifoctr),
+            sel: core::ptr::addr_of_mut!((*regs).d0fifosel),
+            ctr: core::ptr::addr_of_mut!((*regs).d0fifoctr),
         }
     }
 
@@ -73,8 +71,8 @@ impl FifoPort {
     pub unsafe fn d1fifo(regs: *mut Rusb1Regs) -> Self {
         Self {
             data: core::ptr::addr_of_mut!((*regs).d1fifo) as *mut u32,
-            sel:  core::ptr::addr_of_mut!((*regs).d1fifosel),
-            ctr:  core::ptr::addr_of_mut!((*regs).d1fifoctr),
+            sel: core::ptr::addr_of_mut!((*regs).d1fifosel),
+            ctr: core::ptr::addr_of_mut!((*regs).d1fifoctr),
         }
     }
 }
@@ -91,9 +89,9 @@ impl FifoPort {
 /// `regs` must be valid.
 pub unsafe fn fifo_for_pipe(regs: *mut Rusb1Regs, pipe_num: usize) -> FifoPort {
     match pipe_num {
-        0       => FifoPort::cfifo(regs),
-        1 | 2   => FifoPort::d0fifo(regs),
-        _       => FifoPort::d1fifo(regs),
+        0 => FifoPort::cfifo(regs),
+        1 | 2 => FifoPort::d0fifo(regs),
+        _ => FifoPort::d1fifo(regs),
     }
 }
 
@@ -107,7 +105,10 @@ pub unsafe fn fifo_for_pipe(regs: *mut Rusb1Regs, pipe_num: usize) -> FifoPort {
 /// `sel` must be a valid pointer to a FIFO select register.
 unsafe fn set_mbw(sel: *mut u16, mbw: u16) {
     let cur = rd(sel);
-    wr(sel, (cur & !FIFOSEL_MBW_MASK) | ((mbw << FIFOSEL_MBW_SHIFT) & FIFOSEL_MBW_MASK));
+    wr(
+        sel,
+        (cur & !FIFOSEL_MBW_MASK) | ((mbw << FIFOSEL_MBW_SHIFT) & FIFOSEL_MBW_MASK),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -203,9 +204,13 @@ pub unsafe fn sw_to_hw_fifo(fifo: &FifoPort, buf: *const u8, len: usize) {
 ///
 /// For sub-word payloads we keep MBW=32 and unpack — see module-level docs.
 fn mbw_for_len(len: usize) -> u16 {
-    if len % 4 == 0 { MBW_32 }
-    else if len % 2 == 0 { MBW_16 }
-    else { MBW_8 }
+    if len.is_multiple_of(4) {
+        MBW_32
+    } else if len.is_multiple_of(2) {
+        MBW_16
+    } else {
+        MBW_8
+    }
 }
 
 /// Copy `len` bytes from the hardware FIFO into `buf`.
@@ -293,13 +298,13 @@ mod tests {
 
     #[test]
     fn mbw_selection() {
-        assert_eq!(mbw_for_len(4),  MBW_32);
-        assert_eq!(mbw_for_len(8),  MBW_32);
+        assert_eq!(mbw_for_len(4), MBW_32);
+        assert_eq!(mbw_for_len(8), MBW_32);
         assert_eq!(mbw_for_len(64), MBW_32);
-        assert_eq!(mbw_for_len(2),  MBW_16);
-        assert_eq!(mbw_for_len(6),  MBW_16);
-        assert_eq!(mbw_for_len(1),  MBW_8);
-        assert_eq!(mbw_for_len(3),  MBW_8);
+        assert_eq!(mbw_for_len(2), MBW_16);
+        assert_eq!(mbw_for_len(6), MBW_16);
+        assert_eq!(mbw_for_len(1), MBW_8);
+        assert_eq!(mbw_for_len(3), MBW_8);
     }
 
     #[test]
@@ -310,12 +315,14 @@ mod tests {
         let mut dest = 0u32;
         let fifo = FifoPort {
             data: &mut dest as *mut u32,
-            sel:  &mut 0u16 as *mut u16,
-            ctr:  &mut 0u16 as *mut u16,
+            sel: &mut 0u16 as *mut u16,
+            ctr: &mut 0u16 as *mut u16,
         };
         // Just verify it doesn't panic for each length up to 7.
         for len in 0..=7 {
-            unsafe { sw_to_hw_fifo(&fifo, src.as_ptr(), len); }
+            unsafe {
+                sw_to_hw_fifo(&fifo, src.as_ptr(), len);
+            }
         }
     }
 
@@ -325,11 +332,13 @@ mod tests {
         let word: u32 = 0x04030201;
         let fifo = FifoPort {
             data: &word as *const u32 as *mut u32,
-            sel:  &mut 0u16 as *mut u16,
-            ctr:  &mut 0u16 as *mut u16,
+            sel: &mut 0u16 as *mut u16,
+            ctr: &mut 0u16 as *mut u16,
         };
         let mut buf = [0u8; 3];
-        unsafe { hw_to_sw_fifo(&fifo, buf.as_mut_ptr(), 3); }
+        unsafe {
+            hw_to_sw_fifo(&fifo, buf.as_mut_ptr(), 3);
+        }
         assert_eq!(buf, [0x01, 0x02, 0x03]);
     }
 }

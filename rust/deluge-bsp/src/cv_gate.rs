@@ -97,8 +97,9 @@ fn dac_word(ch: u8, value: u16) -> u32 {
 pub unsafe fn init() {
     log::debug!("cv_gate: init");
     // ---- SPI pin-mux ---------------------------------------------------------
-    gpio::set_pin_mux(SCK_PORT,  SCK_PIN,  SCK_MUX);
+    gpio::set_pin_mux(SCK_PORT, SCK_PIN, SCK_MUX);
     gpio::set_pin_mux(MOSI_PORT, MOSI_PIN, MOSI_MUX);
+    log::debug!("cv_gate: pin-mux ok");
 
     // ---- Chip-select: output, start deselected (high) -----------------------
     gpio::set_as_output(CS_PORT, CS_PIN);
@@ -109,30 +110,36 @@ pub unsafe fn init() {
         gpio::set_as_output(port, pin);
         gpio::write(port, pin, true);
     }
+    log::debug!("cv_gate: gate GPIOs ok");
 
     // ---- Initialise RSPI0 as 10 MHz SPI master ------------------------------
     rspi::init(SPI_CH, SPI_RATE_HZ);
-    log::trace!("cv_gate: RSPI0 init at {} Hz", SPI_RATE_HZ);
+    log::debug!("cv_gate: RSPI0 init at {} Hz ok", SPI_RATE_HZ);
 
     // ---- MAX5136 linearity initialisation -----------------------------------
     // Step 1: LIN=1 (linear ramp mode)
+    log::debug!("cv_gate: MAX5136 LIN=1");
     gpio::write(CS_PORT, CS_PIN, false);
     rspi::send32_blocking(SPI_CH, 0x0542_0000);
     gpio::write(CS_PORT, CS_PIN, true);
+    log::debug!("cv_gate: MAX5136 LIN=1 sent");
 
     // Step 2: wait ≥ 10 ms for internal capacitor to charge
+    log::debug!("cv_gate: LIN delay start");
     ostm::delay_ms(LIN_DELAY_MS);
+    log::debug!("cv_gate: LIN delay done");
 
     // Step 3: LIN=0 (return to normal mode)
     gpio::write(CS_PORT, CS_PIN, false);
     rspi::send32_blocking(SPI_CH, 0x0540_0000);
     gpio::write(CS_PORT, CS_PIN, true);
-    log::trace!("cv_gate: MAX5136 linearity init done");
+    log::debug!("cv_gate: MAX5136 linearity init done");
 
     // ---- Zero all CV outputs ------------------------------------------------
     for ch in 0..NUM_CV_CHANNELS as u8 {
         cv_set_blocking(ch, 0);
     }
+    log::debug!("cv_gate: CV outputs zeroed");
 }
 
 // ── CV output ────────────────────────────────────────────────────────────────

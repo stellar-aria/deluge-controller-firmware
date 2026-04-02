@@ -19,22 +19,22 @@
 // ------- GIC Distributor register addresses (base 0xE820_1000) --------------
 const GICD_BASE: usize = 0xE820_1000;
 
-const GICD_CTLR: usize      = GICD_BASE + 0x000; // Distributor Control
-const GICD_IGROUPR0: usize  = GICD_BASE + 0x080; // Interrupt Security (ICDISR0)
+const GICD_CTLR: usize = GICD_BASE; // Distributor Control
+const GICD_IGROUPR0: usize = GICD_BASE + 0x080; // Interrupt Security (ICDISR0)
 const GICD_ISENABLER0: usize = GICD_BASE + 0x100; // Set-Enable (ICDISER0)
 const GICD_ICENABLER0: usize = GICD_BASE + 0x180; // Clear-Enable (ICDICER0)
 const GICD_IPRIORITYR0: usize = GICD_BASE + 0x400; // Priority (ICDIPR0)
 const GICD_ITARGETSR0: usize = GICD_BASE + 0x800; // Target (ICDIPTR0)
-const GICD_ICFGR0: usize    = GICD_BASE + 0xC00; // Configuration (ICDICFR0)
+const GICD_ICFGR0: usize = GICD_BASE + 0xC00; // Configuration (ICDICFR0)
 
 // ------- GIC CPU Interface register addresses (base 0xE820_2000) -------------
 const GICC_BASE: usize = 0xE820_2000;
 
-pub(crate) const GICC_CTLR_ADDR: usize  = GICC_BASE + 0x000; // CPU Interface Control (ICCICR)
-pub(crate) const GICC_PMR_ADDR: usize   = GICC_BASE + 0x004; // Priority Mask (ICCPMR)
-pub(crate) const GICC_BPR_ADDR: usize   = GICC_BASE + 0x008; // Binary Point (ICCBPR)
-pub(crate) const GICC_IAR_ADDR: usize   = GICC_BASE + 0x00C; // Interrupt Acknowledge (ICCIAR)
-pub(crate) const GICC_EOIR_ADDR: usize  = GICC_BASE + 0x010; // End of Interrupt (ICCEOIR)
+pub(crate) const GICC_CTLR_ADDR: usize = GICC_BASE; // CPU Interface Control (ICCICR)
+pub(crate) const GICC_PMR_ADDR: usize = GICC_BASE + 0x004; // Priority Mask (ICCPMR)
+pub(crate) const GICC_BPR_ADDR: usize = GICC_BASE + 0x008; // Binary Point (ICCBPR)
+pub(crate) const GICC_IAR_ADDR: usize = GICC_BASE + 0x00C; // Interrupt Acknowledge (ICCIAR)
+pub(crate) const GICC_EOIR_ADDR: usize = GICC_BASE + 0x010; // End of Interrupt (ICCEOIR)
 pub(crate) const GICC_HPPIR_ADDR: usize = GICC_BASE + 0x018; // Highest-Priority Pending (ICCHPIR)
 
 pub(crate) const GICD_IPRIORITYR0_ADDR: usize = GICD_IPRIORITYR0;
@@ -141,11 +141,11 @@ static ICDICFR_INIT: [u32; 37] = [
 /// `cpsie i`.
 pub unsafe fn init() {
     log::debug!("gic: init ({} IRQ sources)", INT_ID_TOTAL);
-    let n_isr  = (INT_ID_TOTAL / 32) + 1; // 19 — ICDISR count
-    let _n_icfr = ICDICFR_INIT.len();      // 37 — ICDICFR count
-    let n_ipr  = (INT_ID_TOTAL / 4) + 1;  // 147 — ICDIPR count
-    let n_iptr = n_ipr;                    // 147 — ICDIPTR count
-    let n_icer = n_isr;                    // 19  — ICDICER count
+    let n_isr = (INT_ID_TOTAL / 32) + 1; // 19 — ICDISR count
+    let _n_icfr = ICDICFR_INIT.len(); // 37 — ICDICFR count
+    let n_ipr = (INT_ID_TOTAL / 4) + 1; // 147 — ICDIPR count
+    let n_iptr = n_ipr; // 147 — ICDIPTR count
+    let n_icer = n_isr; // 19  — ICDICER count
 
     // 1. Mark all interrupts as secure (Group 0), matching the C driver.
     let igroupr = GICD_IGROUPR0 as *mut u32;
@@ -154,8 +154,9 @@ pub unsafe fn init() {
     }
 
     // 2. Edge/level configuration — Renesas-specific table from intc.c.
+    //    ICDICFR0 (index 0) is read-only per TRM (SGIs are always edge); skip it.
     let icfgr = GICD_ICFGR0 as *mut u32;
-    for (i, &val) in ICDICFR_INIT.iter().enumerate() {
+    for (i, &val) in ICDICFR_INIT.iter().enumerate().skip(1) {
         icfgr.add(i).write_volatile(val);
     }
 
@@ -269,6 +270,7 @@ pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
     // but we just return; the assembly will still write ICCEOIR with the value
     // we received, which is harmless for 0x3FE/0x3FF.
     if int_id >= 0x3FE {
+        log::warn!("GIC: spurious IRQ {}", int_id);
         return;
     }
 
@@ -278,6 +280,8 @@ pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
             cortex_ar::interrupt::enable();
             f();
             cortex_ar::interrupt::disable();
+        } else {
+            log::warn!("GIC: id={} no handler — EOI only", int_id);
         }
     }
 }
@@ -285,9 +289,8 @@ pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
 #[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::{
-        GICC_BASE, GICC_CTLR_ADDR, GICC_IAR_ADDR, GICC_EOIR_ADDR, GICC_PMR_ADDR,
-        GICD_BASE, GICD_CTLR, GICD_ICFGR0, GICD_IPRIORITYR0, GICD_ISENABLER0,
-        ICDICFR_INIT, INT_ID_TOTAL,
+        GICC_BASE, GICC_CTLR_ADDR, GICC_EOIR_ADDR, GICC_IAR_ADDR, GICC_PMR_ADDR, GICD_BASE,
+        GICD_CTLR, GICD_ICFGR0, GICD_IPRIORITYR0, GICD_ISENABLER0, ICDICFR_INIT, INT_ID_TOTAL,
     };
 
     #[test]
@@ -310,8 +313,8 @@ mod tests {
     #[test]
     fn gicc_register_addresses() {
         assert_eq!(GICC_CTLR_ADDR, 0xE820_2000); // ICCICR
-        assert_eq!(GICC_PMR_ADDR,  0xE820_2004); // ICCPMR
-        assert_eq!(GICC_IAR_ADDR,  0xE820_200C); // ICCIAR
+        assert_eq!(GICC_PMR_ADDR, 0xE820_2004); // ICCPMR
+        assert_eq!(GICC_IAR_ADDR, 0xE820_200C); // ICCIAR
         assert_eq!(GICC_EOIR_ADDR, 0xE820_2010); // ICCEOIR
     }
 
@@ -330,8 +333,8 @@ mod tests {
     /// First and last ICDICFR entries from the Renesas intc.c table.
     #[test]
     fn icdicfr_spot_values() {
-        assert_eq!(ICDICFR_INIT[0],  0xAAAAAAAA); // ICDICFR0 : IDs 15–0
-        assert_eq!(ICDICFR_INIT[1],  0x00000055); // ICDICFR1 : IDs 19–16
+        assert_eq!(ICDICFR_INIT[0], 0xAAAAAAAA); // ICDICFR0 : IDs 15–0
+        assert_eq!(ICDICFR_INIT[1], 0x00000055); // ICDICFR1 : IDs 19–16
         assert_eq!(ICDICFR_INIT[36], 0x00155555); // ICDICFR36: IDs 586–576
     }
 

@@ -25,14 +25,14 @@
 //! | STBCR11  | 0xFCFE_0440     |
 //! | STBCR12  | 0xFCFE_0444     |
 
-const STBCR2:  usize = 0xFCFE_0024;
-const STBCR3:  usize = 0xFCFE_0420;
-const STBCR4:  usize = 0xFCFE_0424;
-const STBCR5:  usize = 0xFCFE_0428;
-const STBCR6:  usize = 0xFCFE_042C;
-const STBCR7:  usize = 0xFCFE_0430;
-const STBCR8:  usize = 0xFCFE_0434;
-const STBCR9:  usize = 0xFCFE_0438;
+const STBCR2: usize = 0xFCFE_0024;
+const STBCR3: usize = 0xFCFE_0420;
+const STBCR4: usize = 0xFCFE_0424;
+const STBCR5: usize = 0xFCFE_0428;
+const STBCR6: usize = 0xFCFE_042C;
+const STBCR7: usize = 0xFCFE_0430;
+const STBCR8: usize = 0xFCFE_0434;
+const STBCR9: usize = 0xFCFE_0438;
 const STBCR10: usize = 0xFCFE_043C;
 const STBCR11: usize = 0xFCFE_0440;
 const STBCR12: usize = 0xFCFE_0444;
@@ -158,22 +158,21 @@ unsafe fn rd8(addr: usize) -> u8 {
 #[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::{
-        STBCR2, STBCR3, STBCR4, STBCR5, STBCR6, STBCR7,
-        STBCR8, STBCR9, STBCR10, STBCR11, STBCR12,
+        STBCR10, STBCR11, STBCR12, STBCR2, STBCR3, STBCR4, STBCR5, STBCR6, STBCR7, STBCR8, STBCR9,
     };
 
     /// Verify every STBCRn address against the RZ/A1L HW Manual §10 table.
     /// CPG base = 0xFCFE_0010 (FRQCR offset from module base 0xFCFE_0000).
     #[test]
     fn stbcr_register_addresses() {
-        assert_eq!(STBCR2,  0xFCFE_0024);
-        assert_eq!(STBCR3,  0xFCFE_0420);
-        assert_eq!(STBCR4,  0xFCFE_0424);
-        assert_eq!(STBCR5,  0xFCFE_0428);
-        assert_eq!(STBCR6,  0xFCFE_042C);
-        assert_eq!(STBCR7,  0xFCFE_0430);
-        assert_eq!(STBCR8,  0xFCFE_0434);
-        assert_eq!(STBCR9,  0xFCFE_0438);
+        assert_eq!(STBCR2, 0xFCFE_0024);
+        assert_eq!(STBCR3, 0xFCFE_0420);
+        assert_eq!(STBCR4, 0xFCFE_0424);
+        assert_eq!(STBCR5, 0xFCFE_0428);
+        assert_eq!(STBCR6, 0xFCFE_042C);
+        assert_eq!(STBCR7, 0xFCFE_0430);
+        assert_eq!(STBCR8, 0xFCFE_0434);
+        assert_eq!(STBCR9, 0xFCFE_0438);
         assert_eq!(STBCR10, 0xFCFE_043C);
         assert_eq!(STBCR11, 0xFCFE_0440);
         assert_eq!(STBCR12, 0xFCFE_0444);
@@ -183,12 +182,16 @@ mod tests {
     #[test]
     fn stbcr3_to_stbcr12_are_contiguous() {
         let regs = [
-            STBCR3, STBCR4, STBCR5, STBCR6, STBCR7,
-            STBCR8, STBCR9, STBCR10, STBCR11, STBCR12,
+            STBCR3, STBCR4, STBCR5, STBCR6, STBCR7, STBCR8, STBCR9, STBCR10, STBCR11, STBCR12,
         ];
         for window in regs.windows(2) {
-            assert_eq!(window[1] - window[0], 4,
-                "gap between {:08X} and {:08X} is not 4", window[0], window[1]);
+            assert_eq!(
+                window[1] - window[0],
+                4,
+                "gap between {:08X} and {:08X} is not 4",
+                window[0],
+                window[1]
+            );
         }
     }
 

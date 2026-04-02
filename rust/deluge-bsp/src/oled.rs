@@ -46,19 +46,52 @@
 //! oled::send_frame(&fb).await;
 //! ```
 
+use rza1::dmac;
 use rza1::rspi;
 
 #[cfg(target_os = "none")]
 use crate::pic;
 
+// ── OLED SPI DMA constants ────────────────────────────────────────────────────
+
+/// DMAC channel 4 = OLED SPI TX (matches original C firmware `OLED_SPI_DMA_CHANNEL`).
+const OLED_DMA_CH: u8 = 4;
+
+/// RSPI0 SPDR byte LL address (little-endian lowest byte of the 32-bit SPDR
+/// at offset 0x04 from RSPI0 base 0xE800_C800).  The DMAC writes each pixel
+/// byte here to clock it over SPI.
+const RSPI0_SPDR_LL: u32 = 0xE800_C804;
+
+/// DMARS for RSPI0 TX: DMARS_FOR_RSPI_TX = 0b100100001 = 0x121, channel 0, no shift.
+const OLED_DMA_DMARS: u32 = 0x121;
+
+/// CHCFG for the OLED SPI DMA TX channel.
+///
+/// From `oledDMAInit()`:
+///   `0b00000000_00100000_00000000_01101000 | (OLED_SPI_DMA_CHANNEL & 7)`
+///   = 0x00200068 | 4 = 0x0020006C
+const OLED_CHCFG: u32 = 0x0020_006C;
+
+/// Uncached mirror offset: physical_addr = cached_addr − 0x2000_0000 + 0x6000_0000.
+const UNCACHED_MIRROR_OFFSET: usize = 0x4000_0000;
+
+/// Cache-line-aligned DMA staging buffer for OLED frame data.
+///
+/// The CPU copies the `FrameBuffer` into this buffer via the **uncached alias**
+/// so that the DMAC reads coherent data without needing a cache flush.
+#[repr(C, align(32))]
+struct OledDmaBuf([u8; FRAME_BYTES]);
+
+static mut OLED_DMA_BUF: OledDmaBuf = OledDmaBuf([0; FRAME_BYTES]);
+
 // ── Dimensions ────────────────────────────────────────────────────────────────
 
 /// Physical pixel columns.
-pub const WIDTH:  usize = 128;
+pub const WIDTH: usize = 128;
 /// Physical pixel rows.
 pub const HEIGHT: usize = 48;
 /// Number of SSD1309 pages used (HEIGHT / 8).
-pub const PAGES:  usize = HEIGHT / 8; // = 6
+pub const PAGES: usize = HEIGHT / 8; // = 6
 /// Total frame buffer size in bytes.
 pub const FRAME_BYTES: usize = PAGES * WIDTH; // = 768
 
@@ -85,12 +118,16 @@ pub struct FrameBuffer {
 impl FrameBuffer {
     /// Create a blank (all pixels off) frame buffer.
     pub const fn new() -> Self {
-        Self { pages: [[0u8; WIDTH]; PAGES] }
+        Self {
+            pages: [[0u8; WIDTH]; PAGES],
+        }
     }
 }
 
 impl Default for FrameBuffer {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FrameBuffer {
@@ -99,11 +136,13 @@ impl FrameBuffer {
     /// Silently ignores out-of-bounds coordinates.
     #[inline]
     pub fn set_pixel(&mut self, x: usize, y: usize, on: bool) {
-        if x >= WIDTH || y >= HEIGHT { return; }
+        if x >= WIDTH || y >= HEIGHT {
+            return;
+        }
         let page = y / 8;
-        let bit  = y % 8;
+        let bit = y % 8;
         if on {
-            self.pages[page][x] |=  1 << bit;
+            self.pages[page][x] |= 1 << bit;
         } else {
             self.pages[page][x] &= !(1 << bit);
         }
@@ -112,7 +151,9 @@ impl FrameBuffer {
     /// Return `true` if the pixel at (x, y) is set.
     #[inline]
     pub fn get_pixel(&self, x: usize, y: usize) -> bool {
-        if x >= WIDTH || y >= HEIGHT { return false; }
+        if x >= WIDTH || y >= HEIGHT {
+            return false;
+        }
         (self.pages[y / 8][x] >> (y % 8)) & 1 != 0
     }
 
@@ -138,9 +179,7 @@ impl FrameBuffer {
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         // Safety: [[u8; 128]; 6] has the same layout as [u8; 768].
-        unsafe {
-            core::slice::from_raw_parts(self.pages.as_ptr() as *const u8, FRAME_BYTES)
-        }
+        unsafe { core::slice::from_raw_parts(self.pages.as_ptr() as *const u8, FRAME_BYTES) }
     }
 }
 
@@ -152,24 +191,24 @@ impl FrameBuffer {
 /// They configure the controller for 128×48 pixels with horizontal
 /// page-addressing starting at page [`FIRST_PAGE`].
 const INIT_CMDS: &[u8] = &[
-    0xFD, 0x12,             // SET COMMAND LOCK — unlock (0x12 = allow all commands)
-    0xAE,                   // DISPLAY OFF
-    0x81, 0xFF,             // CONTRAST = maximum
-    0xA4,                   // ENTIRE DISPLAY ON = off (normal RAM content)
-    0xA6,                   // SET NORMAL DISPLAY (0xA7 = inverse)
-    0x00, 0x10,             // SET COLUMN START ADDRESS (low nibble = 0, high nibble = 0)
-    0x20, 0x00,             // SET MEMORY ADDRESSING MODE = horizontal
+    0xFD, 0x12, // SET COMMAND LOCK — unlock (0x12 = allow all commands)
+    0xAE, // DISPLAY OFF
+    0x81, 0xFF, // CONTRAST = maximum
+    0xA4, // ENTIRE DISPLAY ON = off (normal RAM content)
+    0xA6, // SET NORMAL DISPLAY (0xA7 = inverse)
+    0x00, 0x10, // SET COLUMN START ADDRESS (low nibble = 0, high nibble = 0)
+    0x20, 0x00, // SET MEMORY ADDRESSING MODE = horizontal
     0x22, FIRST_PAGE, 7,    // SET PAGE ADDRESS: start=FIRST_PAGE (2), end=7
-    0x40,                   // SET DISPLAY START LINE = 0
-    0xA0,                   // SET SEGMENT RE-MAP (A0 = normal, A1 = mirrored)
-    0xA8, 0x3F,             // SET MULTIPLEX RATIO = 63 (64 COM lines on controller)
-    0xC0,                   // COM OUTPUT SCAN DIRECTION: COM0→COM63 (top→bottom)
-    0xD3, 0x00,             // SET DISPLAY OFFSET = 0
-    0xDA, 0x12,             // COM PIN HARDWARE CONFIGURATION = sequential
-    0xD5, 0xF0,             // SET DISPLAY CLOCK DIVIDE RATIO / OSCILLATOR FREQUENCY
-    0xD9, 0xA2,             // SET PRE-CHARGE PERIOD
-    0xDB, 0x34,             // SET VCOM DESELECT LEVEL
-    0xAF,                   // DISPLAY ON
+    0x40, // SET DISPLAY START LINE = 0
+    0xA0, // SET SEGMENT RE-MAP (A0 = normal, A1 = mirrored)
+    0xA8, 0x3F, // SET MULTIPLEX RATIO = 63 (64 COM lines on controller)
+    0xC0, // COM OUTPUT SCAN DIRECTION: COM0→COM63 (top→bottom)
+    0xD3, 0x00, // SET DISPLAY OFFSET = 0
+    0xDA, 0x12, // COM PIN HARDWARE CONFIGURATION = sequential
+    0xD5, 0xF0, // SET DISPLAY CLOCK DIVIDE RATIO / OSCILLATOR FREQUENCY
+    0xD9, 0xA2, // SET PRE-CHARGE PERIOD
+    0xDB, 0x34, // SET VCOM DESELECT LEVEL
+    0xAF, // DISPLAY ON
 ];
 
 /// Send all INIT_CMDS bytes via RSPI0 (channel must already be in 8-bit mode).
@@ -205,64 +244,116 @@ pub async fn init() {
     // ---- 1. Configure RSPI0 for 8-bit SPI mode ----------------------------
     unsafe { rspi::configure_8bit(SPI_CH) };
 
-    // ---- 2. PIC: DC_LOW, ENABLE_OLED, SELECT_OLED -------------------------
+    // ---- 1b. Set up DMAC channel 4 for OLED SPI TX ----------------------
+    // Mirrors oledDMAInit() from the C firmware.  Must be done after RSPI0
+    // is initialised (stb clock enabled) but before the first send_frame.
+    unsafe {
+        dmac::init_register_mode(OLED_DMA_CH, OLED_CHCFG, RSPI0_SPDR_LL, OLED_DMA_DMARS);
+        dmac::register_completion_irq(OLED_DMA_CH);
+    }
+
+    // ---- 2. PIC: DC_LOW, ENABLE_OLED, SELECT_OLED -----------------------
+    // Mirrors the original C firmware's setupOLED() exactly:
+    //   PIC::setDCLow(); PIC::enableOLED(); PIC::selectOLED(); PIC::flush();
+    // The PIC will echo these bytes back; pic_task will parse and discard
+    // them (250→ignored, 247→ignored, 248→sets SELECTED_FLAG transiently).
+    // We do NOT wait for the echo here — the C firmware never did either.
     pic::oled_dc_low().await;
     pic::oled_enable().await;
     pic::oled_select().await;
 
-    // ---- 3. Wait 5 ms (gives PIC time to assert CS and boost V_DD) --------
-    Timer::after_millis(5).await;
+    // ---- 3. Wait for PIC to assert CS and echo SELECT_OLED (byte 248) ----
+    pic::wait_oled_selected().await;
 
-    // ---- 4. Send SSD1309 init commands ------------------------------------
+    // ---- 3b. Pre-clear full 128 × 64 controller RAM ----------------------
+    //
+    // The SSD1309 powers up with display OFF and undefined GDDRAM.  The panel
+    // is only 48 rows tall, but the controller has 64 rows of RAM; the upper
+    // 16 rows (pages 0–1) are physically off-screen but could show artefacts
+    // if the page range is later changed.  Writing zeros now clears all 8
+    // pages before INIT_CMDS locks the visible window to pages 2–7.
+    //
+    // DC is LOW (command mode) and CS is already asserted by the PIC.
+    unsafe {
+        // Configure horizontal addressing, full column range 0–127, all pages 0–7.
+        for &b in &[
+            0x20u8, 0x00, // SET MEMORY ADDRESSING MODE = horizontal
+            0x21, 0x00, 0x7F, // SET COLUMN ADDRESS: 0–127
+            0x22, 0x00, 0x07,
+        ]
+        // SET PAGE ADDRESS:   0–7  (full 64 rows)
+        {
+            rspi::send8(SPI_CH, b);
+        }
+        rspi::wait_end(SPI_CH);
+    }
+    // Switch to data mode, give PIC 1 ms to process the DC toggle.
+    pic::oled_dc_high().await;
+    Timer::after_millis(1).await;
+    unsafe {
+        // 8 pages × 128 columns = 1 024 zero bytes → clears all GDDRAM.
+        for _ in 0..(8 * WIDTH) {
+            rspi::send8(SPI_CH, 0x00);
+        }
+        rspi::wait_end(SPI_CH);
+    }
+    // Back to command mode before INIT_CMDS.
+    pic::oled_dc_low().await;
+    Timer::after_millis(1).await;
+
+    // ---- 4. Send SSD1309 init commands -----------------------------------
     unsafe { send_init_commands() };
 
-    // ---- 5. Switch DC to high (data mode for frame writes) ----------------
+    // ---- 5. Switch DC to high (data mode for subsequent frame writes) ----
     pic::oled_dc_high().await;
+    log::debug!("oled: dc_high sent");
 
-    // ---- 6. Deselect -------------------------------------------------------
+    // ---- 6. Deselect (fire-and-forget, matching C firmware) --------------
     pic::oled_deselect().await;
     log::debug!("oled: ready");
 }
 
-/// Send a full 768-byte frame to the display.
+/// Send a full 768-byte frame to the display using DMAC channel 4.
 ///
 /// The SPI CS handshake goes through the PIC:
-/// 1. Send SELECT_OLED to PIC; wait for the echo (PIC asserts CS).
-/// 2. Configure RSPI0 for 8-bit mode.
-/// 3. Stream all 768 frame bytes via RSPI0 in a blocking loop (~614 µs at 10 MHz).
-/// 4. Wait for TEND (shift register idle).
-/// 5. Send DESELECT_OLED to PIC.
+/// 1. Send SELECT_OLED to PIC; wait 4 ms for echo + CS assertion.
+/// 2. Copy the frame into the uncached DMA staging buffer.
+/// 3. Configure RSPI0 for 8-bit mode.
+/// 4. Arm and start DMAC ch4 to stream all 768 bytes → RSPI0 SPDR.
+/// 5. Await DMAC completion interrupt (DMAINT4, GIC 45).
+/// 6. Send DESELECT_OLED to PIC; wait 1 ms.
 ///
-/// DC is assumed to already be high (data mode) from the init or the previous
-/// frame transfer.
+/// DC is assumed to already be high (data mode) from init or a previous frame.
 ///
 /// **Must be called inside an Embassy task.**
-///
-/// # Sharing RSPI0 with the CV DAC
-/// This function reconfigures RSPI0 to 8-bit mode for the duration of the
-/// frame transfer, then leaves it in 8-bit mode.  All CV DAC writes done via
-/// [`crate::cv_gate::cv_set_blocking`] reconfigure RSPI0 to 32-bit mode
-/// before writing and leave it there, so the two drivers take turns
-/// naturally as long as they are not called concurrently.  Since Embassy is
-/// single-threaded cooperative, this is safe as long as neither driver is
-/// called from an interrupt context.
 #[cfg(target_os = "none")]
 pub async fn send_frame(fb: &FrameBuffer) {
-    // Assert CS via PIC; wait for confirmation echo.
-    pic::oled_select().await;
-    pic::wait_oled_selected().await;
+    use embassy_time::Timer;
 
-    // Stream the frame buffer.
+    pic::oled_select().await;
+    Timer::after_millis(4).await;
+
     unsafe {
+        // Copy frame into the uncached staging buffer so DMAC sees fresh data.
+        let dst_uncached =
+            (core::ptr::addr_of!(OLED_DMA_BUF.0[0]) as usize + UNCACHED_MIRROR_OFFSET) as *mut u8;
+        core::ptr::copy_nonoverlapping(fb.as_bytes().as_ptr(), dst_uncached, FRAME_BYTES);
+
+        // Configure RSPI0 for 8-bit transfers.
         rspi::configure_8bit(SPI_CH);
-        for &byte in fb.as_bytes() {
-            rspi::send8(SPI_CH, byte);
-        }
-        rspi::wait_end(SPI_CH);
+
+        // Arm DMA: source must be the uncached alias address because N0SA is the
+        // bus address the DMAC will read from — same physical RAM as the cached
+        // alias but coherent since we wrote through the uncached window above.
+        let src_uncached = dst_uncached as u32;
+        dmac::start_transfer(OLED_DMA_CH, src_uncached, FRAME_BYTES as u32);
     }
 
-    // De-assert CS via PIC.
+    // Await DMA completion interrupt.
+    dmac::wait_transfer_complete(OLED_DMA_CH).await;
+
     pic::oled_deselect().await;
+    Timer::after_millis(1).await;
 }
 
 // ── Redraw signal (embedded only) ────────────────────────────────────────────
@@ -277,7 +368,7 @@ mod redraw_signal {
     use core::task::Poll;
     use embassy_sync::waitqueue::AtomicWaker;
 
-    static FLAG:  AtomicBool  = AtomicBool::new(true); // start dirty so first frame is sent
+    static FLAG: AtomicBool = AtomicBool::new(true); // start dirty so first frame is sent
     static WAKER: AtomicWaker = AtomicWaker::new();
 
     pub fn notify() {
@@ -381,8 +472,8 @@ mod tests {
     #[test]
     fn out_of_bounds_ignored() {
         let mut fb = FrameBuffer::new();
-        fb.set_pixel(128, 0, true);  // column OOB
-        fb.set_pixel(0, 48, true);   // row OOB
+        fb.set_pixel(128, 0, true); // column OOB
+        fb.set_pixel(0, 48, true); // row OOB
         assert!(!fb.get_pixel(128, 0));
         assert!(!fb.get_pixel(0, 48));
         assert!(fb.as_bytes().iter().all(|&b| b == 0));
@@ -415,8 +506,12 @@ mod tests {
         // 128×48 display starts at page (64-48)/8 = 2
         assert_eq!(FIRST_PAGE, 2);
         // Verify INIT_CMDS contains the SET PAGE ADDRESS sequence
-        let page_cmd_pos = INIT_CMDS.windows(3)
+        let page_cmd_pos = INIT_CMDS
+            .windows(3)
             .position(|w| w[0] == 0x22 && w[1] == FIRST_PAGE && w[2] == 7);
-        assert!(page_cmd_pos.is_some(), "SET PAGE ADDRESS (0x22) not found in init commands");
+        assert!(
+            page_cmd_pos.is_some(),
+            "SET PAGE ADDRESS (0x22) not found in init commands"
+        );
     }
 }

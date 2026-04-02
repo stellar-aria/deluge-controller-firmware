@@ -23,8 +23,8 @@ static SGI0_FIRED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "none")]
 #[deluge_test::tests]
 mod tests {
-    use rza1::{gic, ostm, stb};
     use core::sync::atomic::Ordering;
+    use rza1::{gic, ostm, stb};
 
     #[init]
     fn init() {

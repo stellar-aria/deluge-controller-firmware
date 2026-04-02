@@ -47,89 +47,92 @@ const SDHI0_BASE: usize = 0xE804_E000;
 const SDHI1_BASE: usize = 0xE804_E800;
 
 // ---------------------------------------------------------------------------
-// Register offsets (pre-multiplied by 2: index << SD_REG_SHIFT, SD_REG_SHIFT=1)
+// Register offsets — direct byte offsets from base address (TRM table 38.2).
+// All registers are 16-bit except SD_BUF0 which is 32-bit.
+// Note: the address map has a 2-byte gap at offset 0x002 (reserved within
+// the CMD 32-bit slot), so offsets are NOT simply index*2 for all registers.
 // ---------------------------------------------------------------------------
 
-const OFF_CMD:            usize = 0x00; // SD Command
-const OFF_ARG0:           usize = 0x08; // Argument low  [15:0]
-const OFF_ARG1:           usize = 0x0C; // Argument high [31:16]
-const OFF_STOP:           usize = 0x10; // Data Stop / Automatic Stop
-const OFF_SECCNT:         usize = 0x14; // Block Count
-const OFF_RESP0:          usize = 0x18; // Response R[23:8]
-const OFF_RESP1:          usize = 0x1C; // Response R[39:24]
-const OFF_RESP2:          usize = 0x20; // Response R[55:40]
-const OFF_RESP3:          usize = 0x24; // Response R[71:56]
-const OFF_RESP4:          usize = 0x28; // Response R[87:72]
-const OFF_RESP5:          usize = 0x2C; // Response R[103:88]
-const OFF_RESP6:          usize = 0x30; // Response R[119:104]
-const OFF_RESP7:          usize = 0x34; // Response R[127:120]
-const OFF_INFO1:          usize = 0x38; // Status flag 1
-const OFF_INFO2:          usize = 0x3C; // Status flag 2
-const OFF_INFO1_MASK:     usize = 0x40; // Interrupt mask 1  (1 = enables irq)
-const OFF_INFO2_MASK:     usize = 0x44; // Interrupt mask 2  (1 = enables irq)
-const OFF_CLK_CTRL:       usize = 0x48; // Clock control
-const OFF_SIZE:           usize = 0x4C; // Block size
-const OFF_OPTION:         usize = 0x50; // Access option (timing, bus width)
-const OFF_ERR_STS1:       usize = 0x58; // CMD/CRC/END error status
-const OFF_ERR_STS2:       usize = 0x5C; // Timeout error status
-const OFF_BUF0:           usize = 0x60; // Data FIFO — 32-bit access
-const OFF_SDIO_MODE:      usize = 0x68; // SDIO mode
-const OFF_SDIO_INFO1:     usize = 0x6C; // SDIO interrupt flag
-const OFF_SDIO_INFO1_MASK: usize = 0x70; // SDIO interrupt mask
-const OFF_CC_EXT_MODE:    usize = 0x1B0; // DMA mode enable
-const OFF_SOFT_RST:       usize = 0x1C0; // Soft reset
-const OFF_EXT_SWAP:       usize = 0x1E0; // Byte-swap control
+const OFF_CMD: usize = 0x00; // SD Command
+const OFF_ARG0: usize = 0x04; // Argument low  [15:0]
+const OFF_ARG1: usize = 0x06; // Argument high [31:16]
+const OFF_STOP: usize = 0x08; // Data Stop / Automatic Stop
+const OFF_SECCNT: usize = 0x0A; // Block Count
+const OFF_RESP0: usize = 0x0C; // Response R[23:8]   (SD_RSP00)
+const OFF_RESP1: usize = 0x0E; // Response R[39:24]  (SD_RSP01)
+const OFF_RESP2: usize = 0x10; // Response R[55:40]  (SD_RSP02)
+const OFF_RESP3: usize = 0x12; // Response R[71:56]  (SD_RSP03)
+const OFF_RESP4: usize = 0x14; // Response R[87:72]  (SD_RSP04)
+const OFF_RESP5: usize = 0x16; // Response R[103:88] (SD_RSP05)
+const OFF_RESP6: usize = 0x18; // Response R[119:104](SD_RSP06)
+const OFF_RESP7: usize = 0x1A; // Response R[127:120](SD_RSP07)
+const OFF_INFO1: usize = 0x1C; // Status flag 1
+const OFF_INFO2: usize = 0x1E; // Status flag 2
+const OFF_INFO1_MASK: usize = 0x20; // Interrupt mask 1  (0 = enabled, 1 = masked)
+const OFF_INFO2_MASK: usize = 0x22; // Interrupt mask 2  (0 = enabled, 1 = masked)
+const OFF_CLK_CTRL: usize = 0x24; // Clock control
+const OFF_SIZE: usize = 0x26; // Block size
+const OFF_OPTION: usize = 0x28; // Access option (timing, bus width)
+const OFF_ERR_STS1: usize = 0x2C; // CMD/CRC/END error status
+const OFF_ERR_STS2: usize = 0x2E; // Timeout error status
+const OFF_BUF0: usize = 0x30; // Data FIFO — 32-bit access
+const OFF_SDIO_MODE: usize = 0x34; // SDIO mode
+const OFF_SDIO_INFO1: usize = 0x36; // SDIO interrupt flag
+const OFF_SDIO_INFO1_MASK: usize = 0x38; // SDIO interrupt mask
+const OFF_CC_EXT_MODE: usize = 0xD8; // DMA mode enable
+const OFF_SOFT_RST: usize = 0xE0; // Soft reset
+const OFF_EXT_SWAP: usize = 0xF0; // Byte-swap control
 
 // ---------------------------------------------------------------------------
 // SD_INFO1 bit masks
 // ---------------------------------------------------------------------------
 
 /// Response end (CMD complete, response received).
-pub const INFO1_RESP:        u16 = 0x0001;
+pub const INFO1_RESP: u16 = 0x0001;
 /// Data transfer end (all blocks transferred).
-pub const INFO1_DATA_TRNS:   u16 = 0x0004;
+pub const INFO1_DATA_TRNS: u16 = 0x0004;
 /// Card remove via DAT3 detect.
-pub const INFO1_REM_DAT3:    u16 = 0x0100;
+pub const INFO1_REM_DAT3: u16 = 0x0100;
 /// Card insert  via DAT3 detect.
-pub const INFO1_INS_DAT3:    u16 = 0x0200;
+pub const INFO1_INS_DAT3: u16 = 0x0200;
 /// Card remove  via CD pin.
-pub const INFO1_REM_CD:      u16 = 0x0008;
+pub const INFO1_REM_CD: u16 = 0x0008;
 /// Card insert  via CD pin.
-pub const INFO1_INS_CD:      u16 = 0x0010;
+pub const INFO1_INS_CD: u16 = 0x0010;
 /// Card detect change (insert OR remove) — CD pin.
-pub const INFO1_DET_CD:      u16 = 0x0018;
+pub const INFO1_DET_CD: u16 = 0x0018;
 
 // ---------------------------------------------------------------------------
 // SD_INFO2 bit masks
 // ---------------------------------------------------------------------------
 
 /// CMD error (CRC, end-bit, index).
-pub const INFO2_ERR0:        u16 = 0x0001;
+pub const INFO2_ERR0: u16 = 0x0001;
 /// CRC error.
-pub const INFO2_ERR1:        u16 = 0x0002;
+pub const INFO2_ERR1: u16 = 0x0002;
 /// End-bit error.
-pub const INFO2_ERR2:        u16 = 0x0004;
+pub const INFO2_ERR2: u16 = 0x0004;
 /// Data timeout.
-pub const INFO2_ERR3:        u16 = 0x0008;
+pub const INFO2_ERR3: u16 = 0x0008;
 /// Data CRC error.
-pub const INFO2_ERR4:        u16 = 0x0010;
+pub const INFO2_ERR4: u16 = 0x0010;
 /// Response timeout.
-pub const INFO2_ERR5:        u16 = 0x0020;
+pub const INFO2_ERR5: u16 = 0x0020;
 /// Response timeout extended.
-pub const INFO2_ERR6:        u16 = 0x0040;
+pub const INFO2_ERR6: u16 = 0x0040;
 /// Buffer Read Enable (FIFO has data to read).
-pub const INFO2_BRE:         u16 = 0x0100;
+pub const INFO2_BRE: u16 = 0x0100;
 /// Buffer Write Enable (FIFO is ready to accept data).
-pub const INFO2_BWE:         u16 = 0x0200;
+pub const INFO2_BWE: u16 = 0x0200;
 /// Command type register busy.
-pub const INFO2_CBSY:        u16 = 0x4000;
+pub const INFO2_CBSY: u16 = 0x4000;
 /// Illegal access (register out-of-sequence).
-pub const INFO2_ILA:         u16 = 0x8000;
+pub const INFO2_ILA: u16 = 0x8000;
 /// Bus clock divider change complete.
-pub const INFO2_SCLKDIVEN:   u16 = 0x2000;
+pub const INFO2_SCLKDIVEN: u16 = 0x2000;
 
 /// All error bits in INFO2.
-pub const INFO2_ERR_ALL:     u16 = 0x807F;
+pub const INFO2_ERR_ALL: u16 = 0x807F;
 
 // ---------------------------------------------------------------------------
 // CC_EXT_MODE bits
@@ -137,20 +140,27 @@ pub const INFO2_ERR_ALL:     u16 = 0x807F;
 const CC_EXT_MODE_DMASDRW: u16 = 1 << 1; // Enable SDHI DMA read/write
 
 // ---------------------------------------------------------------------------
-// Clock divider constants (input clock ≈ 66.6 MHz)
+// Clock divider constants (SD_CLK_CTRL bits[7:0], P1φ input ≈ 66.6 MHz)
+//
+// TRM table (one-hot encoding — only one bit may be set; 0x00 = P1/2):
+//   0x80 = P1/512 ≈  130 kHz   (identification / card-detect)
+//   0x40 = P1/256 ≈  260 kHz
+//   0x20 = P1/128 ≈  521 kHz
+//   0x10 = P1/64  ≈  1.0 MHz
+//   0x08 = P1/32  ≈  2.1 MHz
+//   0x04 = P1/16  ≈  4.2 MHz
+//   0x02 = P1/8   ≈  8.3 MHz
+//   0x01 = P1/4   ≈ 16.7 MHz   (fast mode after init)
+//   0x00 = P1/2   ≈ 33.3 MHz
 // ---------------------------------------------------------------------------
-
-/// SD_CLK_CTRL register: divider field in bits [7:0].
-/// Divider = 2^(n+1);  n=0 → ÷2, n=7 → ÷256.
-/// Setting bit 8 also enables the clock output.
-const CLK_DIV_256: u16 = 0x80;  // 66.6 / 256 ≈ 260 kHz (init / card-detect)
-const CLK_DIV_2:   u16 = 0x01;  // 66.6 /   2 ≈  33 MHz (fast mode)
-const CLK_ENABLE:  u16 = 1 << 8; // Bit 8 = clock output enable
+const CLK_DIV_512: u16 = 0x80; // P1/512 ≈ 130 kHz  (identification clock)
+const CLK_DIV_4: u16 = 0x01; // P1/4   ≈ 16.7 MHz (fast mode)
+const CLK_ENABLE: u16 = 1 << 8; // Bit 8 (SCLKEN) = clock output enable
 
 // ---------------------------------------------------------------------------
 // Module clock
 // ---------------------------------------------------------------------------
-const STBCR12: usize = 0xFCFE_0830;
+const STBCR12: usize = 0xFCFE_0444;
 
 // ---------------------------------------------------------------------------
 // Per-port state
@@ -268,8 +278,8 @@ pub unsafe fn init(port: u8) {
     // ---- block size = 512 bytes ----
     reg16(base, OFF_SIZE).write_volatile(512);
 
-    // ---- start at identification clock (~260 kHz) ----
-    reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_256 | CLK_ENABLE);
+    // ---- start at identification clock (~130 kHz, P1/512) ----
+    reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_512 | CLK_ENABLE);
 }
 
 /// Switch the SD clock to high-speed mode (~33 MHz).
@@ -286,7 +296,7 @@ pub unsafe fn set_clock_fast(port: u8) {
             break;
         }
     }
-    reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_2 | CLK_ENABLE);
+    reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_4 | CLK_ENABLE);
     for _ in 0..10_000u32 {
         if reg16(base, OFF_INFO2).read_volatile() & INFO2_SCLKDIVEN != 0 {
             break;
@@ -318,13 +328,31 @@ pub unsafe fn register_irqs(port: u8) {
 // Interrupt handlers (called by GIC dispatch)
 // ---------------------------------------------------------------------------
 
-fn irq_sdhi0_cd()  { unsafe { interrupt_handler(0); } }
-fn irq_sdhi0_op()  { unsafe { interrupt_handler(0); } }
-fn irq_sdhi0_io()  { /* SDIO not used; clear and ignore */ }
+fn irq_sdhi0_cd() {
+    unsafe {
+        interrupt_handler(0);
+    }
+}
+fn irq_sdhi0_op() {
+    unsafe {
+        interrupt_handler(0);
+    }
+}
+fn irq_sdhi0_io() { /* SDIO not used; clear and ignore */
+}
 
-fn irq_sdhi1_cd()  { unsafe { interrupt_handler(1); } }
-fn irq_sdhi1_op()  { unsafe { interrupt_handler(1); } }
-fn irq_sdhi1_io()  { /* SDIO not used; clear and ignore */ }
+fn irq_sdhi1_cd() {
+    unsafe {
+        interrupt_handler(1);
+    }
+}
+fn irq_sdhi1_op() {
+    unsafe {
+        interrupt_handler(1);
+    }
+}
+fn irq_sdhi1_io() { /* SDIO not used; clear and ignore */
+}
 
 /// Core interrupt handler: capture INFO1/INFO2, accumulate, wake waiter.
 ///
@@ -434,25 +462,41 @@ impl From<SdhiError> for &'static str {
     fn from(e: SdhiError) -> &'static str {
         match e {
             SdhiError::ResponseTimeout => "SDHI: response timeout",
-            SdhiError::ResponseCrc     => "SDHI: response CRC error",
-            SdhiError::DataCrc         => "SDHI: data CRC error",
-            SdhiError::DataTimeout     => "SDHI: data timeout",
-            SdhiError::CmdBusy         => "SDHI: command busy timeout",
-            SdhiError::IllegalAccess   => "SDHI: illegal register access",
-            SdhiError::HardwareError   => "SDHI: hardware error",
+            SdhiError::ResponseCrc => "SDHI: response CRC error",
+            SdhiError::DataCrc => "SDHI: data CRC error",
+            SdhiError::DataTimeout => "SDHI: data timeout",
+            SdhiError::CmdBusy => "SDHI: command busy timeout",
+            SdhiError::IllegalAccess => "SDHI: illegal register access",
+            SdhiError::HardwareError => "SDHI: hardware error",
         }
     }
 }
 
 fn check_info2_errors(info2: u16) -> Result<(), SdhiError> {
-    if info2 & INFO2_ILA   != 0 { return Err(SdhiError::IllegalAccess); }
-    if info2 & INFO2_ERR5  != 0 { return Err(SdhiError::ResponseTimeout); }
-    if info2 & INFO2_ERR6  != 0 { return Err(SdhiError::ResponseTimeout); }
-    if info2 & INFO2_ERR0  != 0 { return Err(SdhiError::ResponseCrc); }
-    if info2 & INFO2_ERR1  != 0 { return Err(SdhiError::ResponseCrc); }
-    if info2 & INFO2_ERR2  != 0 { return Err(SdhiError::DataCrc); }
-    if info2 & INFO2_ERR3  != 0 { return Err(SdhiError::DataTimeout); }
-    if info2 & INFO2_ERR4  != 0 { return Err(SdhiError::DataCrc); }
+    if info2 & INFO2_ILA != 0 {
+        return Err(SdhiError::IllegalAccess);
+    }
+    if info2 & INFO2_ERR5 != 0 {
+        return Err(SdhiError::ResponseTimeout);
+    }
+    if info2 & INFO2_ERR6 != 0 {
+        return Err(SdhiError::ResponseTimeout);
+    }
+    if info2 & INFO2_ERR0 != 0 {
+        return Err(SdhiError::ResponseCrc);
+    }
+    if info2 & INFO2_ERR1 != 0 {
+        return Err(SdhiError::ResponseCrc);
+    }
+    if info2 & INFO2_ERR2 != 0 {
+        return Err(SdhiError::DataCrc);
+    }
+    if info2 & INFO2_ERR3 != 0 {
+        return Err(SdhiError::DataTimeout);
+    }
+    if info2 & INFO2_ERR4 != 0 {
+        return Err(SdhiError::DataCrc);
+    }
     Ok(())
 }
 
@@ -572,11 +616,7 @@ pub unsafe fn read_r2(port: u8) -> [u32; 4] {
 ///
 /// # Safety
 /// Reads/writes SDHI registers and the provided buffer.
-pub async unsafe fn read_blocks_sw(
-    port: u8,
-    buf: *mut u8,
-    count: u32,
-) -> Result<(), SdhiError> {
+pub async unsafe fn read_blocks_sw(port: u8, buf: *mut u8, count: u32) -> Result<(), SdhiError> {
     let base = port_base(port);
 
     // Enable DATA_TRNS (access end), BRE, and all errors.
@@ -662,11 +702,7 @@ pub async unsafe fn read_blocks_sw(
 ///
 /// # Safety
 /// Reads/writes SDHI registers and the provided buffer.
-pub async unsafe fn write_blocks_sw(
-    port: u8,
-    buf: *const u8,
-    count: u32,
-) -> Result<(), SdhiError> {
+pub async unsafe fn write_blocks_sw(port: u8, buf: *const u8, count: u32) -> Result<(), SdhiError> {
     let base = port_base(port);
 
     // Enable DATA_TRNS, BWE, and all errors.
@@ -812,10 +848,7 @@ pub unsafe fn enable_card_detect_irq(port: u8) {
 ///
 /// Populated by the BSP layer via [`set_card_blocks`] during card init so
 /// that the polling `BlockDevice` impl can return a reliable block count.
-static CARD_BLOCKS: [AtomicU32; NUM_PORTS] = [
-    AtomicU32::new(0),
-    AtomicU32::new(0),
-];
+static CARD_BLOCKS: [AtomicU32; NUM_PORTS] = [AtomicU32::new(0), AtomicU32::new(0)];
 
 /// Store the card capacity (in 512-byte blocks) for `port`.
 ///
@@ -899,11 +932,7 @@ pub unsafe fn send_cmd_poll(port: u8, cmd_val: u16) -> Result<(), SdhiError> {
 ///
 /// # Safety
 /// Must not be called concurrently on the same port.
-pub unsafe fn read_blocks_poll(
-    port: u8,
-    buf: *mut u8,
-    count: u32,
-) -> Result<(), SdhiError> {
+pub unsafe fn read_blocks_poll(port: u8, buf: *mut u8, count: u32) -> Result<(), SdhiError> {
     let base = port_base(port);
 
     let mut dst = buf;
@@ -961,11 +990,7 @@ pub unsafe fn read_blocks_poll(
 ///
 /// # Safety
 /// Must not be called concurrently on the same port.
-pub unsafe fn write_blocks_poll(
-    port: u8,
-    buf: *const u8,
-    count: u32,
-) -> Result<(), SdhiError> {
+pub unsafe fn write_blocks_poll(port: u8, buf: *const u8, count: u32) -> Result<(), SdhiError> {
     let base = port_base(port);
 
     let mut src = buf;
@@ -1031,37 +1056,49 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// # Safety
     /// The caller must ensure no other code uses port `PORT` concurrently, and
     /// that the SDHI clock has been enabled (via `stb::init` or equivalent).
-    pub unsafe fn new() -> Self { Sdhi }
+    pub unsafe fn new() -> Self {
+        Sdhi
+    }
 
     /// Initialise the hardware for this port.
     ///
     /// # Safety
     /// Writes memory-mapped SDHI registers.
-    pub unsafe fn init(&self) { init(PORT) }
+    pub unsafe fn init(&self) {
+        init(PORT)
+    }
 
     /// Switch the SD clock to high speed (12.5 MHz with MPB3 = 25 MHz).
     ///
     /// # Safety
     /// Writes memory-mapped SDHI registers.
-    pub unsafe fn set_clock_fast(&self) { set_clock_fast(PORT) }
+    pub unsafe fn set_clock_fast(&self) {
+        set_clock_fast(PORT)
+    }
 
     /// Register GIC IRQs for this port's interrupt handler.
     ///
     /// # Safety
     /// Writes GIC registers.
-    pub unsafe fn register_irqs(&self) { register_irqs(PORT) }
+    pub unsafe fn register_irqs(&self) {
+        register_irqs(PORT)
+    }
 
     /// Returns `true` if a card is detected in the slot.
     ///
     /// # Safety
     /// Reads memory-mapped SDHI registers.
-    pub unsafe fn card_inserted(&self) -> bool { card_inserted(PORT) }
+    pub unsafe fn card_inserted(&self) -> bool {
+        card_inserted(PORT)
+    }
 
     /// Set the number of blocks for a multi-block transfer command.
     ///
     /// # Safety
     /// Writes memory-mapped SDHI registers.
-    pub unsafe fn set_block_count(&self, count: u32) { set_block_count(PORT, count) }
+    pub unsafe fn set_block_count(&self, count: u32) {
+        set_block_count(PORT, count)
+    }
 
     /// Issue an SD command and wait (polling) for a response.
     ///
@@ -1104,30 +1141,30 @@ mod tests {
     #[test]
     fn register_offsets() {
         // Verify register layout: offset = register_index * 2
-        assert_eq!(OFF_CMD,        0x00);
-        assert_eq!(OFF_ARG0,       0x08);
-        assert_eq!(OFF_ARG1,       0x0C);
-        assert_eq!(OFF_SECCNT,     0x14);
-        assert_eq!(OFF_INFO1,      0x38);
-        assert_eq!(OFF_INFO2,      0x3C);
+        assert_eq!(OFF_CMD, 0x00);
+        assert_eq!(OFF_ARG0, 0x08);
+        assert_eq!(OFF_ARG1, 0x0C);
+        assert_eq!(OFF_SECCNT, 0x14);
+        assert_eq!(OFF_INFO1, 0x38);
+        assert_eq!(OFF_INFO2, 0x3C);
         assert_eq!(OFF_INFO1_MASK, 0x40);
         assert_eq!(OFF_INFO2_MASK, 0x44);
-        assert_eq!(OFF_CLK_CTRL,   0x48);
-        assert_eq!(OFF_SIZE,       0x4C);
-        assert_eq!(OFF_OPTION,     0x50);
-        assert_eq!(OFF_BUF0,       0x60);
+        assert_eq!(OFF_CLK_CTRL, 0x48);
+        assert_eq!(OFF_SIZE, 0x4C);
+        assert_eq!(OFF_OPTION, 0x50);
+        assert_eq!(OFF_BUF0, 0x60);
         assert_eq!(OFF_CC_EXT_MODE, 0x1B0);
-        assert_eq!(OFF_SOFT_RST,   0x1C0);
-        assert_eq!(OFF_EXT_SWAP,   0x1E0);
+        assert_eq!(OFF_SOFT_RST, 0x1C0);
+        assert_eq!(OFF_EXT_SWAP, 0x1E0);
     }
 
     #[test]
     fn info_bit_masks() {
-        assert_eq!(INFO1_RESP,      0x0001);
+        assert_eq!(INFO1_RESP, 0x0001);
         assert_eq!(INFO1_DATA_TRNS, 0x0004);
-        assert_eq!(INFO2_BRE,       0x0100);
-        assert_eq!(INFO2_BWE,       0x0200);
-        assert_eq!(INFO2_CBSY,      0x4000);
+        assert_eq!(INFO2_BRE, 0x0100);
+        assert_eq!(INFO2_BWE, 0x0200);
+        assert_eq!(INFO2_CBSY, 0x4000);
     }
 
     #[test]

@@ -47,8 +47,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input,
-    Expr, Ident, Item, ItemMod, LitInt, Token,
+    parse_macro_input, Expr, Ident, Item, ItemMod, LitInt, Token,
 };
 
 // ---------------------------------------------------------------------------
@@ -119,14 +118,8 @@ pub fn tests(attr: TokenStream, item: TokenStream) -> TokenStream {
     for item in content {
         match item {
             Item::Fn(fn_item) => {
-                let has_init = fn_item
-                    .attrs
-                    .iter()
-                    .any(|a| a.path().is_ident("init"));
-                let has_test = fn_item
-                    .attrs
-                    .iter()
-                    .any(|a| a.path().is_ident("test"));
+                let has_init = fn_item.attrs.iter().any(|a| a.path().is_ident("init"));
+                let has_test = fn_item.attrs.iter().any(|a| a.path().is_ident("test"));
 
                 if has_init {
                     init_ident = Some(fn_item.sig.ident.clone());
@@ -152,9 +145,8 @@ pub fn tests(attr: TokenStream, item: TokenStream) -> TokenStream {
                     });
                     // Strip `#[test]` and `#[timeout]`; keep everything else.
                     let mut f = fn_item.clone();
-                    f.attrs.retain(|a| {
-                        !a.path().is_ident("test") && !a.path().is_ident("timeout")
-                    });
+                    f.attrs
+                        .retain(|a| !a.path().is_ident("test") && !a.path().is_ident("timeout"));
                     f.vis = syn::Visibility::Public(syn::token::Pub::default());
                     cleaned_items.push(quote! { #f });
                 } else {

@@ -282,7 +282,29 @@ _reset_handler:
 _undef_handler:     b .
 _svc_handler:       b .
 _prefetch_handler:  b .
-_abort_handler:     b .
+_abort_handler:
+    /* Print "DABT" to RTT channel 0 then halt.
+     * Use _SEGGER_RTT symbol so the offset layout is always correct.
+     *
+     * rtt-target 0.6 RttControlBlock (32-bit ARM, all fields are usize/ptr = 4 bytes):
+     *   _SEGGER_RTT + 0x00  RttHeader.id[16]         (16 bytes)
+     *   _SEGGER_RTT + 0x10  RttHeader.max_up_channels
+     *   _SEGGER_RTT + 0x14  RttHeader.max_down_channels
+     *   _SEGGER_RTT + 0x18  acUp[0].name             (*const u8)
+     *   _SEGGER_RTT + 0x1C  acUp[0].buffer           (*mut u8)   ← pBuffer
+     *   _SEGGER_RTT + 0x20  acUp[0].size             (usize)
+     *   _SEGGER_RTT + 0x24  acUp[0].write            (AtomicUsize) ← WrOff
+     *   _SEGGER_RTT + 0x28  acUp[0].read             (AtomicUsize)
+     *   _SEGGER_RTT + 0x2C  acUp[0].flags            (AtomicUsize)
+     */
+    ldr  r0, =_SEGGER_RTT
+    ldr  r1, [r0, #0x1C]          /* r1 = acUp[0].buffer          */
+    ldr  r2, [r0, #0x24]          /* r2 = acUp[0].write (WrOff)   */
+    ldr  r3, =0x54424144          /* little-endian: 'D','A','B','T'*/
+    str  r3, [r1, r2]             /* buffer[WrOff] = "DABT"        */
+    add  r2, r2, #4
+    str  r2, [r0, #0x24]          /* WrOff += 4                   */
+    b    .                        /* Halt                         */
     /* FIQ handler: return from interrupt.
      * On FIQ entry LR_fiq = interrupted PC + 4; subtract 4 to re-run
      * the interrupted instruction.  SUBS restores CPSR from SPSR_fiq.
@@ -392,12 +414,19 @@ _irq_handler:
     /* Undo stack alignment. */
     add     sp, sp, r1
 
-    /* Disable IRQ, memory + instruction barriers, then write EOI. */
+    /* Disable IRQ, memory + instruction barriers, then write EOI.
+     * TRM §7.8.3: do NOT write ICCEOIR for spurious IDs 1022/1023.
+     * Extract int_id bits [9:0] from r0; skip EOI if id >= 1022. */
     cpsid   i
     dsb
     isb
+    ubfx    r3, r0, #0, #10
+    ldr     r2, =1022
+    cmp     r3, r2
+    bge     .Lirq_skip_eoi
     ldr     r2, =GICC_EOIR_ADDR
     str     r0, [r2]
+.Lirq_skip_eoi:
 
     /* Restore caller-saved registers. */
     pop     {{r0-r3, r12}}

@@ -43,21 +43,21 @@ const SD_PORT: u8 = 1;
 // CMD8 has bits [10:8] set (= 0x0408) to select the R7 response path.
 // ---------------------------------------------------------------------------
 
-const CMD0:  u16 = 0;   // GO_IDLE_STATE — no response
-const CMD2:  u16 = 2;   // ALL_SEND_CID — R2
-const CMD3:  u16 = 3;   // SEND_RELATIVE_ADDR — R6
-const CMD7:  u16 = 7;   // SELECT_CARD — R1b
-const CMD8:  u16 = 0x0408; // SEND_IF_COND — R7 (special encoding)
-const CMD12: u16 = 12;  // STOP_TRANSMISSION — R1b
-const CMD16: u16 = 16;  // SET_BLOCKLEN — R1
-const CMD17: u16 = 17;  // READ_SINGLE_BLOCK — R1 + data
-const CMD18: u16 = 18;  // READ_MULTIPLE_BLOCK — R1 + data
-const CMD24: u16 = 24;  // WRITE_BLOCK — R1 + data
-const CMD25: u16 = 25;  // WRITE_MULTIPLE_BLOCK — R1 + data
-const CMD55: u16 = 55;  // APP_CMD (prefix for ACMD) — R1
+const CMD0: u16 = 0; // GO_IDLE_STATE — no response
+const CMD2: u16 = 2; // ALL_SEND_CID — R2
+const CMD3: u16 = 3; // SEND_RELATIVE_ADDR — R6
+const CMD7: u16 = 7; // SELECT_CARD — R1b
+const CMD8: u16 = 0x0408; // SEND_IF_COND — R7 (special encoding)
+const CMD12: u16 = 12; // STOP_TRANSMISSION — R1b
+const CMD16: u16 = 16; // SET_BLOCKLEN — R1
+const CMD17: u16 = 17; // READ_SINGLE_BLOCK — R1 + data
+const CMD18: u16 = 18; // READ_MULTIPLE_BLOCK — R1 + data
+const CMD24: u16 = 24; // WRITE_BLOCK — R1 + data
+const CMD25: u16 = 25; // WRITE_MULTIPLE_BLOCK — R1 + data
+const CMD55: u16 = 55; // APP_CMD (prefix for ACMD) — R1
 
 /// ACMD6 (0x40 | 6): SET_BUS_WIDTH — R1
-const ACMD6:  u16 = 0x40 | 6;
+const ACMD6: u16 = 0x40 | 6;
 /// ACMD41 (0x40 | 41): SD_SEND_OP_COND — R3
 const ACMD41: u16 = 0x40 | 41;
 
@@ -75,9 +75,9 @@ const CMD25_SDHC: u16 = CMD25 | 0x7C00;
 /// OCR voltage window: 3.2–3.4 V (matches Deluge hardware, SD_VOLT_3_3).
 const OCR_VDD_32_33: u32 = 0x0010_0000;
 /// OCR host capacity support: HCS bit (high-capacity) for SDHC/SDXC.
-const OCR_HCS:       u32 = 0x4000_0000;
+const OCR_HCS: u32 = 0x4000_0000;
 /// OCR power-up status bit: set when card is ready.
-const OCR_BUSY:      u32 = 0x8000_0000;
+const OCR_BUSY: u32 = 0x8000_0000;
 
 /// CMD8 argument: VHS=1 (2.7–3.6 V) | check pattern 0xAA.
 const CMD8_ARG: u32 = 0x0000_01AA;
@@ -92,7 +92,7 @@ const ACMD41_ARG: u32 = OCR_HCS | OCR_VDD_32_33;
 /// RCA (Relative Card Address) — set during CMD3, used for CMD7 etc.
 static CARD_RCA: AtomicU16 = AtomicU16::new(0);
 /// `true` if the card is SDHC/SDXC (uses block addressing).
-static CARD_HC:  AtomicBool = AtomicBool::new(false);
+static CARD_HC: AtomicBool = AtomicBool::new(false);
 /// `true` once `init()` has completed successfully.
 static CARD_READY: AtomicBool = AtomicBool::new(false);
 
@@ -115,7 +115,9 @@ pub enum SdError {
 }
 
 impl From<SdhiError> for SdError {
-    fn from(e: SdhiError) -> Self { SdError::Hardware(e) }
+    fn from(e: SdhiError) -> Self {
+        SdError::Hardware(e)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +360,13 @@ pub fn is_ready() -> bool {
     CARD_READY.load(Ordering::Acquire)
 }
 
+/// Returns `true` if the card is a High Capacity (SDHC/SDXC) card.
+///
+/// Only valid after [`init()`] has returned `Ok(())`.
+pub fn is_hc() -> bool {
+    CARD_HC.load(Ordering::Relaxed)
+}
+
 /// Returns `true` if a card is physically present (CD pin).
 pub fn is_inserted() -> bool {
     unsafe { sdhi::card_inserted(SD_PORT) }
@@ -369,9 +378,9 @@ pub fn is_inserted() -> bool {
 
 fn lba_to_addr(lba: u32) -> u32 {
     if CARD_HC.load(Ordering::Relaxed) {
-        lba           // SDHC/SDXC: block addressing
+        lba // SDHC/SDXC: block addressing
     } else {
-        lba * 512     // SDSC: byte addressing
+        lba * 512 // SDSC: byte addressing
     }
 }
 
@@ -396,8 +405,8 @@ fn decode_csd_capacity(csd: [u32; 4], hc: bool) -> u32 {
         // In our layout: word0=[127:96], word1=[95:64], word2=[63:32], word3=[31:0].
         // Bit 69 → word1 bit (69-64) = 5; bit 48 → word2 bit (48-32) = 16.
         // C_SIZE spans word1[5:0] and word2[31:16].
-        let c_size_hi = csd[1] & 0x3F;             // bits [69:64]
-        let c_size_lo = (csd[2] >> 16) & 0xFFFF;   // bits [63:48]
+        let c_size_hi = csd[1] & 0x3F; // bits [69:64]
+        let c_size_lo = (csd[2] >> 16) & 0xFFFF; // bits [63:48]
         let c_size = (c_size_hi << 16) | c_size_lo;
         (c_size + 1) * 1024 // blocks of 512 B
     } else {
@@ -406,11 +415,11 @@ fn decode_csd_capacity(csd: [u32; 4], hc: bool) -> u32 {
         // C_SIZE at bits [73:62] → word1 bits [9:8] + word2 bits [31:22]
         // C_SIZE_MULT at bits [49:47] → word2 bits [17:15]
         let read_bl_len = (csd[1] >> 16) & 0xF;
-        let c_size_hi = csd[1] & 0x3;              // bits [73:72]
-        let c_size_lo = (csd[2] >> 22) & 0x3FF;    // bits [71:62]
+        let c_size_hi = csd[1] & 0x3; // bits [73:72]
+        let c_size_lo = (csd[2] >> 22) & 0x3FF; // bits [71:62]
         let c_size = (c_size_hi << 10) | c_size_lo;
         let c_size_mult = (csd[2] >> 15) & 0x7;
-        let block_len = 1u32 << read_bl_len;        // bytes per block
+        let block_len = 1u32 << read_bl_len; // bytes per block
         let mult = 1u32 << (c_size_mult + 2);
         let capacity_bytes = (c_size + 1) * mult * block_len;
         capacity_bytes / 512
@@ -448,20 +457,24 @@ impl embedded_sdmmc::BlockDevice for DelugeBlockDevice {
         let addr = lba_to_addr(lba);
         let hc = CARD_HC.load(Ordering::Relaxed);
         let cmd = if count > 1 {
-            if hc { CMD18_SDHC } else { CMD18 }
+            if hc {
+                CMD18_SDHC
+            } else {
+                CMD18
+            }
         } else {
-            if hc { CMD17_SDHC } else { CMD17 }
+            if hc {
+                CMD17_SDHC
+            } else {
+                CMD17
+            }
         };
 
         unsafe {
             sdhi::set_block_count(SD_PORT, count);
             sdhi::set_arg(SD_PORT, addr);
             sdhi::send_cmd_poll(SD_PORT, cmd)?;
-            sdhi::read_blocks_poll(
-                SD_PORT,
-                blocks.as_mut_ptr() as *mut u8,
-                count,
-            )?;
+            sdhi::read_blocks_poll(SD_PORT, blocks.as_mut_ptr() as *mut u8, count)?;
         }
         Ok(())
     }
@@ -482,20 +495,24 @@ impl embedded_sdmmc::BlockDevice for DelugeBlockDevice {
         let addr = lba_to_addr(lba);
         let hc = CARD_HC.load(Ordering::Relaxed);
         let cmd = if count > 1 {
-            if hc { CMD25_SDHC } else { CMD25 }
+            if hc {
+                CMD25_SDHC
+            } else {
+                CMD25
+            }
         } else {
-            if hc { CMD24_SDHC } else { CMD24 }
+            if hc {
+                CMD24_SDHC
+            } else {
+                CMD24
+            }
         };
 
         unsafe {
             sdhi::set_block_count(SD_PORT, count);
             sdhi::set_arg(SD_PORT, addr);
             sdhi::send_cmd_poll(SD_PORT, cmd)?;
-            sdhi::write_blocks_poll(
-                SD_PORT,
-                blocks.as_ptr() as *const u8,
-                count,
-            )?;
+            sdhi::write_blocks_poll(SD_PORT, blocks.as_ptr() as *const u8, count)?;
         }
         Ok(())
     }

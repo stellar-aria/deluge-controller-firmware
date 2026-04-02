@@ -56,12 +56,12 @@ const DMA_LVL: u32 = 1 << 6;
 
 // ── SSI0 register map ────────────────────────────────────────────────────────
 
-const SSI0_BASE:    usize = 0xE820_B000;
-const SSICR_OFF:    usize = 0x00; // Control register
-const SSIFCR_OFF:   usize = 0x10; // FIFO control register
-const SSIFTDR_OFF:  usize = 0x18; // TX FIFO data register
-const SSIFRDR_OFF:  usize = 0x1C; // RX FIFO data register
-const SSITDMR_OFF:  usize = 0x20; // TDM mode register
+const SSI0_BASE: usize = 0xE820_B000;
+const SSICR_OFF: usize = 0x00; // Control register
+const SSIFCR_OFF: usize = 0x10; // FIFO control register
+const SSIFTDR_OFF: usize = 0x18; // TX FIFO data register
+const SSIFRDR_OFF: usize = 0x1C; // RX FIFO data register
+const SSITDMR_OFF: usize = 0x20; // TDM mode register
 
 /// SSICR initialisation value (copied verbatim from `drv_ssif_user.h`):
 ///   - CKS=0 : AUDIO_X1 clock source
@@ -72,7 +72,7 @@ const SSITDMR_OFF:  usize = 0x20; // TDM mode register
 ///   - SWSD=1 : RZ/A1L generates LRCK (master)
 ///   - SCKP=SWSP=SPDP=SDTA=PDTA=DEL=0 (all defaults)
 ///   - CKDV=0010: AUDIO_X1 ÷ 4
-const SSICR_INIT:  u32 = 0x003B_C020;
+const SSICR_INIT: u32 = 0x003B_C020;
 
 /// SSIFCR initialisation value:
 ///   - TFRST=1, RFRST=1: both FIFOs held in reset until `ssiStart`
@@ -153,27 +153,27 @@ const RX_CHCFG: u32 = 0x8112_2220 | DMA_LVL | (RX_DMA_CH as u32 & 7);
 /// TX link descriptor.  The `src` (word 1) and `next` (word 7) fields are
 /// patched at runtime by [`init`] once the static addresses are known.
 static mut TX_DESC: LinkDesc = LinkDesc([
-    0b1101,                                    // Header: LDEN + NXA + valid
-    0,                                         // src  (→ TX_BUF, set at init)
-    (SSI0_BASE + SSIFTDR_OFF) as u32,          // dst  = SSIFTDR (fixed)
+    0b1101,                                            // Header: LDEN + NXA + valid
+    0,                                                 // src  (→ TX_BUF, set at init)
+    (SSI0_BASE + SSIFTDR_OFF) as u32,                  // dst  = SSIFTDR (fixed)
     (TX_BUF_LEN * core::mem::size_of::<i32>()) as u32, // transfer bytes
-    TX_CHCFG,                                  // CHCFG
-    0,                                         // CHITVL (no interval)
-    0,                                         // CHEXT
-    0,                                         // next → &TX_DESC (set at init)
+    TX_CHCFG,                                          // CHCFG
+    0,                                                 // CHITVL (no interval)
+    0,                                                 // CHEXT
+    0,                                                 // next → &TX_DESC (set at init)
 ]);
 
 /// RX link descriptor.  The `dst` (word 2) and `next` (word 7) fields are
 /// patched at runtime by [`init`].
 static mut RX_DESC: LinkDesc = LinkDesc([
-    0b1101,                                    // Header
-    (SSI0_BASE + SSIFRDR_OFF) as u32,          // src  = SSIFRDR (fixed)
-    0,                                         // dst  (→ RX_BUF, set at init)
+    0b1101,                                            // Header
+    (SSI0_BASE + SSIFRDR_OFF) as u32,                  // src  = SSIFRDR (fixed)
+    0,                                                 // dst  (→ RX_BUF, set at init)
     (RX_BUF_LEN * core::mem::size_of::<i32>()) as u32, // transfer bytes
-    RX_CHCFG,                                  // CHCFG
-    0,                                         // CHITVL
-    0,                                         // CHEXT
-    0,                                         // next → &RX_DESC (set at init)
+    RX_CHCFG,                                          // CHCFG
+    0,                                                 // CHITVL
+    0,                                                 // CHEXT
+    0,                                                 // next → &RX_DESC (set at init)
 ]);
 
 // ── Register helpers ─────────────────────────────────────────────────────────
@@ -201,14 +201,28 @@ fn ssi_reg(off: usize) -> *mut u32 {
 /// Must be called exactly once, from a single-threaded boot context, before
 /// any audio task accesses the buffer pointers.
 pub unsafe fn init() {
-    log::debug!("ssi: init SSI0 (44.1 kHz I\u{00B2}S, DMA ch{}/{})", TX_DMA_CH, RX_DMA_CH);
-    // 1. Patch self-referential fields in the link descriptors now that their
-    //    static addresses are available.
-    TX_DESC.0[1] = core::ptr::addr_of!(TX_BUF.0[0]) as u32;
-    TX_DESC.0[7] = core::ptr::addr_of!(TX_DESC) as u32;
+    log::debug!(
+        "ssi: init SSI0 (44.1 kHz I\u{00B2}S, DMA ch{}/{})",
+        TX_DMA_CH,
+        RX_DMA_CH
+    );
+    // 1. Patch self-referential fields in the link descriptors.
+    //    Write through the uncached alias so the DMAC sees the correct values
+    //    without needing a cache flush (DMAC reads physical SRAM directly).
+    //    The NXLA pointer must also be the uncached alias address so every
+    //    reload of the descriptor by the DMAC is coherent.
+    let tx_desc_u = (core::ptr::addr_of!(TX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *mut u32;
+    let rx_desc_u = (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *mut u32;
 
-    RX_DESC.0[2] = core::ptr::addr_of!(RX_BUF.0[0]) as u32;
-    RX_DESC.0[7] = core::ptr::addr_of!(RX_DESC) as u32;
+    tx_desc_u
+        .add(1)
+        .write_volatile(core::ptr::addr_of!(TX_BUF.0[0]) as u32);
+    tx_desc_u.add(7).write_volatile(tx_desc_u as u32);
+
+    rx_desc_u
+        .add(2)
+        .write_volatile(core::ptr::addr_of!(RX_BUF.0[0]) as u32);
+    rx_desc_u.add(7).write_volatile(rx_desc_u as u32);
 
     // 2. SSI0 software reset via CPG SWRSTCR1 bit 6.
     let swrstcr = SWRSTCR1 as *mut u8;
@@ -219,21 +233,16 @@ pub unsafe fn init() {
     let _ = swrstcr.read_volatile(); // mandatory dummy read
 
     // 3. Configure SSI registers.
-    ssi_reg(SSITDMR_OFF).write_volatile(0);       // no TDM
+    ssi_reg(SSITDMR_OFF).write_volatile(0); // no TDM
     ssi_reg(SSICR_OFF).write_volatile(SSICR_INIT); // master, 24-bit/32-bit, ÷4
     ssi_reg(SSIFCR_OFF).write_volatile(SSIFCR_INIT); // FIFOs in reset
 
     // 4. Initialise and connect DMA channels to the link descriptors.
-    dmac::init_with_link_descriptor(
-        TX_DMA_CH,
-        core::ptr::addr_of!(TX_DESC) as *const u32,
-        DMARS_SSI0_TX,
-    );
-    dmac::init_with_link_descriptor(
-        RX_DMA_CH,
-        core::ptr::addr_of!(RX_DESC) as *const u32,
-        DMARS_SSI0_RX,
-    );
+    //    Pass uncached alias addresses so the DMAC can re-fetch them coherently.
+    let tx_desc_u = (core::ptr::addr_of!(TX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
+    let rx_desc_u = (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
+    dmac::init_with_link_descriptor(TX_DMA_CH, tx_desc_u, DMARS_SSI0_TX);
+    dmac::init_with_link_descriptor(RX_DMA_CH, rx_desc_u, DMARS_SSI0_RX);
 
     // 5. Start both DMA channels (software-reset then enable).
     dmac::channel_start(TX_DMA_CH);

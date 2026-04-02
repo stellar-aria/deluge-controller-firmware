@@ -30,14 +30,14 @@ const OSTM1_BASE: usize = 0xFCFE_C400;
 // ------- Register offsets (from OSTMn base) ----------------------------------
 const CMP: usize = 0x00; // OSTMnCMP — compare register (32-bit)
 const CNT: usize = 0x04; // OSTMnCNT — counter, read-only (32-bit)
-const TE:  usize = 0x10; // OSTMnTE  — timer enable status (8-bit, read-only)
-const TS:  usize = 0x14; // OSTMnTS  — timer start: write 1 to start (8-bit)
-const TT:  usize = 0x18; // OSTMnTT  — timer stop:  write 1 to stop  (8-bit)
+const TE: usize = 0x10; // OSTMnTE  — timer enable status (8-bit, read-only)
+const TS: usize = 0x14; // OSTMnTS  — timer start: write 1 to start (8-bit)
+const TT: usize = 0x18; // OSTMnTT  — timer stop:  write 1 to stop  (8-bit)
 const CTL: usize = 0x20; // OSTMnCTL — control: bit1=mode, bit0=int_enable (8-bit)
 
 // CTL mode values
-const CTL_INTERVAL:    u8 = 0x00; // count-down interval timer, optional interrupt
-const CTL_FREE_RUN:    u8 = 0x02; // free-running counter up, optional interrupt
+const CTL_INTERVAL: u8 = 0x00; // count-down interval timer, optional interrupt
+const CTL_FREE_RUN: u8 = 0x02; // free-running counter up, optional interrupt
 const CTL_FREE_RUN_INT: u8 = 0x03; // free-running with compare interrupt
 
 // ------- CPG standby control (clock gating) ----------------------------------
@@ -86,7 +86,11 @@ pub unsafe fn enable_clock() {
 
 #[inline(always)]
 fn base(n: u8) -> usize {
-    if n == 0 { OSTM0_BASE } else { OSTM1_BASE }
+    if n == 0 {
+        OSTM0_BASE
+    } else {
+        OSTM1_BASE
+    }
 }
 
 /// Configure OSTM channel `n` (0 or 1) for free-running mode and start it.
@@ -159,11 +163,15 @@ impl Delay {
     /// Create a new `Delay`.  Does not start OSTM0; caller must have done
     /// that already via [`start_free_running`]`(0)`.
     #[inline]
-    pub fn new() -> Self { Delay }
+    pub fn new() -> Self {
+        Delay
+    }
 }
 
 impl Default for Delay {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl embedded_hal::delay::DelayNs for Delay {
@@ -171,7 +179,7 @@ impl embedded_hal::delay::DelayNs for Delay {
         // OSTM_HZ = 33_333_333 ticks/s → 1 tick ≈ 30 ns.
         // ticks = ceil(ns * OSTM_HZ / 1_000_000_000)
         // Use u64 to avoid overflow: max ns = u32::MAX ≈ 4.3 s → 143 M ticks, fits u32.
-        let ticks = ((ns as u64 * OSTM_HZ as u64 + 999_999_999) / 1_000_000_000) as u32;
+        let ticks = (ns as u64 * OSTM_HZ as u64).div_ceil(1_000_000_000) as u32;
         unsafe { delay_ticks(ticks) };
     }
 }
@@ -252,42 +260,56 @@ impl<const N: u8> Ostm<N> {
     /// The caller must ensure no other code uses channel `N` concurrently.
     /// [`enable_clock`] must have been called before any method that accesses
     /// hardware registers.
-    pub unsafe fn new() -> Self { Ostm }
+    pub unsafe fn new() -> Self {
+        Ostm
+    }
 
     /// Read the current counter value (increments at ~33.33 MHz).
     ///
     /// # Safety
     /// Reads a memory-mapped register.
-    pub unsafe fn count(&self) -> u32 { count(N) }
+    pub unsafe fn count(&self) -> u32 {
+        count(N)
+    }
 
     /// Configure channel `N` for free-running mode and start it.
     ///
     /// # Safety
     /// Writes memory-mapped registers.
-    pub unsafe fn start_free_running(&self) { start_free_running(N) }
+    pub unsafe fn start_free_running(&self) {
+        start_free_running(N)
+    }
 
     /// Configure channel `N` for free-running mode with a compare interrupt.
     ///
     /// # Safety
     /// Writes memory-mapped registers.
-    pub unsafe fn start_free_running_cmp(&self, cmp: u32) { start_free_running_cmp(N, cmp) }
+    pub unsafe fn start_free_running_cmp(&self, cmp: u32) {
+        start_free_running_cmp(N, cmp)
+    }
 
     /// Configure channel `N` for single-shot interval mode.
     ///
     /// # Safety
     /// Writes memory-mapped registers.
-    pub unsafe fn start_alarm(&self, delta_ticks: u32) { start_alarm(N, delta_ticks) }
+    pub unsafe fn start_alarm(&self, delta_ticks: u32) {
+        start_alarm(N, delta_ticks)
+    }
 
     /// Stop channel `N`.
     ///
     /// # Safety
     /// Writes memory-mapped registers.
-    pub unsafe fn stop(&self) { stop(N) }
+    pub unsafe fn stop(&self) {
+        stop(N)
+    }
 
     /// Return a [`Delay`] backed by this channel.
     ///
     /// Channel `N` must already be running in free-running mode.
-    pub fn delay(&self) -> Delay { Delay }
+    pub fn delay(&self) -> Delay {
+        Delay
+    }
 }
 
 #[cfg(all(test, not(target_os = "none")))]

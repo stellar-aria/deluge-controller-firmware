@@ -22,7 +22,11 @@ pub const USB1_IRQ: u16 = 74;
 /// Return the peripheral base address for the given port (0 or 1).
 #[inline]
 pub const fn base(port: u8) -> usize {
-    if port == 0 { USB0_BASE } else { USB1_BASE }
+    if port == 0 {
+        USB0_BASE
+    } else {
+        USB1_BASE
+    }
 }
 
 /// Return the GIC interrupt ID for the given port.

@@ -11,8 +11,8 @@
 #![no_std]
 #![no_main]
 
-use rza1::{ostm, stb};
 use rtt_target::{rprintln, rtt_init_print};
+use rza1::{ostm, stb};
 
 // Pull in the startup (vector table, reset handler, BSS zero, stack setup)
 use rza1 as _;
@@ -35,7 +35,8 @@ pub extern "C" fn main() -> ! {
 
         // Read register state before start
         let base = 0xFCFEC000usize;
-        rprintln!("[ostm-smoke] pre-start: CTL={:#04x} TE={} CNT={:#010x}",
+        rprintln!(
+            "[ostm-smoke] pre-start: CTL={:#04x} TE={} CNT={:#010x}",
             ((base + 0x20) as *const u8).read_volatile(),
             ((base + 0x10) as *const u8).read_volatile(),
             ((base + 0x04) as *const u32).read_volatile(),
@@ -44,7 +45,7 @@ pub extern "C" fn main() -> ! {
         ostm::start_free_running(0);
 
         let ctl = ((base + 0x20) as *const u8).read_volatile();
-        let te  = ((base + 0x10) as *const u8).read_volatile();
+        let te = ((base + 0x10) as *const u8).read_volatile();
         rprintln!("[ostm-smoke] post-start: CTL={:#04x} TE={}", ctl, te);
 
         // Print six counter snapshots ~1 ms apart
@@ -56,7 +57,12 @@ pub extern "C" fn main() -> ! {
             while t.wrapping_sub(t0) < target {
                 t = ostm::count(0);
             }
-            rprintln!("[ostm-smoke] sample {}: CNT={:#010x}  delta={}", i, t, t.wrapping_sub(t0));
+            rprintln!(
+                "[ostm-smoke] sample {}: CNT={:#010x}  delta={}",
+                i,
+                t,
+                t.wrapping_sub(t0)
+            );
         }
 
         rprintln!("[ostm-smoke] done — halting via UDF");
