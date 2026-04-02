@@ -4,8 +4,8 @@
 //!   - SDHI0 at 0xE804_E000 (not used on Deluge)
 //!   - SDHI1 at 0xE804_E800 (Deluge SD card — port 1)
 //!
-//! All registers are 16-bit, addressed at `base + (index << 1)`.
-//! The data FIFO (SD_BUF0) is at `base + 0x60`, accessed as 32-bit words.
+//! All registers are 16-bit with byte-granular offsets per TRM table 38.2.
+//! The data FIFO (SD_BUF0) is at `base + 0x30`, accessed as 32-bit words.
 //!
 //! GIC interrupt IDs for SDHI1:
 //!   305 = INTC_ID_SDHI1_3  (card-detect / status-change)
@@ -97,28 +97,31 @@ pub const INFO1_REM_DAT3: u16 = 0x0100;
 pub const INFO1_INS_DAT3: u16 = 0x0200;
 /// Card remove  via CD pin.
 pub const INFO1_REM_CD: u16 = 0x0008;
-/// Card insert  via CD pin.
+/// Card insert  via CD pin (latched event; cleared by writing 0).
 pub const INFO1_INS_CD: u16 = 0x0010;
-/// Card detect change (insert OR remove) — CD pin.
+/// Card detect change (insert OR remove) — CD pin (latched event mask).
 pub const INFO1_DET_CD: u16 = 0x0018;
+/// Card currently present — SD_CD level (1 = SD_CD held low = card inserted).
+/// Use this for steady-state presence queries; INFO1_INS_CD is only for edge events.
+pub const INFO1_CD_LEVEL: u16 = 0x0020;
 
 // ---------------------------------------------------------------------------
 // SD_INFO2 bit masks
 // ---------------------------------------------------------------------------
 
-/// CMD error (CRC, end-bit, index).
+/// CMD error (command index mismatch in response).
 pub const INFO2_ERR0: u16 = 0x0001;
-/// CRC error.
+/// CRC error (response CRC, read data CRC, or CRC status).
 pub const INFO2_ERR1: u16 = 0x0002;
-/// End-bit error.
+/// END error (end-bit missing in response, read data, or CRC status).
 pub const INFO2_ERR2: u16 = 0x0004;
-/// Data timeout.
+/// Data timeout (busy too long, R1b busy, write CRC, or read data not arriving).
 pub const INFO2_ERR3: u16 = 0x0008;
-/// Data CRC error.
+/// SD_BUF illegal write access (write when not in data-write state or buffer full).
 pub const INFO2_ERR4: u16 = 0x0010;
-/// Response timeout.
+/// SD_BUF illegal read access (read when buffer empty or data has CRC/END error).
 pub const INFO2_ERR5: u16 = 0x0020;
-/// Response timeout extended.
+/// Response timeout (no response within 640 SD_CLK cycles).
 pub const INFO2_ERR6: u16 = 0x0040;
 /// Buffer Read Enable (FIFO has data to read).
 pub const INFO2_BRE: u16 = 0x0100;
@@ -283,7 +286,7 @@ pub unsafe fn init(port: u8) {
     reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_512 | CLK_ENABLE);
 }
 
-/// Switch the SD clock to high-speed mode (~33 MHz).
+/// Switch the SD clock to high-speed mode (~16.7 MHz, P1/4).
 ///
 /// Call after successful card initialization.
 ///
@@ -479,26 +482,30 @@ fn check_info2_errors(info2: u16) -> Result<(), SdhiError> {
     if info2 & INFO2_ILA != 0 {
         return Err(SdhiError::IllegalAccess);
     }
-    if info2 & INFO2_ERR5 != 0 {
-        return Err(SdhiError::ResponseTimeout);
-    }
     if info2 & INFO2_ERR6 != 0 {
         return Err(SdhiError::ResponseTimeout);
     }
+    if info2 & INFO2_ERR5 != 0 {
+        // SD_BUF illegal read — treat as hardware error
+        return Err(SdhiError::HardwareError);
+    }
+    if info2 & INFO2_ERR4 != 0 {
+        // SD_BUF illegal write — treat as hardware error
+        return Err(SdhiError::HardwareError);
+    }
     if info2 & INFO2_ERR0 != 0 {
-        return Err(SdhiError::ResponseCrc);
+        // Command index mismatch
+        return Err(SdhiError::HardwareError);
     }
     if info2 & INFO2_ERR1 != 0 {
         return Err(SdhiError::ResponseCrc);
     }
     if info2 & INFO2_ERR2 != 0 {
-        return Err(SdhiError::DataCrc);
+        // END error (end-bit missing) — can occur in response or data
+        return Err(SdhiError::HardwareError);
     }
     if info2 & INFO2_ERR3 != 0 {
         return Err(SdhiError::DataTimeout);
-    }
-    if info2 & INFO2_ERR4 != 0 {
-        return Err(SdhiError::DataCrc);
     }
     Ok(())
 }
@@ -817,19 +824,19 @@ pub async unsafe fn stop_transfer(port: u8) -> Result<(), SdhiError> {
 
 /// Return `true` if a card is physically inserted (CD pin low = card present).
 ///
-/// Reads INFO1 directly from hardware (not the accumulated atomic).
+/// Reads INFO1 bit 5 (INFO5 = current SD_CD level) directly from hardware.
+/// Bit 5 = 1 means SD_CD has been held low for at least Ncycle → card present.
+///
+/// Do NOT use INFO1_INS_CD (bit 4) here — that is an edge-triggered latch
+/// (set on insertion, must be cleared) not the steady-state level.
 ///
 /// # Safety
 /// Reads SDHI INFO1 register.
 pub unsafe fn card_inserted(port: u8) -> bool {
     let base = port_base(port);
-    // INFO1 bit 5 (INS_CD) is latched high when card is present.
-    // On RZ/A1L, CD pin pulled low when card inserted.
-    // Direct register read vs. accumulated state.
     let info1 = reg16(base, OFF_INFO1).read_volatile();
-    // Use DAT3 detect: bit 9 (INS_DAT3) or CD pin bit 4 (INS_CD).
-    // The Deluge uses socket CD, so check bit 4.
-    info1 & INFO1_INS_CD != 0
+    // INFO1_CD_LEVEL (bit 5 = INFO5): 1 = SD_CD held low = card present.
+    info1 & INFO1_CD_LEVEL != 0
 }
 
 /// Enable card-detect interrupts (insert + remove) in INFO1_MASK.
@@ -1071,7 +1078,7 @@ impl<const PORT: u8> Sdhi<PORT> {
         init(PORT)
     }
 
-    /// Switch the SD clock to high speed (12.5 MHz with MPB3 = 25 MHz).
+    /// Switch the SD clock to high speed (~16.7 MHz, P1/4).
     ///
     /// # Safety
     /// Writes memory-mapped SDHI registers.
@@ -1143,22 +1150,31 @@ mod tests {
 
     #[test]
     fn register_offsets() {
-        // Verify register layout: offset = register_index * 2
-        assert_eq!(OFF_CMD, 0x00);
-        assert_eq!(OFF_ARG0, 0x08);
-        assert_eq!(OFF_ARG1, 0x0C);
-        assert_eq!(OFF_SECCNT, 0x14);
-        assert_eq!(OFF_INFO1, 0x38);
-        assert_eq!(OFF_INFO2, 0x3C);
-        assert_eq!(OFF_INFO1_MASK, 0x40);
-        assert_eq!(OFF_INFO2_MASK, 0x44);
-        assert_eq!(OFF_CLK_CTRL, 0x48);
-        assert_eq!(OFF_SIZE, 0x4C);
-        assert_eq!(OFF_OPTION, 0x50);
-        assert_eq!(OFF_BUF0, 0x60);
-        assert_eq!(OFF_CC_EXT_MODE, 0x1B0);
-        assert_eq!(OFF_SOFT_RST, 0x1C0);
-        assert_eq!(OFF_EXT_SWAP, 0x1E0);
+        // Verify register byte offsets from TRM table 38.2
+        // (SDHI0 base = H'E804_E000; offsets are absolute byte distances)
+        assert_eq!(OFF_CMD,         0x00);
+        assert_eq!(OFF_ARG0,        0x04);
+        assert_eq!(OFF_ARG1,        0x06);
+        assert_eq!(OFF_STOP,        0x08);
+        assert_eq!(OFF_SECCNT,      0x0A);
+        assert_eq!(OFF_RESP0,       0x0C);
+        assert_eq!(OFF_RESP1,       0x0E);
+        assert_eq!(OFF_INFO1,       0x1C);
+        assert_eq!(OFF_INFO2,       0x1E);
+        assert_eq!(OFF_INFO1_MASK,  0x20);
+        assert_eq!(OFF_INFO2_MASK,  0x22);
+        assert_eq!(OFF_CLK_CTRL,    0x24);
+        assert_eq!(OFF_SIZE,        0x26);
+        assert_eq!(OFF_OPTION,      0x28);
+        assert_eq!(OFF_ERR_STS1,    0x2C);
+        assert_eq!(OFF_ERR_STS2,    0x2E);
+        assert_eq!(OFF_BUF0,        0x30);
+        assert_eq!(OFF_SDIO_MODE,   0x34);
+        assert_eq!(OFF_SDIO_INFO1,  0x36);
+        assert_eq!(OFF_SDIO_INFO1_MASK, 0x38);
+        assert_eq!(OFF_CC_EXT_MODE, 0xD8);
+        assert_eq!(OFF_SOFT_RST,    0xE0);
+        assert_eq!(OFF_EXT_SWAP,    0xF0);
     }
 
     #[test]

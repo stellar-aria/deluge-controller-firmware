@@ -11,10 +11,11 @@
 //!   ACMD41 (loop) → wait for card ready, learn high-capacity flag
 //!   CMD2  → get CID (ignored here)
 //!   CMD3  → get RCA
+//!   CMD9  → get CSD (card capacity — requires RCA, card in Stand-by state)
 //!   CMD7  → select card
 //!   ACMD6 → switch to 4-bit bus
 //!   CMD16 → set block length to 512 (needed for SDSC cards)
-//!   Switch clock from 260 kHz to ~33 MHz
+//!   Switch clock from ~130 kHz (P1/512) to ~16.7 MHz (P1/4)
 //!
 //! Sector addressing:
 //!   - SDHC/SDXC cards: block address (LBA directly)
@@ -198,16 +199,6 @@ pub async fn init() -> Result<(), SdError> {
         sdhi::send_cmd(SD_PORT, CMD2).await?;
         let _ = sdhi::read_r2(SD_PORT); // CID — discard
 
-        // ---- CMD9: get CSD (decode capacity for BlockDevice) ----
-        // CMD9 uses the broadcast address (RCA=0) at this point — the card
-        // is still in Identification state. We issue it before CMD3 (RCA assign).
-        sdhi::set_arg(SD_PORT, 0);
-        if sdhi::send_cmd(SD_PORT, 9u16).await.is_ok() {
-            let csd = sdhi::read_r2(SD_PORT);
-            let total = decode_csd_capacity(csd, hc);
-            sdhi::set_card_blocks(SD_PORT, total);
-        }
-
         // ---- CMD3: get RCA ----
         sdhi::set_arg(SD_PORT, 0);
         sdhi::send_cmd(SD_PORT, CMD3).await?;
@@ -215,6 +206,16 @@ pub async fn init() -> Result<(), SdError> {
         // R6 = [31:16] new RCA, [15:0] card status
         let rca = (r6 >> 16) as u16;
         CARD_RCA.store(rca, Ordering::Release);
+
+        // ---- CMD9: get CSD (decode capacity for BlockDevice) ----
+        // CMD9 requires the card to be in Stand-by state (post CMD3) with its RCA.
+        // Per TRM/SD spec: argument = RCA in bits [31:16], lower 16 bits = 0.
+        sdhi::set_arg(SD_PORT, (rca as u32) << 16);
+        if sdhi::send_cmd(SD_PORT, 9u16).await.is_ok() {
+            let csd = sdhi::read_r2(SD_PORT);
+            let total = decode_csd_capacity(csd, hc);
+            sdhi::set_card_blocks(SD_PORT, total);
+        }
 
         // ---- CMD7: select card (transition to Transfer state) ----
         sdhi::set_arg(SD_PORT, (rca as u32) << 16);
