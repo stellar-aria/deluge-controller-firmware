@@ -97,6 +97,20 @@ pub unsafe fn set_as_input(port: u8, pin: u8) {
     core::ptr::write_volatile(pibc(port), v | (1u16 << pin));
 }
 
+/// Enable the input buffer for a pin already muxed to a peripheral function.
+///
+/// [`set_pin_mux`] puts the pin in peripheral mode (PMC=1, PIPC=1) but does
+/// **not** set PIBC, so the live logic level is not reflected in PPR.  Call
+/// this after [`set_pin_mux`] when the ISR or any other code needs to read the
+/// pin state via [`read_pin`] (e.g. for quadrature encoder direction decode).
+///
+/// # Safety
+/// Writes to a memory-mapped peripheral register; `port` must be 1-based (1..=11).
+pub unsafe fn enable_input_buffer(port: u8, pin: u8) {
+    let v = core::ptr::read_volatile(pibc(port));
+    core::ptr::write_volatile(pibc(port), v | (1u16 << pin));
+}
+
 /// Read the current logic level of a GPIO pin via the Port Pin Read (PPR) register.
 ///
 /// Works after [`set_as_input`] has been called for the pin.

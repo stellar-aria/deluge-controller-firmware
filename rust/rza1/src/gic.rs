@@ -250,6 +250,40 @@ pub unsafe fn set_priority(id: u16, priority: u8) {
 }
 
 // ---------------------------------------------------------------------------
+// RZ/A1L external-interrupt (IRQ0–7) helpers
+// ---------------------------------------------------------------------------
+
+/// Configure external interrupt `irq_num` (0–7) for **both-edge** detection.
+///
+/// Programs ICR1 at `0xFCFEF802`.  Per the TRM the mode bits must be cleared
+/// to `0b00` (level-low) before writing the desired `0b11` (both-edges) value.
+///
+/// # Safety
+/// Writes to MMIO.  Call before enabling the interrupt in the GIC.
+pub unsafe fn set_irq_both_edges(irq_num: u8) {
+    const ICR1: usize = 0xFCFE_F802;
+    let shift = (irq_num * 2) as u32;
+    let mask = 0b11u16 << shift;
+    let ptr = ICR1 as *mut u16;
+    let cleared = ptr.read_volatile() & !mask; // clear to level-low (00) first
+    ptr.write_volatile(cleared);
+    ptr.write_volatile(cleared | (0b11u16 << shift)); // then both-edges (11)
+}
+
+/// Clear the pending flag for external interrupt `irq_num` (0–7) in IRQRR.
+///
+/// Must be called inside the IRQ handler body before returning; otherwise the
+/// GIC will re-assert the interrupt immediately after EOI.
+///
+/// # Safety
+/// Writes to MMIO register at `0xFCFEF804`.
+pub unsafe fn clear_irq_pending(irq_num: u8) {
+    const IRQRR: usize = 0xFCFE_F804;
+    let ptr = IRQRR as *mut u16;
+    ptr.write_volatile(ptr.read_volatile() & !(1u16 << irq_num));
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch — called from assembly IRQ handler
 // ---------------------------------------------------------------------------
 

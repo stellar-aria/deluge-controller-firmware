@@ -122,6 +122,31 @@ static mut DMA_RX_BASE: [u32; NUM_CHANNELS] = [0; NUM_CHANNELS]; // buf base (ca
 static mut DMA_RX_ACTIVE: [bool; NUM_CHANNELS] = [false; NUM_CHANNELS];
 
 // ---------------------------------------------------------------------------
+// DMA TX static storage
+// ---------------------------------------------------------------------------
+
+/// Staging buffer size for one DMA TX transfer.  Sized to fit the largest
+/// single `write_bytes` call (PIC `set_column_pair_rgb` = 49 bytes), rounded
+/// up to the next 32-byte cache-line boundary.
+const DMA_TX_BUF_SIZE: usize = 64;
+
+/// Cache-line-aligned staging buffer for one SCIF DMA TX channel.
+#[repr(C, align(32))]
+struct DmaTxBuf([u8; DMA_TX_BUF_SIZE]);
+
+// One slot per SCIF channel.  SAFETY: each slot is written only from the
+// single Embassy task that owns that channel.
+static mut DMA_TX_BUF: [DmaTxBuf; NUM_CHANNELS] = [
+    DmaTxBuf([0; DMA_TX_BUF_SIZE]),
+    DmaTxBuf([0; DMA_TX_BUF_SIZE]),
+    DmaTxBuf([0; DMA_TX_BUF_SIZE]),
+    DmaTxBuf([0; DMA_TX_BUF_SIZE]),
+    DmaTxBuf([0; DMA_TX_BUF_SIZE]),
+];
+static mut DMA_TX_DMACH: [u8; NUM_CHANNELS] = [0; NUM_CHANNELS];
+static mut DMA_TX_ACTIVE: [bool; NUM_CHANNELS] = [false; NUM_CHANNELS];
+
+// ---------------------------------------------------------------------------
 // Per-channel async state
 // ---------------------------------------------------------------------------
 
@@ -409,6 +434,55 @@ pub unsafe fn init_dma_rx(ch: usize, dma_ch: u8, dmars: u32) {
     );
 }
 
+/// Initialise DMA TX for SCIF channel `ch` using DMAC channel `dma_ch`.
+///
+/// After this call, [`write_bytes`] for this channel will use a one-shot
+/// register-mode DMA transfer instead of CPU-driven FIFO fills with TXI
+/// interrupts.  The DMAC paces itself to the UART baud rate via the SCIF
+/// TDFE request signal (AM=2, cycle-steal level-sensitive), so the CPU
+/// suspends exactly once per transfer and wakes via DMAINT.
+///
+/// # Parameters
+/// - `ch`: SCIF channel index (0 for MIDI/SCIF0, 1 for PIC/SCIF1).
+/// - `dma_ch`: DMAC channel number to use for TX.
+///   - PIC/SCIF1 TX: channel 10 (`PIC_TX_DMA_CHANNEL` in C firmware).
+///   - MIDI/SCIF0 TX: channel 11 (`MIDI_TX_DMA_CHANNEL` in C firmware).
+/// - `dmars`: DMA resource selector for the SCIF TX request signal:
+///   - SCIF0 TX: `0x61`  (`DMARS_FOR_SCIF0_TX`)
+///   - SCIF1 TX: `0x65`  (`DMARS_FOR_SCIF0_TX + (1 << 2)`)
+///
+/// # Safety
+/// Must be called once during hardware initialisation, after [`init`] and
+/// before the Embassy executor starts.
+pub unsafe fn init_dma_tx(ch: usize, dma_ch: u8, dmars: u32) {
+    let ftdr = base(ch) + FTDR;
+    // CHCFG: mirrors C firmware's `DMA_SCIF_TX_CONFIG | DMA_AM_FOR_SCIF | (ch & 7)`.
+    //   0x0020_0068  — 8-bit transfers, SAM=increment (src moves), DAM=fixed (dst=FTDR),
+    //                  REQD=1 (destination-side request), LVL=1, AM=0 before OR
+    //   | DMA_AM_FOR_SCIF (0x0000_0200)  — AM=2: cycle-steal level, SCIF pacing
+    //   | (dma_ch & 7)                   — channel-group index in CHCFG[2:0]
+    let chcfg = 0x0020_0068_u32 | DMA_AM_FOR_SCIF | (dma_ch as u32 & 7);
+    crate::dmac::init_register_mode(dma_ch, chcfg, ftdr as u32, dmars);
+    crate::dmac::register_completion_irq(dma_ch);
+    DMA_TX_DMACH[ch] = dma_ch;
+    DMA_TX_ACTIVE[ch] = true;
+    // TIE in SCSCR controls both the TXI GIC interrupt AND the SCIF→DMAC
+    // DREQ signal.  The on_txi ISR clears TIE to stop repeated TXI fire —
+    // but that also kills the DREQ, stalling any active DMA mid-transfer.
+    // Fix: disable TXI at the GIC distributor so on_txi never runs.
+    // TIE remains set in SCSCR (written by init_dma_rx), so DREQ pulses
+    // continue to reach the DMAC uninterrupted.
+    let txi_id = TXI_BASE + (ch as u16) * 4;
+    gic::disable(txi_id);
+    log::info!(
+        "uart: ch{} DMA TX active (dma_ch={}, dmars={:#06x}, ftdr={:#010x})",
+        ch,
+        dma_ch,
+        dmars,
+        ftdr,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Interrupt handlers
 // ---------------------------------------------------------------------------
@@ -624,10 +698,37 @@ unsafe fn try_read_dma(ch: usize) -> Option<u8> {
 
 /// Write `buf` to the transmit FIFO of SCIF channel `ch`.
 ///
-/// Suspends the calling task whenever the TX FIFO is full (≥16 bytes), then
-/// resumes when the FIFO has drained to the trigger level (≤8 bytes) as
-/// signalled by the TXI interrupt.
+/// If DMA TX was configured for this channel via [`init_dma_tx`], a one-shot
+/// register-mode DMA transfer is used: the CPU copies `buf` into an uncached
+/// staging buffer, kicks the DMAC, and suspends exactly once until the
+/// DMAINT completion interrupt fires.  No TXI interrupts are generated.
+///
+/// Otherwise falls back to the CPU-driven FIFO path: suspends whenever the
+/// TX FIFO fills, resuming on each TXI interrupt.
 pub async fn write_bytes(ch: usize, buf: &[u8]) {
+    // DMA TX fast path: one-shot DMAC transfer per chunk, zero TXI interrupts.
+    // The DMAC paces itself to the UART baud rate via the SCIF TDFE request
+    // (AM=2, level-sensitive), so the hardware never overflows the TX FIFO.
+    if unsafe { DMA_TX_ACTIVE[ch] } {
+        let dma_ch = unsafe { DMA_TX_DMACH[ch] };
+        let mut pos = 0;
+        while pos < buf.len() {
+            let chunk_len = (buf.len() - pos).min(DMA_TX_BUF_SIZE);
+            unsafe {
+                // Write through the uncached alias so the DMAC sees fresh bytes
+                // without requiring an explicit cache flush.
+                let cached_ptr = core::ptr::addr_of!(DMA_TX_BUF[ch].0[0]);
+                let uncached_ptr = (cached_ptr as usize + UNCACHED_MIRROR_OFFSET) as *mut u8;
+                core::ptr::copy_nonoverlapping(buf.as_ptr().add(pos), uncached_ptr, chunk_len);
+                crate::dmac::start_transfer(dma_ch, uncached_ptr as u32, chunk_len as u32);
+            }
+            crate::dmac::wait_transfer_complete(dma_ch).await;
+            pos += chunk_len;
+        }
+        return;
+    }
+
+    // Fallback: CPU-driven FIFO fill with TXI interrupts.
     let b = base(ch);
     let mut pos = 0;
 

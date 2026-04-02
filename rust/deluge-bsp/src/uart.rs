@@ -40,28 +40,34 @@ pub unsafe fn init_midi(baud_rate: u32) {
     rza1::uart::init_dma_rx(MIDI_CH, 13, 0x62);
 }
 
-/// Initialise the PIC32 UART (SCIF1) with DMA-backed RX.
+/// Initialise the PIC32 UART (SCIF1) with DMA-backed RX and TX.
 ///
-/// MIDI TX uses TXI GIC interrupts; SCIF1 RX uses DMAC channel 12 so that
-/// incoming bytes are captured reliably without any RXI interrupt gaps.
+/// SCIF1 RX uses DMAC channel 12 so that incoming bytes are captured
+/// reliably without any RXI interrupt gaps.  SCIF1 TX uses DMAC channel 10
+/// so that outgoing LED burst messages are sent without generating TXI
+/// interrupts that would starve the USB audio task.
 ///
 /// DMAC channel 12, DMARS = 0x66 (SCIF1 RX resource selector):
 ///   DMARS_FOR_SCIF0_RX = 0x62; for SCIF1: 0x62 + (1 × 4) = 0x66.
+///
+/// DMAC channel 10, DMARS = 0x65 (SCIF1 TX resource selector):
+///   DMARS_FOR_SCIF0_TX = 0x61; for SCIF1: 0x61 + (1 × 4) = 0x65.
 ///
 /// # Safety
 /// Must be called with global IRQs disabled, before the Embassy executor starts.
 pub unsafe fn init_pic(baud_rate: u32) {
     log::debug!(
-        "bsp uart: PIC SCIF{} @ {} bps (DMA RX ch12)",
+        "bsp uart: PIC SCIF{} @ {} bps (DMA RX ch12, DMA TX ch10)",
         PIC_CH,
         baud_rate
     );
     rza1::uart::init(PIC_CH, baud_rate);
     rza1::gpio::set_pin_mux(3, 15, 5); // TxD1
     rza1::gpio::set_pin_mux(1, 9, 3); // RxD1
-                                      // TX via TXI interrupt; RX via DMAC channel 12.
+                                      // RX via DMAC channel 12; TX via DMAC channel 10.
     rza1::uart::register_txi_for(PIC_CH);
     rza1::uart::init_dma_rx(PIC_CH, 12, 0x66);
+    rza1::uart::init_dma_tx(PIC_CH, 10, 0x65);
 }
 
 #[cfg(all(test, not(target_os = "none")))]
