@@ -15,6 +15,7 @@
 //! Each 32-bit DMARS register covers a channel pair:
 //!   - bits [15:0]  → even channel of the pair
 //!   - bits [31:16] → odd  channel of the pair
+//!
 //! (RZ/A1L TRM §9, register table: DMARS0=0xFCFE1000 … DMARS7=0xFCFE101C)
 
 const DMAC_BASE: usize = 0xE820_0000;

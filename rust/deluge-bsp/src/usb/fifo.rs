@@ -21,8 +21,8 @@
 //! the returned word instead of narrowing.
 
 use super::regs::{
-    rd, rd32, wr, wr32, Rusb1Regs, FIFOCTR_BCLR, FIFOCTR_BVAL, FIFOCTR_DTLN_MASK, FIFOCTR_FRDY,
-    FIFOSEL_CURPIPE_MASK, FIFOSEL_MBW_MASK, FIFOSEL_MBW_SHIFT, MBW_16, MBW_32, MBW_8,
+    rd, wr, wr32, Rusb1Regs, FIFOCTR_BCLR, FIFOCTR_BVAL, FIFOCTR_DTLN_MASK, FIFOCTR_FRDY,
+    FIFOSEL_CURPIPE_MASK, FIFOSEL_MBW_MASK, FIFOSEL_MBW_SHIFT, MBW_16, MBW_8,
 };
 
 /// Hardware FIFO port: data register + SEL register + CTR register.
@@ -46,7 +46,7 @@ impl FifoPort {
     /// `regs` must be a valid pointer to the USB register block for the active port.
     pub unsafe fn cfifo(regs: *mut Rusb1Regs) -> Self {
         Self {
-            data: core::ptr::addr_of_mut!((*regs).cfifo) as *mut u32,
+            data: core::ptr::addr_of_mut!((*regs).cfifo),
             sel: core::ptr::addr_of_mut!((*regs).cfifosel),
             ctr: core::ptr::addr_of_mut!((*regs).cfifoctr),
         }
@@ -58,7 +58,7 @@ impl FifoPort {
     /// Same as [`cfifo`].
     pub unsafe fn d0fifo(regs: *mut Rusb1Regs) -> Self {
         Self {
-            data: core::ptr::addr_of_mut!((*regs).d0fifo) as *mut u32,
+            data: core::ptr::addr_of_mut!((*regs).d0fifo),
             sel: core::ptr::addr_of_mut!((*regs).d0fifosel),
             ctr: core::ptr::addr_of_mut!((*regs).d0fifoctr),
         }
@@ -70,7 +70,7 @@ impl FifoPort {
     /// Same as [`cfifo`].
     pub unsafe fn d1fifo(regs: *mut Rusb1Regs) -> Self {
         Self {
-            data: core::ptr::addr_of_mut!((*regs).d1fifo) as *mut u32,
+            data: core::ptr::addr_of_mut!((*regs).d1fifo),
             sel: core::ptr::addr_of_mut!((*regs).d1fifosel),
             ctr: core::ptr::addr_of_mut!((*regs).d1fifoctr),
         }
@@ -117,18 +117,26 @@ unsafe fn set_mbw(sel: *mut u16, mbw: u16) {
 
 /// Returns `true` if the FIFO port is pointing at `pipe_num` AND is ready.
 ///
-/// A FIFO port is ready when:
-/// - CURPIPE == pipe_num  (the port has switched to the requested pipe)
-/// - FRDY == 1           (the FIFO buffer is accessible)
+/// After writing CURPIPE in `fifo_select_pipe`, the hardware needs a few bus
+/// cycles to settle.  This function busy-waits briefly for CURPIPE to match
+/// and FRDY to assert.  Returns false if the FIFO is not ready within the
+/// timeout — the caller should abort and retry on the next BRDY.
 ///
 /// # Safety
 /// `fifo` fields must be valid register pointers.
 pub unsafe fn fifo_is_ready(fifo: &FifoPort, pipe_num: usize) -> bool {
-    let sel = rd(fifo.sel);
-    if (sel & FIFOSEL_CURPIPE_MASK) as usize != pipe_num {
-        return false;
+    // Hardware settles within ~4 reads normally; 64 gives ample margin without
+    // hanging the ISR if the pipe has no data (e.g. after BCLR).
+    for _ in 0..64 {
+        let sel = rd(fifo.sel);
+        if (sel & FIFOSEL_CURPIPE_MASK) as usize != pipe_num {
+            continue;
+        }
+        if (rd(fifo.ctr) & FIFOCTR_FRDY) != 0 {
+            return true;
+        }
     }
-    (rd(fifo.ctr) & FIFOCTR_FRDY) != 0
+    false
 }
 
 /// Return the number of valid data bytes waiting in the FIFO.
@@ -161,9 +169,8 @@ pub unsafe fn fifo_bval(fifo: &FifoPort) {
 
 /// Copy `len` bytes from `buf` into the hardware FIFO.
 ///
-/// MBW=32 must already be set in the SEL register (it is set by the
-/// CURPIPE write in `pipe_xfer_in`).  This function switches to narrower
-/// widths only for the sub-word tail, then restores MBW=32.
+/// Uses MBW=16 (matching the C reference driver `pipe_write_packet`).
+/// Switches to MBW=8 for an odd-byte tail.
 ///
 /// # Safety
 /// - `fifo.data` / `fifo.sel` must be valid.
@@ -172,17 +179,11 @@ pub unsafe fn sw_to_hw_fifo(fifo: &FifoPort, buf: *const u8, len: usize) {
     let mut p = buf;
     let mut rem = len;
 
-    // 32-bit words
-    while rem >= 4 {
-        let word = (p as *const u32).read_unaligned();
-        wr32(fifo.data, word);
-        p = p.add(4);
-        rem -= 4;
-    }
+    // Switch to MBW=16 for the bulk of the write (C driver uses 16-bit too).
+    set_mbw(fifo.sel, MBW_16);
 
-    // 16-bit tail
-    if rem >= 2 {
-        set_mbw(fifo.sel, MBW_16);
+    // 16-bit words
+    while rem >= 2 {
         let half = (p as *const u16).read_unaligned();
         wr32(fifo.data, half as u32);
         p = p.add(2);
@@ -200,23 +201,12 @@ pub unsafe fn sw_to_hw_fifo(fifo: &FifoPort, buf: *const u8, len: usize) {
 // Hardware → software FIFO (read path: OUT endpoint or control OUT)
 // ---------------------------------------------------------------------------
 
-/// Determine the widest MBW valid for a single-fragment read of `len` bytes.
-///
-/// For sub-word payloads we keep MBW=32 and unpack — see module-level docs.
-fn mbw_for_len(len: usize) -> u16 {
-    if len.is_multiple_of(4) {
-        MBW_32
-    } else if len.is_multiple_of(2) {
-        MBW_16
-    } else {
-        MBW_8
-    }
-}
-
 /// Copy `len` bytes from the hardware FIFO into `buf`.
 ///
-/// Handles the RZA1 D1FIFO quirk for sub-word payloads: keeps MBW=32 and
-/// unpacks the returned word instead of switching width mid-transfer.
+/// Uses MBW=8 (byte-at-a-time), matching the C reference driver
+/// `pipe_read_packet` which accesses the FIFO as `volatile uint8_t*`.
+/// This is the only safe approach: at MBW=32 the hardware delivers bytes
+/// big-endian in the 32-bit word, which would require an explicit bswap.
 ///
 /// # Safety
 /// - `fifo.data` / `fifo.sel` must be valid.
@@ -226,50 +216,14 @@ pub unsafe fn hw_to_sw_fifo(fifo: &FifoPort, buf: *mut u8, len: usize) {
         return;
     }
 
-    if len < 4 {
-        // Sub-word: keep MBW=32, unpack valid bytes from the first returned word.
-        let word = rd32(fifo.data);
-        let bytes = word.to_le_bytes();
-        for i in 0..len {
-            buf.add(i).write(bytes[i]);
-        }
-        return;
-    }
+    // Switch to byte-access mode so each read yields exactly one USB byte.
+    set_mbw(fifo.sel, MBW_8);
 
-    let mbw = mbw_for_len(len);
-    if mbw != MBW_32 {
-        set_mbw(fifo.sel, mbw);
-    }
-
+    let fifo_byte = fifo.data as *const u8;
     let mut p = buf;
-    let mut rem = len;
-
-    match mbw {
-        MBW_32 => {
-            while rem >= 4 {
-                let word = rd32(fifo.data);
-                (p as *mut u32).write_unaligned(word);
-                p = p.add(4);
-                rem -= 4;
-            }
-        }
-        MBW_16 => {
-            let data16 = fifo.data as *const u16;
-            while rem >= 2 {
-                let half = core::ptr::read_volatile(data16);
-                (p as *mut u16).write_unaligned(half);
-                p = p.add(2);
-                rem -= 2;
-            }
-        }
-        _ /* MBW_8 */ => {
-            let data8 = fifo.data as *const u8;
-            while rem > 0 {
-                *p = core::ptr::read_volatile(data8);
-                p = p.add(1);
-                rem -= 1;
-            }
-        }
+    for _ in 0..len {
+        p.write(fifo_byte.read_volatile());
+        p = p.add(1);
     }
 }
 
@@ -279,8 +233,8 @@ pub unsafe fn hw_to_sw_fifo(fifo: &FifoPort, buf: *mut u8, len: usize) {
 
 /// Write the CURPIPE + MBW fields of `fifo.sel` together.
 ///
-/// Per the TRM, CURPIPE and MBW must be written simultaneously.  This also
-/// sets MBW=32 (the default for the subsequent sw_to_hw / hw_to_sw calls).
+/// Sets MBW=16 for the IN direction (write path) and MBW=8 for the OUT
+/// direction (read path), matching the C reference driver.
 ///
 /// `isel`: set the ISEL bit for CFIFO IN direction (ignored for D0/D1FIFO).
 ///
@@ -288,24 +242,15 @@ pub unsafe fn hw_to_sw_fifo(fifo: &FifoPort, buf: *mut u8, len: usize) {
 /// `fifo.sel` must be valid.
 pub unsafe fn fifo_select_pipe(fifo: &FifoPort, pipe_num: usize, isel: bool) {
     let isel_bit: u16 = if isel { 0x0020 } else { 0 };
-    let val: u16 = (pipe_num as u16) | (MBW_32 << FIFOSEL_MBW_SHIFT) | isel_bit;
+    // IN path (isel=true) → MBW=16 for 16-bit writes; OUT path → MBW=8 for byte reads.
+    let mbw: u16 = if isel { MBW_16 } else { MBW_8 };
+    let val: u16 = (pipe_num as u16) | (mbw << FIFOSEL_MBW_SHIFT) | isel_bit;
     wr(fifo.sel, val);
 }
 
 #[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::*;
-
-    #[test]
-    fn mbw_selection() {
-        assert_eq!(mbw_for_len(4), MBW_32);
-        assert_eq!(mbw_for_len(8), MBW_32);
-        assert_eq!(mbw_for_len(64), MBW_32);
-        assert_eq!(mbw_for_len(2), MBW_16);
-        assert_eq!(mbw_for_len(6), MBW_16);
-        assert_eq!(mbw_for_len(1), MBW_8);
-        assert_eq!(mbw_for_len(3), MBW_8);
-    }
 
     #[test]
     fn sw_to_hw_roundtrip() {

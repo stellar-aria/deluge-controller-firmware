@@ -64,14 +64,21 @@ pub unsafe fn module_clock_disable(port: u8) {
     let _ = core::ptr::read_volatile(STBCR7 as *const u8);
 }
 
+/// GIC interrupt priority for USB0/USB1.
+///
+/// Must be numerically less than 31 (the GICC_PMR threshold) to pass the
+/// CPU-interface priority filter.  Matches the priority used by UART/SDHI.
+const USB_IRQ_PRIORITY: u8 = 10;
+
 /// Enable the GIC interrupt for USB module `port`.
 ///
-/// Delegates to `rza1::gic::enable`. The caller is responsible for
-/// registering an ISR handler with `gic::register` before calling this.
+/// Sets the interrupt priority before enabling, so the CPU-interface
+/// priority filter (GICC_PMR = 31) does not block delivery.
 ///
 /// # Safety
 /// Writes to GIC distributor registers.
 pub unsafe fn int_enable(port: u8) {
+    crate::gic::set_priority(irq(port), USB_IRQ_PRIORITY);
     crate::gic::enable(irq(port));
 }
 

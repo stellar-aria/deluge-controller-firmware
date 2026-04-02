@@ -58,7 +58,8 @@ use super::pipe::{
 };
 use super::regs::{
     pipectr_ptr, rd, rmw, wr, Rusb1Regs, BUSWAIT_VALUE, DCPMAXP_MXPS_MASK, DVSQ_DEFAULT,
-    DVSQ_SUSP0, FIFOCTR_BCLR, INTENB0_BEMPE, INTENB0_BRDYE, INTENB0_CTRE, INTENB0_DVSE,
+    DVSQ_SUSP0, DVSTCTR0_RHST, DVSTCTR0_RHST_FS, DVSTCTR0_RHST_HS, FIFOCTR_BCLR, INTENB0_BEMPE,
+    INTENB0_BRDYE, INTENB0_CTRE, INTENB0_DVSE,
     INTENB0_VBSE, INTSTS0_BEMP, INTSTS0_BRDY, INTSTS0_CTRT, INTSTS0_CTSQ_MASK, INTSTS0_DVSQ_MASK,
     INTSTS0_DVSQ_SHIFT, INTSTS0_DVST, INTSTS0_VALID, INTSTS0_VBINT, INTSTS0_VBSTS, PIPECTR_ACLRM,
     PIPECTR_CCPL, PIPECTR_PID_BUF, PIPECTR_PID_MASK, PIPECTR_PID_STALL,
@@ -103,6 +104,7 @@ static PIPE0_BRDY: [AtomicU8; 2] = [AtomicU8::new(0), AtomicU8::new(0)];
 static SETUP_PKT: [critical_section::Mutex<core::cell::UnsafeCell<[u8; 8]>>; 2] = {
     use core::cell::UnsafeCell;
     use critical_section::Mutex;
+    #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY: Mutex<UnsafeCell<[u8; 8]>> = Mutex::new(UnsafeCell::new([0u8; 8]));
     [EMPTY; 2]
 };
@@ -155,6 +157,7 @@ impl PortAlloc {
 static PORT_ALLOC: [critical_section::Mutex<core::cell::UnsafeCell<PortAlloc>>; 2] = {
     use core::cell::UnsafeCell;
     use critical_section::Mutex;
+    #[allow(clippy::declare_interior_mutable_const)]
     const INIT: Mutex<UnsafeCell<PortAlloc>> = Mutex::new(UnsafeCell::new(PortAlloc::new()));
     [INIT; 2]
 };
@@ -203,6 +206,37 @@ impl<'d> Driver<'d> for Rusb1Driver {
         let xfer_type = endpoint_type_to_xfer(ep_type);
         critical_section::with(|cs| {
             let alloc = unsafe { &mut *PORT_ALLOC[self.port as usize].borrow(cs).get() };
+
+            // If a specific address is requested and it's already allocated to a pipe,
+            // reuse that pipe for this alternate setting (same endpoint, different MPS).
+            // This matches the UAC2 pattern of sharing an endpoint across alt settings
+            // (e.g. alt1=16-bit, alt2=24-bit on the same ISO OUT endpoint).
+            if let Some(addr) = ep_addr {
+                let ep_num = addr.index() as u8;
+                let existing_pipe = alloc.ep_to_pipe[0][ep_num as usize] as usize;
+                if existing_pipe != 0 {
+                    if let Some(ref mut cfg) = alloc.pipe_cfg[existing_pipe] {
+                        // Keep the larger MPS so the hardware buffer covers both alt settings.
+                        if max_packet_size > cfg.mps {
+                            let new_blocks = mps_to_blocks(max_packet_size);
+                            cfg.mps = max_packet_size;
+                            cfg.buf_blocks = new_blocks as u8;
+                        }
+                    }
+                    let info = EndpointInfo {
+                        addr: EndpointAddress::from_parts(ep_num as usize, Direction::Out),
+                        ep_type,
+                        max_packet_size,
+                        interval_ms: _interval_ms,
+                    };
+                    return Ok(Rusb1EndpointOut {
+                        port: self.port,
+                        pipe: existing_pipe as u8,
+                        info,
+                    });
+                }
+            }
+
             let pipe = alloc
                 .alloc_pipe(xfer_type, false)
                 .ok_or(EndpointAllocError)?;
@@ -253,6 +287,33 @@ impl<'d> Driver<'d> for Rusb1Driver {
         let xfer_type = endpoint_type_to_xfer(ep_type);
         critical_section::with(|cs| {
             let alloc = unsafe { &mut *PORT_ALLOC[self.port as usize].borrow(cs).get() };
+
+            // Reuse existing pipe if this ep_addr is already allocated (shared-endpoint alt setting).
+            if let Some(addr) = ep_addr {
+                let ep_num = addr.index() as u8;
+                let existing_pipe = alloc.ep_to_pipe[1][ep_num as usize] as usize;
+                if existing_pipe != 0 {
+                    if let Some(ref mut cfg) = alloc.pipe_cfg[existing_pipe] {
+                        if max_packet_size > cfg.mps {
+                            let new_blocks = mps_to_blocks(max_packet_size);
+                            cfg.mps = max_packet_size;
+                            cfg.buf_blocks = new_blocks as u8;
+                        }
+                    }
+                    let info = EndpointInfo {
+                        addr: EndpointAddress::from_parts(ep_num as usize, Direction::In),
+                        ep_type,
+                        max_packet_size,
+                        interval_ms: _interval_ms,
+                    };
+                    return Ok(Rusb1EndpointIn {
+                        port: self.port,
+                        pipe: existing_pipe as u8,
+                        info,
+                    });
+                }
+            }
+
             let pipe = alloc
                 .alloc_pipe(xfer_type, true)
                 .ok_or(EndpointAllocError)?;
@@ -293,12 +354,14 @@ impl<'d> Driver<'d> for Rusb1Driver {
     }
 
     fn start(self, control_max_packet_size: u16) -> (Self::Bus, Self::ControlPipe) {
+        log::debug!("usb{}: start (ctrl mps={})", self.port, control_max_packet_size);
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
 
             // ── PLL / clock init (TRM §28.4.1 (5)) ─────────────────────────
             // Stop clock supply to this port while touching the PLL.
             rmw(core::ptr::addr_of_mut!((*regs).suspmode), SUSPMODE_SUSPM, 0);
+            log::trace!("usb{}: SUSPMODE cleared for PLL init", self.port);
 
             // UPLLE lives in USB0's SYSCFG0 regardless of which port we are
             // initialising (C reference: always writes to rusb0->SYSCFG0).
@@ -351,6 +414,8 @@ impl<'d> Driver<'d> for Rusb1Driver {
                 SYSCFG_DPRPU,
                 SYSCFG_DPRPU,
             );
+            log::debug!("usb{}: SYSCFG0={:#06x} (DPRPU set, D+ pull-up active)", self.port,
+                rd(core::ptr::addr_of!((*regs).syscfg0)));
 
             // DCPMAXP (control endpoint max packet size).
             wr(
@@ -368,7 +433,10 @@ impl<'d> Driver<'d> for Rusb1Driver {
             // the rising-edge VBINT will never fire.  Synthesise the event now
             // so that Bus::poll() doesn't wait forever.
             let intsts = rd(core::ptr::addr_of!((*regs).intsts0));
+            log::debug!("usb{}: post-init INTSTS0={:#06x} VBSTS={}", self.port, intsts,
+                intsts & INTSTS0_VBSTS != 0);
             if intsts & INTSTS0_VBSTS != 0 {
+                log::debug!("usb{}: VBUS already present — synthesising PowerDetected", self.port);
                 BUS_EVENTS[self.port as usize].fetch_or(BUS_EVT_VBUS_ON, Ordering::Release);
                 BUS_WAKERS[self.port as usize].wake();
             }
@@ -402,19 +470,24 @@ impl Bus for Rusb1Bus {
             BUS_WAKERS[self.port as usize].register(cx.waker());
             let ev = BUS_EVENTS[self.port as usize].swap(0, Ordering::Acquire);
             if ev & BUS_EVT_RESET != 0 {
+                log::debug!("usb{}: Bus::poll → Reset", self.port);
                 return Poll::Ready(Event::Reset);
             }
             if ev & BUS_EVT_SUSPEND != 0 {
+                log::debug!("usb{}: Bus::poll → Suspend", self.port);
                 return Poll::Ready(Event::Suspend);
             }
             if ev & BUS_EVT_RESUME != 0 {
+                log::debug!("usb{}: Bus::poll → Resume", self.port);
                 return Poll::Ready(Event::Resume);
             }
             if ev & BUS_EVT_VBUS_ON != 0 {
+                log::debug!("usb{}: Bus::poll → PowerDetected", self.port);
                 self.connected = true;
                 return Poll::Ready(Event::PowerDetected);
             }
             if ev & BUS_EVT_VBUS_OFF != 0 {
+                log::debug!("usb{}: Bus::poll → PowerRemoved", self.port);
                 self.connected = false;
                 return Poll::Ready(Event::PowerRemoved);
             }
@@ -424,6 +497,7 @@ impl Bus for Rusb1Bus {
     }
 
     async fn enable(&mut self) {
+        log::debug!("usb{}: Bus::enable — waiting 30 ms for module settle", self.port);
         // RZA1L hardware quirk (confirmed in C firmware): INTENB0, BEMPENB, and
         // BRDYENB are NOT writable immediately after USBE=1 — the write is
         // silently dropped.  Wait for the module to settle before arming IRQs.
@@ -445,17 +519,19 @@ impl Bus for Rusb1Bus {
 
                 let rb = rd(core::ptr::addr_of!((*regs).intenb0));
                 if rb == intenb {
+                    log::debug!("usb{}: INTENB0={:#06x} verified (attempt {})", self.port, rb, attempt);
                     break;
                 }
                 log::warn!(
-                    "usb: INTENB0 write failed (attempt {}), retrying…",
-                    attempt + 1
+                    "usb{}: INTENB0 write failed attempt {} (wrote {:#06x}, read {:#06x}), retrying…",
+                    self.port, attempt + 1, intenb, rb
                 );
                 embassy_time::Timer::after_millis(10).await;
             }
 
             // Configure allocated pipes on the hardware.
             configure_all_pipes(self.port);
+            log::debug!("usb{}: Bus::enable done", self.port);
         }
     }
 
@@ -509,8 +585,21 @@ impl Bus for Rusb1Bus {
                     pipe_disable(regs, p);
                     pipe_bemp_disable(regs, p);
                     pipe_brdy_disable(regs, p);
+                    // Pulse ACLRM to clear the FIFO buffer contents and the
+                    // double-buffer toggle state (TRM §28.4.4 Table 28.13).
+                    // This prevents leftover data in the off-bank from causing
+                    // a spurious BRDY when the endpoint is re-enabled.
+                    // Requires PID=NAK (already set by pipe_disable above).
+                    pipe_reset(regs, p);
+                    // Signal any task blocked in read() that the endpoint is
+                    // now disabled, so it returns Err(EndpointError::Disabled)
+                    // rather than blocking forever.
+                    PIPE_NRDY.fetch_or(1u16 << p, Ordering::Release);
                 }
             }
+            // Wake any task waiting in wait_enabled() or read() so it can observe
+            // the new pipe state (PID changed to BUF/NAK, or PIPE_NRDY set).
+            PIPE_WAKERS[p].wake();
         }
     }
 
@@ -562,7 +651,8 @@ impl ControlPipe for Rusb1ControlPipe {
     }
 
     async fn setup(&mut self) -> [u8; 8] {
-        core::future::poll_fn(|cx| {
+        log::trace!("usb{}: setup() waiting", self.port);
+        let pkt = core::future::poll_fn(|cx| {
             CTRL_WAKERS[self.port as usize].register(cx.waker());
             let stage = CTRL_STAGE[self.port as usize].swap(CTRL_STAGE_NONE, Ordering::Acquire);
             // Accept any non-idle stage: CTSQ_READ_DATA (1), CTSQ_WRITE_DATA (3),
@@ -576,7 +666,9 @@ impl ControlPipe for Rusb1ControlPipe {
             }
             Poll::Pending
         })
-        .await
+        .await;
+        log::debug!("usb{}: setup() → {:02x?}", self.port, pkt);
+        pkt
     }
 
     async fn data_out(
@@ -586,14 +678,28 @@ impl ControlPipe for Rusb1ControlPipe {
         _last: bool,
     ) -> Result<usize, EndpointError> {
         let p = self.port as usize;
+        log::trace!("usb{}: data_out buf_len={}", self.port, buf.len());
 
         // Set PID=BUF so hardware ACKs the host's OUT token and receives the
         // data-stage payload into the CFIFO.  PID was forced to NAK by hardware
         // when the preceding SETUP packet was received (TRM §28.3.30 PID[1:0]
         // function-controller note).  Without this, every host OUT token is
         // met with NAK and no data ever arrives (Bug #4).
+        //
+        // Mirror C `usb_pstd_ctrl_read()` preamble: re-enable BRDY0, clear any
+        // stale BRDYSTS bit 0, and discard any previously latched PIPE0_BRDY
+        // signal.  If these are not cleared, a zero-length OUT ACK from the host
+        // to the preceding status stage (fired while BRDYENB was still set) will
+        // cause the await below to return immediately with 0 bytes.
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
+            // Clear BRDYSTS bit 0 (write-0-to-clear, all other bits kept 1).
+            wr(core::ptr::addr_of_mut!((*regs).brdysts), !(1u16));
+            // Re-enable BRDY0 interrupt (may have been disabled by accept()).
+            rmw(core::ptr::addr_of_mut!((*regs).brdyenb), 0x0001, 0x0001);
+            // Discard any stale software flag set by a spurious BRDY0 above.
+            PIPE0_BRDY[p].store(0, Ordering::Release);
+
             let ctr = rd(pipectr_ptr(regs, 0));
             wr(
                 pipectr_ptr(regs, 0),
@@ -624,6 +730,7 @@ impl ControlPipe for Rusb1ControlPipe {
                 hw_to_sw_fifo(&fifo, buf.as_mut_ptr(), len);
             }
             fifo_bclr(&fifo);
+            log::trace!("usb{}: data_out read {} bytes (fifo had {})", self.port, len, vld);
             Ok(len)
         }
     }
@@ -634,8 +741,20 @@ impl ControlPipe for Rusb1ControlPipe {
         _first: bool,
         last: bool,
     ) -> Result<(), EndpointError> {
+        log::trace!("usb{}: data_in len={} last={}", self.port, data.len(), last);
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
+
+            // Mirror C `usb_pstd_ctrl_read()` preamble: clear BEMPSTS bit 0,
+            // re-enable BEMP0 interrupt, and discard any stale PIPE_DONE bit 0
+            // that may have been latched by a previous control-write status-stage
+            // BEMP (fired while BEMPENB was still set before accept() was called).
+            // Without this, the poll_fn below resolves immediately on first call
+            // and returns before the IN data has actually been sent.
+            wr(core::ptr::addr_of_mut!((*regs).bempsts), !(1u16));
+            rmw(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001, 0x0001);
+            PIPE_DONE.fetch_and(!(1u16), Ordering::Release);
+
             let fifo = FifoPort::cfifo(regs);
             fifo_select_pipe(&fifo, 0, true); // ISEL=1 selects IN direction
 
@@ -649,7 +768,10 @@ impl ControlPipe for Rusb1ControlPipe {
                     break;
                 }
             }
+            log::trace!("usb{}: CFIFO ISEL ready={} frdy={}", self.port, ready,
+                fifo_is_ready(&fifo, 0));
             if !ready || !fifo_is_ready(&fifo, 0) {
+                log::warn!("usb{}: data_in CFIFO not ready — returning Disabled", self.port);
                 return Err(EndpointError::Disabled);
             }
 
@@ -669,7 +791,7 @@ impl ControlPipe for Rusb1ControlPipe {
                 (ctr & !PIPECTR_PID_MASK) | PIPECTR_PID_BUF,
             );
 
-            // Wait for BEMP on pipe 0.
+            // Wait for BEMP on pipe 0 (data transmitted to host).
             core::future::poll_fn(|cx| {
                 PIPE_WAKERS[0].register(cx.waker());
                 let done = PIPE_DONE.fetch_and(!(1u16), Ordering::Acquire);
@@ -680,17 +802,24 @@ impl ControlPipe for Rusb1ControlPipe {
                 }
             })
             .await;
+
+            // CCPL (status-stage ACK for control reads) is set by the ISR's
+            // non-VALID CTRT ctsq=2 handler, matching the C driver's
+            // usb_pstd_stand_req4() → usb_pstd_ctrl_end() path.
         }
         Ok(())
     }
 
     async fn accept(&mut self) {
+        // Called by embassy-usb only for control OUT transfers (data from host).
+        // The device sends a zero-length IN to acknowledge (status stage).
+        // Mirrors C usb_pstd_ctrl_end(): disable BEMP0/BRDY0 BEFORE setting CCPL
+        // so the status-ZLP BEMP/BRDY don't set stale flags for the next transfer.
+        log::trace!("usb{}: accept (control-write status stage)", self.port);
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
-            // TRM §28.3.30 CCPL: "when this bit is set to 1 while the corresponding
-            // PID bits are set to BUF, this module completes the control transfer
-            // status stage."  PID must be BUF — setting CCPL alone when PID=NAK
-            // has no effect (Bug #2).
+            rmw(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001, 0x0000);
+            rmw(core::ptr::addr_of_mut!((*regs).brdyenb), 0x0001, 0x0000);
             let ctr = rd(pipectr_ptr(regs, 0));
             wr(
                 pipectr_ptr(regs, 0),
@@ -700,6 +829,7 @@ impl ControlPipe for Rusb1ControlPipe {
     }
 
     async fn reject(&mut self) {
+        log::trace!("usb{}: reject (STALL)", self.port);
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
             // Set PID=STALL on DCP via RMW.  The previous code bare-wrote
@@ -714,9 +844,14 @@ impl ControlPipe for Rusb1ControlPipe {
     }
 
     async fn accept_set_address(&mut self, addr: u8) {
+        log::debug!("usb{}: accept_set_address({})", self.port, addr);
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
             // Hardware auto-updates USBADDR when CCPL is set.
+            // Mirror C `usb_pstd_ctrl_end()`: disable pipe 0 BEMP and BRDY
+            // interrupts BEFORE setting CCPL (see accept() for full rationale).
+            rmw(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001, 0x0000);
+            rmw(core::ptr::addr_of_mut!((*regs).brdyenb), 0x0001, 0x0000);
             // Same as accept(): CCPL only completes the status stage when
             // PID=BUF (TRM §28.3.30 CCPL).  Must RMW to set both (Bug #2).
             let _ = addr;
@@ -772,14 +907,53 @@ impl EndpointOut for Rusb1EndpointOut {
             state.buf = unsafe { core::ptr::NonNull::new_unchecked(buf.as_mut_ptr()) };
             state.length = buf.len() as u16;
             state.remaining = buf.len() as u16;
+            state.transferred = 0;
             state.mps = mps;
             state.xfer_type = endpoint_type_to_xfer(self.info.ep_type);
         });
 
+        let is_iso = self.info.ep_type == EndpointType::Isochronous;
+
         // Enable BRDY for this pipe → ISR will call pipe_xfer_out_brdy.
+        //
+        // For ISO OUT: BRDYENB must stay asserted continuously across packets.
+        // Disabling and re-enabling it between packets wipes BRDYSTS, losing
+        // any packet that arrived during the gap and permanently stalling the
+        // double-buffer.  So for ISO we only arm BRDY the first time (when
+        // BRDYENB is not yet set) and never disable it between reads.
+        //
+        // Additionally: for ISO, flush any stale packet that arrived before
+        // this read() call armed the transfer state (remaining was 0 when the
+        // BRDY ISR ran, so it wasn't consumed).  If we don't BCLR here the
+        // double-buffer bank stays "owned" by the CPU and no further BRDYs fire.
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
-            pipe_brdy_enable(regs, pipe);
+            let already_enabled = is_iso && {
+                let brdyenb = core::ptr::addr_of!((*regs).brdyenb);
+                rd(brdyenb) & (1u16 << pipe) != 0
+            };
+            if !already_enabled {
+                // First arm: flush any stale ISO packet before enabling BRDY.
+                if is_iso {
+                    use super::fifo::{fifo_bclr, fifo_for_pipe, fifo_select_pipe};
+                    let fifo = fifo_for_pipe(regs, pipe);
+                    fifo_select_pipe(&fifo, pipe, false);
+                    fifo_bclr(&fifo);
+                }
+                pipe_brdy_enable(regs, pipe);
+            } else if is_iso {
+                // Subsequent re-arms: the ISR no longer BCLRs stale packets, so
+                // if a packet arrived while remaining==0 it's still in the FIFO.
+                // Trigger it directly by calling pipe_xfer_out_brdy now — this
+                // fills the buf from the waiting FIFO data and signals PIPE_DONE,
+                // so the poll_fn below completes immediately without waiting for
+                // another BRDY interrupt.
+                let fired = pipe_xfer_out_brdy(regs, pipe);
+                if fired {
+                    PIPE_DONE.fetch_or(1u16 << pipe, Ordering::Release);
+                    PIPE_WAKERS[pipe].wake();
+                }
+            }
             pipe_enable(regs, pipe);
         }
 
@@ -791,9 +965,9 @@ impl EndpointOut for Rusb1EndpointOut {
                 PIPE_DONE.fetch_and(!(1u16 << pipe), Ordering::Release);
                 let state = critical_section::with(|cs| {
                     let s = unsafe { &*PIPE_XFER[pipe].borrow(cs).get() };
-                    (s.length, s.remaining)
+                    s.transferred
                 });
-                Poll::Ready(Ok((state.0 - state.1) as usize))
+                Poll::Ready(Ok(state as usize))
             } else if PIPE_NRDY.load(Ordering::Acquire) & (1u16 << pipe) != 0 {
                 PIPE_NRDY.fetch_and(!(1u16 << pipe), Ordering::Release);
                 Poll::Ready(Err(EndpointError::Disabled))
@@ -803,10 +977,14 @@ impl EndpointOut for Rusb1EndpointOut {
         })
         .await;
 
-        // Disable BRDY after transfer.
-        unsafe {
-            let regs = Rusb1Regs::ptr(self.port);
-            pipe_brdy_disable(regs, pipe);
+        // For non-ISO: disable BRDY between reads so the ISR doesn't fire when
+        // no transfer state is set up.  For ISO: leave BRDYENB set so we don't
+        // lose packets that arrive before the next read() call re-arms the pipe.
+        if !is_iso {
+            unsafe {
+                let regs = Rusb1Regs::ptr(self.port);
+                pipe_brdy_disable(regs, pipe);
+            }
         }
 
         nbytes
@@ -935,14 +1113,21 @@ pub unsafe fn dcd_int_handler(port: u8) {
 
     // ── DVST (device-state change) ───────────────────────────────────────
     if sts & INTSTS0_DVST != 0 {
-        let dvsq = ((sts & INTSTS0_DVSQ_MASK) >> INTSTS0_DVSQ_SHIFT);
+        let dvsq = (sts & INTSTS0_DVSQ_MASK) >> INTSTS0_DVSQ_SHIFT;
+        // DVSQ=2 (Address) and DVSQ=3 (Configured): hardware auto-handles
+        // SET_ADDRESS and SET_CONFIGURATION state transitions.  The C reference
+        // driver does nothing for these states (USB_DS_ADDS / USB_DS_CNFG both
+        // hit `break` in `usb_pstd_interrupt_handler`).  Emitting Resume here
+        // disrupts embassy-usb's enumeration state machine.
         let evt = match dvsq {
-            d if d == DVSQ_DEFAULT => BUS_EVT_RESET,
-            d if d >= DVSQ_SUSP0 => BUS_EVT_SUSPEND,
-            _ => BUS_EVT_RESUME,
+            d if d == DVSQ_DEFAULT => Some(BUS_EVT_RESET),
+            d if d >= DVSQ_SUSP0 => Some(BUS_EVT_SUSPEND),
+            _ => None,
         };
-        BUS_EVENTS[p].fetch_or(evt, Ordering::Release);
-        BUS_WAKERS[p].wake();
+        if let Some(evt) = evt {
+            BUS_EVENTS[p].fetch_or(evt, Ordering::Release);
+            BUS_WAKERS[p].wake();
+        }
 
         // On reset, run the proper bus-reset sequence then reconfigure pipes.
         if dvsq == DVSQ_DEFAULT {
@@ -989,9 +1174,26 @@ pub unsafe fn dcd_int_handler(port: u8) {
             let ctsq = (sts & INTSTS0_CTSQ_MASK) as u8;
             CTRL_STAGE[p].store(ctsq, Ordering::Release);
             CTRL_WAKERS[p].wake();
+        } else {
+            // Non-VALID CTRT: a status-stage transition is completing.
+            let ctsq = (sts & INTSTS0_CTSQ_MASK) as u8;
+            if ctsq == 2 {
+                // Control read status stage (CS_RDSS, ctsq=2): host sends its
+                // zero-length OUT to ACK our IN data.  We must set CCPL so the
+                // hardware ACKs that ZLP.  Mirrors C usb_pstd_stand_req4() ->
+                // usb_pstd_ctrl_end(): disable BEMP0/BRDY0 then PID=BUF|CCPL.
+                // embassy-usb does NOT call accept() for control-read transfers.
+                rmw(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001, 0x0000);
+                rmw(core::ptr::addr_of_mut!((*regs).brdyenb), 0x0001, 0x0000);
+                let ctr = rd(pipectr_ptr(regs, 0));
+                wr(
+                    pipectr_ptr(regs, 0),
+                    (ctr & !PIPECTR_PID_MASK) | PIPECTR_PID_BUF | PIPECTR_CCPL,
+                );
+            }
+            // ctsq=4 (WRSS) / ctsq=5 (WRND): accept() / accept_set_address()
+            // are called by the embassy-usb task and set CCPL from there.
         }
-        // Non-VALID CTRT (status/idle stage transitions) require no action:
-        // setup() ignores them; data_in/accept handle their own sequencing.
     }
 
     // ── BRDY (buffer ready — data received on OUT pipe) ──────────────────
@@ -1000,6 +1202,7 @@ pub unsafe fn dcd_int_handler(port: u8) {
         let brdyenb = rd(core::ptr::addr_of!((*regs).brdyenb));
         let active = brdysts & brdyenb;
 
+        #[allow(clippy::needless_range_loop)]
         for n in 0..16usize {
             if active & (1 << n) == 0 {
                 continue;
@@ -1028,6 +1231,7 @@ pub unsafe fn dcd_int_handler(port: u8) {
         let bempenb = rd(core::ptr::addr_of!((*regs).bempenb));
         let active = bempsts & bempenb;
 
+        #[allow(clippy::needless_range_loop)]
         for n in 0..16usize {
             if active & (1 << n) == 0 {
                 continue;
@@ -1035,7 +1239,11 @@ pub unsafe fn dcd_int_handler(port: u8) {
             wr(core::ptr::addr_of_mut!((*regs).bempsts), !((1u16) << n));
 
             if n == 0 {
-                // Pipe 0 BEMP -> control status stage sent; wake control pipe.
+                // Pipe 0 BEMP: all data has been sent for the control-read
+                // data stage.  Disable BEMP0 interrupt now (mirrors C
+                // usb_pstd_bemp_pipe WRITESHRT: hw_usb_clear_bempenb(PIPE0)).
+                // CCPL will be set by the CTRT ctsq=2 ISR handler below.
+                rmw(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001, 0x0000);
                 PIPE_DONE.fetch_or(1, Ordering::Release);
                 PIPE_WAKERS[0].wake();
             } else {
@@ -1094,8 +1302,18 @@ fn ep_addr_to_pipe(port: u8, ep_addr: EndpointAddress) -> Option<usize> {
 /// - Aborts any in-progress transfers (wakes waiters with NRDY error).
 /// - Then reconfigures all pipes so they are ready for the re-enumeration.
 unsafe fn process_bus_reset(port: u8) {
+    log::debug!("usb{}: bus reset — reconfiguring", port);
     let regs = Rusb1Regs::ptr(port);
     let p = port as usize;
+
+    // Log the negotiated bus speed from DVSTCTR0.RHST.
+    let rhst = rd(core::ptr::addr_of!((*regs).dvstctr0)) & DVSTCTR0_RHST;
+    let speed_str = match rhst {
+        r if r == DVSTCTR0_RHST_HS => "HS (480 Mbps)",
+        r if r == DVSTCTR0_RHST_FS => "FS (12 Mbps)",
+        _ => "LS / unknown",
+    };
+    log::info!("usb{}: bus reset — negotiated speed: {} (RHST={:#03x})", port, speed_str, rhst);
 
     // Only keep pipe 0 BRDY/BEMP enabled — pipes 1-15 will be re-enabled when
     // dcd_edpt_open / iso_activate are called by the host stack.
@@ -1115,6 +1333,7 @@ unsafe fn process_bus_reset(port: u8) {
     let mut abort_mask: u16 = 0;
     critical_section::with(|cs| {
         let alloc = &*PORT_ALLOC[p].borrow(cs).get();
+        #[allow(clippy::needless_range_loop)]
         for n in 1..PIPE_COUNT {
             if alloc.pipe_cfg[n].is_some() {
                 let ctr = pipectr_ptr(regs, n);
@@ -1136,6 +1355,7 @@ unsafe fn process_bus_reset(port: u8) {
     // Wake aborted waiters (they will observe PIPE_NRDY and return an error).
     if abort_mask != 0 {
         PIPE_NRDY.fetch_or(abort_mask, Ordering::Release);
+        #[allow(clippy::needless_range_loop)]
         for n in 1..16usize {
             if abort_mask & (1u16 << n) != 0 {
                 PIPE_WAKERS[n].wake();

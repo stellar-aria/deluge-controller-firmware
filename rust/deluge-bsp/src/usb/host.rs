@@ -170,6 +170,7 @@ impl HcdPipeXfer {
 static HCD_XFER: [critical_section::Mutex<core::cell::UnsafeCell<HcdPipeXfer>>; HCD_PIPE_COUNT] = {
     use core::cell::UnsafeCell;
     use critical_section::Mutex;
+    #[allow(clippy::declare_interior_mutable_const)]
     const IDLE: Mutex<UnsafeCell<HcdPipeXfer>> = Mutex::new(UnsafeCell::new(HcdPipeXfer::IDLE));
     [IDLE; HCD_PIPE_COUNT]
 };
@@ -182,6 +183,7 @@ static HCD_PIPE_NRDY: AtomicU16 = AtomicU16::new(0);
 static HCD_PIPE_STALL: AtomicU16 = AtomicU16::new(0);
 
 static HCD_PIPE_WAKERS: [AtomicWaker; HCD_PIPE_COUNT] = {
+    #[allow(clippy::declare_interior_mutable_const)]
     const W: AtomicWaker = AtomicWaker::new();
     [W; HCD_PIPE_COUNT]
 };
@@ -246,6 +248,7 @@ impl HcdAlloc {
 static HCD_ALLOC: [critical_section::Mutex<core::cell::UnsafeCell<HcdAlloc>>; 2] = {
     use core::cell::UnsafeCell;
     use critical_section::Mutex;
+    #[allow(clippy::declare_interior_mutable_const)]
     const INIT: Mutex<UnsafeCell<HcdAlloc>> = Mutex::new(UnsafeCell::new(HcdAlloc::new()));
     [INIT; 2]
 };
@@ -472,7 +475,7 @@ impl Rusb1HostDriver {
             );
 
             critical_section::with(|cs| {
-                unsafe { &mut *HCD_ALLOC[p].borrow(cs).get() }.need_reset = false;
+                (&mut *HCD_ALLOC[p].borrow(cs).get()).need_reset = false;
             });
         }
     }
@@ -549,7 +552,7 @@ impl Rusb1HostDriver {
             wr(devadd_ptr(regs, dev_addr), devadd_val);
 
             critical_section::with(|cs| {
-                unsafe { &mut *HCD_ALLOC[p].borrow(cs).get() }.ctl_mps[dev_addr as usize] = mps;
+                (&mut *HCD_ALLOC[p].borrow(cs).get()).ctl_mps[dev_addr as usize] = mps;
             });
         }
     }
@@ -611,7 +614,7 @@ impl Rusb1HostDriver {
             let p = self.port as usize;
 
             let ctl_mps = critical_section::with(|cs| {
-                unsafe { &*HCD_ALLOC[p].borrow(cs).get() }.ctl_mps[dev_addr as usize]
+                (&*HCD_ALLOC[p].borrow(cs).get()).ctl_mps[dev_addr as usize]
             });
 
             // Ensure the DCP is idle.
@@ -726,7 +729,7 @@ impl Rusb1HostDriver {
             let p = self.port as usize;
 
             let ctl_mps = critical_section::with(|cs| {
-                unsafe { &*HCD_ALLOC[p].borrow(cs).get() }.ctl_mps[dev_addr as usize]
+                (&*HCD_ALLOC[p].borrow(cs).get()).ctl_mps[dev_addr as usize]
             }) as usize;
 
             // Select CFIFO for writing (ISEL=1: host writes to device).

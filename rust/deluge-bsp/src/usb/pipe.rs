@@ -24,7 +24,7 @@ use super::regs::{
     pipectr_ptr, rd, wr, Rusb1Regs,
     PIPEBUF_BUFSIZE_SHIFT, PIPECFG_DBLB, PIPECFG_DIR, PIPECFG_EPNUM_MASK, PIPECFG_SHTNAK,
     PIPECFG_TYPE_BULK, PIPECFG_TYPE_INTR, PIPECFG_TYPE_ISO, PIPECTR_ACLRM, PIPECTR_PID_BUF,
-    PIPECTR_PID_NAK, PIPECTR_PID_STALL, PIPECTR_SQCLR, PIPEMAXP_MXPS_MASK,
+    PIPECTR_PID_NAK, PIPECTR_PID_STALL, PIPECTR_SQCLR, PIPEMAXP_MXPS_MASK, PIPEPERI_IFIS,
     PKT_BUF_BLOCKS,
 };
 
@@ -43,8 +43,7 @@ pub const PIPE_COUNT: usize = 16;
 ///
 /// These are `'static` because ISR context has no lifetime.
 pub static PIPE_WAKERS: [AtomicWaker; PIPE_COUNT] = {
-    // AtomicWaker has no `const fn new()` in all versions of embassy-sync, so
-    // we use the array-repeat trick with a const expression.
+    #[allow(clippy::declare_interior_mutable_const)]
     const W: AtomicWaker = AtomicWaker::new();
     [W; PIPE_COUNT]
 };
@@ -76,6 +75,11 @@ pub struct PipeXferState {
     pub length: u16,
     /// Bytes remaining (counts down as packets are transferred).
     pub remaining: u16,
+    /// Bytes actually transferred so far.  Used to report the final byte count
+    /// to the task, because for ISO OUT the `done` path forces `remaining = 0`
+    /// early (to allow the ISO guard to fire on re-entry) before `remaining`
+    /// naturally reaches zero.
+    pub transferred: u16,
     /// Max packet size (cached from PIPEMAXP to avoid register reads in ISR).
     pub mps: u16,
     /// Transfer type — needed by the BRDY ISR to distinguish ISO vs bulk behaviour.
@@ -93,6 +97,7 @@ impl PipeXferState {
         buf: core::ptr::NonNull::dangling(),
         length: 0,
         remaining: 0,
+        transferred: 0,
         mps: 0,
         xfer_type: XferType::Bulk,
     };
@@ -100,10 +105,9 @@ impl PipeXferState {
 
 /// Per-port array of transfer states.  Index 0 = DCP (pipe 0).
 pub static PIPE_XFER: [critical_section::Mutex<core::cell::UnsafeCell<PipeXferState>>; PIPE_COUNT] = {
-    // Can't initialize with a const fn that capture mutable references easily,
-    // so we use the same trick as PIPE_WAKERS.
     use core::cell::UnsafeCell;
     use critical_section::Mutex;
+    #[allow(clippy::declare_interior_mutable_const)]
     const IDLE: Mutex<UnsafeCell<PipeXferState>> = Mutex::new(UnsafeCell::new(PipeXferState::IDLE));
     [IDLE; PIPE_COUNT]
 };
@@ -199,6 +203,12 @@ impl BufAllocator {
     }
 }
 
+impl Default for BufAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Pipe configuration (hardware write)
 // ---------------------------------------------------------------------------
@@ -254,6 +264,17 @@ pub unsafe fn pipe_configure(regs: *mut Rusb1Regs, n: usize, cfg: &PipeConfig) {
         core::ptr::addr_of_mut!((*regs).pipemaxp),
         cfg.mps & PIPEMAXP_MXPS_MASK,
     );
+
+    // PIPEPERI: set IFIS for ISO IN pipes (function controller mode).
+    // IFIS=1 causes the hardware to flush the TX buffer if no IN token arrives
+    // within the interval frame, preventing stale audio data from accumulating
+    // (TRM §28.4.9(5)).
+    let pipeperi = if cfg.xfer_type == XferType::Isochronous && cfg.is_in {
+        PIPEPERI_IFIS
+    } else {
+        0
+    };
+    wr(core::ptr::addr_of_mut!((*regs).pipeperi), pipeperi);
 
     // Deselect pipe.
     wr(core::ptr::addr_of_mut!((*regs).pipesel), 0);
@@ -322,15 +343,11 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
     let is_iso = state.xfer_type == XferType::Isochronous;
 
     if state.remaining == 0 {
-        if is_iso {
-            // ISO double-buffer: release the current bank so the SIE can reuse
-            // it, preventing a permanent FIFO lock-up when no application
-            // buffer is active (matches C `pipe_xfer_out` ISO null-buf path).
-            let fifo = fifo_for_pipe(regs, n);
-            fifo_select_pipe(&fifo, n, false);
-            fifo_bclr(&fifo);
-        }
-        // For bulk/interrupt with no active transfer, stay at NAK.
+        // No active transfer buffer.  For ISO: do NOT BCLR — leave the packet
+        // in the FIFO so the task can read it without missing it.  The task's
+        // re-arm path (in driver.rs EndpointOut::read) will drain it directly
+        // via fifo_is_ready check, or the next BRDY will deliver it once the
+        // task sets up the transfer state.
         return false;
     }
 
@@ -365,11 +382,11 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
     let mps = state.mps as usize;
     let rem = state.remaining as usize;
     let len = rem.min(mps).min(vld);
-
     if len > 0 {
         hw_to_sw_fifo(&fifo, state.buf.as_ptr(), len);
         state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
         state.remaining = state.remaining.saturating_sub(len as u16);
+        state.transferred += len as u16;
     }
 
     // Always BCLR after reading (matches C reference — not just on short packet).
@@ -378,6 +395,10 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
     let done = len < mps || state.remaining == 0;
     if done {
         state.buf = core::ptr::NonNull::dangling();
+        // Reset remaining to 0 so the ISO guard at the top of this function
+        // fires correctly if BRDY re-enters before the task calls read() again.
+        // (For ISO, done can be true via len<mps while remaining is still non-zero.)
+        state.remaining = 0;
         return true;
     }
 

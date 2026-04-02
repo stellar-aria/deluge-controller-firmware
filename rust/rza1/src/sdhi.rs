@@ -137,6 +137,7 @@ pub const INFO2_ERR_ALL: u16 = 0x807F;
 // ---------------------------------------------------------------------------
 // CC_EXT_MODE bits
 // ---------------------------------------------------------------------------
+#[allow(dead_code)]
 const CC_EXT_MODE_DMASDRW: u16 = 1 << 1; // Enable SDHI DMA read/write
 
 // ---------------------------------------------------------------------------
@@ -385,6 +386,7 @@ pub unsafe fn interrupt_handler(port: u8) {
 // ---------------------------------------------------------------------------
 
 /// Take (atomically consume) accumulated INFO1/INFO2 bits.
+#[allow(dead_code)]
 fn take_info(port: u8) -> (u16, u16) {
     let st = &STATE[port as usize];
     let i1 = st.info1.swap(0, Ordering::Acquire);
@@ -393,6 +395,7 @@ fn take_info(port: u8) -> (u16, u16) {
 }
 
 /// Peek at INFO1/INFO2 without consuming.
+#[allow(dead_code)]
 fn peek_info(port: u8) -> (u16, u16) {
     let st = &STATE[port as usize];
     let i1 = st.info1.load(Ordering::Acquire);

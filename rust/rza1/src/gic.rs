@@ -80,6 +80,7 @@ impl HandlerCell {
 /// [`gic_dispatch`] is only called from the IRQ handler with IRQ masked,
 /// so no data race is possible on single-core.
 static HANDLERS: [HandlerCell; INT_ID_TOTAL] = {
+    #[allow(clippy::declare_interior_mutable_const)]
     const NONE: HandlerCell = HandlerCell::new();
     [NONE; INT_ID_TOTAL]
 };

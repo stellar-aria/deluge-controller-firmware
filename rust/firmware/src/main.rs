@@ -41,7 +41,7 @@ use log::{debug, error, info};
 
 use embassy_executor::{Executor, Spawner};
 use embassy_time::Timer;
-use embassy_usb::driver::{Endpoint as _, EndpointOut as _};
+use embassy_usb::driver::{Endpoint as _, EndpointIn as _, EndpointOut as _};
 
 use deluge_bsp::cv_gate;
 use deluge_bsp::oled;
@@ -49,6 +49,7 @@ use deluge_bsp::pic;
 use deluge_bsp::sd;
 use deluge_bsp::uart as bsp_uart;
 use deluge_bsp::usb::{dcd_int_handler, Rusb1Driver};
+use deluge_bsp::usb::classes::audio::{USB_BITS_PER_SAMPLE, USB_CAPTURE_BITS_PER_SAMPLE};
 use rza1::{allocator, cache, gic, mmu, ostm, sdram, ssi, stb};
 
 extern "C" {
@@ -97,16 +98,16 @@ fn pad_toggle(id: u8) -> bool {
 /// Set every pad to `val` (true = all lit, false = all dark).
 fn pad_set_all(val: bool) {
     let fill = if val { !0u32 } else { 0u32 };
-    for i in 0..4 {
-        PAD_BITS[i].store(fill, Ordering::Relaxed);
+    for slot in PAD_BITS[..4].iter() {
+        slot.store(fill, Ordering::Relaxed);
     }
     PAD_BITS[4].store(fill & 0x0000_FFFF, Ordering::Relaxed); // 16 valid bits
 }
 
 /// Flip every pad's lit state.
 fn pad_invert_all() {
-    for i in 0..4 {
-        PAD_BITS[i].fetch_xor(!0u32, Ordering::Relaxed);
+    for slot in PAD_BITS[..4].iter() {
+        slot.fetch_xor(!0u32, Ordering::Relaxed);
     }
     PAD_BITS[4].fetch_xor(0x0000_FFFF, Ordering::Relaxed);
 }
@@ -231,7 +232,7 @@ async fn blink_task() {
 static USB_STREAMING: AtomicBool = AtomicBool::new(false);
 
 // Static buffers required by `embassy_usb::Builder`.
-static mut USB_CONFIG_DESC: [u8; 256] = [0; 256];
+static mut USB_CONFIG_DESC: [u8; 512] = [0; 512];
 static mut USB_BOS_DESC: [u8; 64] = [0; 64];
 static mut USB_MSOS_DESC: [u8; 0] = [];
 static mut USB_CONTROL_BUF: [u8; 64] = [0; 64];
@@ -319,6 +320,11 @@ async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
     let mut pkt: [u8; 288] = [0; 288];
     let mut lfsr: u32 = 0xACE1;
 
+    // Diagnostics: track min/max packet size per second (8000 µSOFs).
+    let mut diag_count: u32 = 0;
+    let mut diag_min: usize = 288;
+    let mut diag_max: usize = 0;
+
     loop {
         // Try to read one isochronous packet (non-blocking in the sense that
         // if the host sends nothing we get EndpointError::Disabled or a 0-byte
@@ -355,8 +361,24 @@ async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
             Ok(bytes_read) => {
                 last_rx = embassy_time::Instant::now();
 
+                // Packet size diagnostics — log once per ~8000 packets (≈1 s).
+                if bytes_read > 0 {
+                    if bytes_read < diag_min { diag_min = bytes_read; }
+                    if bytes_read > diag_max { diag_max = bytes_read; }
+                    diag_count += 1;
+                    if diag_count >= 8_000 {
+                        info!("uac2_task: pkt size min={} max={} (last 8k pkts)", diag_min, diag_max);
+                        diag_count = 0;
+                        diag_min = 288;
+                        diag_max = 0;
+                    }
+                }
+
                 let dma_ptr = ssi::tx_current_ptr();
-                let dma_off = unsafe { dma_ptr.offset_from(buf_start) } as usize;
+                // CRSA can briefly read one-past-the-end during the DMA link-descriptor
+                // reload at the buffer wrap boundary.  Wrap into [0, buf_len) so the
+                // ahead calculation below doesn't see a spuriously small value.
+                let dma_off = (unsafe { dma_ptr.offset_from(buf_start) } as usize) % buf_len;
 
                 if !streaming {
                     // First data after silence — re-anchor the write pointer
@@ -376,30 +398,37 @@ async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
                     info!("uac2_task: streaming started");
                 }
 
-                // ── Underrun guard ──────────────────────────────────────────
+        // ── Underrun guard ──────────────────────────────────────────────────
                 // If the DMA has caught up to the write pointer, re-anchor.
                 {
                     let wr_off = unsafe { write_ptr.offset_from(buf_start) } as usize;
                     let ahead = (wr_off + buf_len - dma_off) % buf_len;
                     if ahead < WRITE_AHEAD / 2 {
+                        info!("uac2_task: underrun (ahead={} < {}), re-anchoring", ahead, WRITE_AHEAD / 2);
                         let mut off = (dma_off + WRITE_AHEAD) % buf_len;
                         off &= !1;
                         write_ptr = unsafe { buf_start.add(off) };
                     }
                 }
 
-                // ── Convert 24-bit LE USB samples → MSB-aligned 32-bit SSI ─
-                // 3 bytes per mono sample (little-endian sign-extended).
-                // SSI expects audio in bits [31:8]; we shift left by 8.
-                // Dither in bits [12:8] prevents codec auto-mute during silence.
-                let num_samples = bytes_read / 3;
+                // ── Convert USB samples → MSB-aligned 32-bit SSI ───────────
+                // Supports 16-bit (2 B/sample) and 24-bit (3 B/sample) LE PCM.
+                // SSI expects audio in bits [31:8]; 24-bit shifts left by 8,
+                // 16-bit shifts left by 16.  Dither prevents codec auto-mute.
+                let bytes_per_sample = (USB_BITS_PER_SAMPLE.load(Ordering::Relaxed) / 8) as usize;
+                let num_samples = bytes_read / bytes_per_sample;
                 let src = &pkt[..bytes_read];
                 for i in 0..num_samples {
-                    let b0 = src[i * 3] as u32;
-                    let b1 = src[i * 3 + 1] as u32;
-                    let b2 = src[i * 3 + 2] as u32;
-                    // Re-assemble as MSB-aligned 32-bit (sign extends from bit 31).
-                    let sample = (b0 << 8 | b1 << 16 | b2 << 24) as i32 + dither_sample(&mut lfsr);
+                    let sample = if bytes_per_sample == 3 {
+                        let b0 = src[i * 3] as u32;
+                        let b1 = src[i * 3 + 1] as u32;
+                        let b2 = src[i * 3 + 2] as u32;
+                        (b0 << 8 | b1 << 16 | b2 << 24) as i32
+                    } else {
+                        // 16-bit signed LE → MSB-align in 32 bits
+                        let v = (src[i * 2] as u16 | (src[i * 2 + 1] as u16) << 8) as i16;
+                        (v as i32) << 16
+                    } + dither_sample(&mut lfsr);
                     unsafe {
                         write_ptr.write_volatile(sample);
                         write_ptr = write_ptr.add(1);
@@ -408,6 +437,86 @@ async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// UAC2 microphone capture task — reads from SSI RX and sends over ISO IN.
+///
+/// The ISO IN packet cadence provides **implicit feedback** for the speaker
+/// stream: the host observes the IN packet rate and adapts how much data it
+/// sends per SOF, correcting long-term clock drift without a separate feedback
+/// endpoint.
+#[embassy_executor::task]
+async fn uac2_mic_task(mut ep_in: deluge_bsp::usb::Rusb1EndpointIn) {
+    info!("uac2_mic_task: waiting for capture enable");
+    ep_in.wait_enabled().await;
+    info!("uac2_mic_task: capture enabled");
+
+    let rx_start = ssi::rx_buf_start();
+    let rx_len = ssi::RX_BUF_LEN;
+    let mut read_ptr = ssi::rx_current_ptr();
+
+    let mut pkt = [0u8; 288];
+
+    loop {
+        // Compute how many stereo frames the SSI RX DMA has captured since we
+        // last sent.  This ties the implicit feedback signal directly to the
+        // hardware AUDIO_X1 crystal clock rather than an assumed call rate,
+        // so the host adapts its OUT rate to exactly match the SSI regardless
+        // of async executor scheduling jitter.
+        //
+        // Over any long interval: total IN frames sent = total SSI frames
+        // captured = 44 100 Hz.  Host converges to sending 44 100 frames/sec
+        // OUT, eliminating the systematic rate mismatch that caused underruns.
+        let bytes_per_sample = (USB_CAPTURE_BITS_PER_SAMPLE.load(Ordering::Relaxed) / 8) as usize;
+        let max_frames = pkt.len() / (2 * bytes_per_sample);
+        let rx_hw_off = unsafe {
+            (ssi::rx_current_ptr().offset_from(rx_start) as usize) % rx_len
+        };
+        let read_off = unsafe { read_ptr.offset_from(rx_start) as usize };
+        let captured_mono = (rx_hw_off + rx_len - read_off) % rx_len;
+        // Integer divide by 2 for stereo frames; capped so we never exceed the
+        // packet buffer.  The fractional remainder carries naturally into the
+        // next call via the unchanged read_ptr, giving correct Bresenham-style
+        // alternating 5/6 frame packets averaging exactly 44 100 Hz.
+        let frames = (captured_mono / 2).min(max_frames);
+
+        // Read `frames` stereo pairs from SSI RX; convert MSB-aligned i32 → USB PCM.
+        // Format matches the active capture alt setting (16-bit or 24-bit LE).
+        let nbytes = frames * 2 * bytes_per_sample;
+        for i in 0..frames * 2 {
+            let sample = unsafe { read_ptr.read_volatile() };
+            // SSI audio is in bits [31:8]; shift right to get the significant bits.
+            let off = i * bytes_per_sample;
+            if bytes_per_sample == 3 {
+                let val = (sample >> 8) as u32;
+                pkt[off]     = (val & 0xFF) as u8;
+                pkt[off + 1] = ((val >> 8) & 0xFF) as u8;
+                pkt[off + 2] = ((val >> 16) & 0xFF) as u8;
+            } else {
+                // 16-bit: keep the top 16 bits of the MSB-aligned sample
+                let val = (sample >> 16) as u16;
+                pkt[off]     = (val & 0xFF) as u8;
+                pkt[off + 1] = ((val >> 8) & 0xFF) as u8;
+            }
+            unsafe {
+                read_ptr = read_ptr.add(1);
+                if read_ptr >= rx_start.add(rx_len) {
+                    read_ptr = rx_start;
+                }
+            }
+        }
+
+        match ep_in.write(&pkt[..nbytes]).await {
+            Ok(()) => {}
+            Err(_) => {
+                info!("uac2_mic_task: capture stopped");
+                ep_in.wait_enabled().await;
+                info!("uac2_mic_task: capture re-enabled");
+                // Re-anchor behind current DMA write position.
+                read_ptr = ssi::rx_current_ptr();
             }
         }
     }
@@ -918,7 +1027,7 @@ pub extern "C" fn main() -> ! {
 
     // Build the UsbDevice using `'static` buffers so the device can be moved
     // into `usb_task` which requires `'static` arguments.
-    let (usb_device, ep_out) = unsafe {
+    let (usb_device, ep_out, ep_in) = unsafe {
         let driver = Rusb1Driver::new(0);
         let mut config = embassy_usb::Config::new(0x16D0, 0x0EDA);
         config.manufacturer = Some("Synthstrom Audible");
@@ -935,15 +1044,15 @@ pub extern "C" fn main() -> ! {
             &mut *core::ptr::addr_of_mut!(USB_CONTROL_BUF),
         );
 
-        // Allocate the UAC2 speaker interface (288 B covers stereo 24-bit @ 48 kHz).
-        let (audio_instance, ep_out) =
+        // Allocate the UAC2 speaker + mic interfaces (288 B covers stereo 24-bit @ 48 kHz).
+        let (audio_instance, ep_out, ep_in) =
             deluge_bsp::usb::classes::audio::AudioClass::new(&mut builder, 288);
         // Store in a `'static` slot so the `&'static mut` reference satisfies
         // `builder.handler`'s `'d` lifetime (= `'static` here).
-        let audio_ref = AUDIO_CLASS_BUF.write(audio_instance);
+        let audio_ref = (&mut *core::ptr::addr_of_mut!(AUDIO_CLASS_BUF)).write(audio_instance);
         builder.handler(audio_ref);
 
-        (builder.build(), ep_out)
+        (builder.build(), ep_out, ep_in)
     };
     info!("USB: UsbDevice built");
 
@@ -963,6 +1072,7 @@ pub extern "C" fn main() -> ! {
         spawner.spawn(blink_task().unwrap());
         spawner.spawn(usb_task(usb_device).unwrap());
         spawner.spawn(uac2_task(ep_out).unwrap());
+        spawner.spawn(uac2_mic_task(ep_in).unwrap());
         spawner.spawn(pic_task().unwrap());
         spawner.spawn(encoder_task().unwrap());
         spawner.spawn(jack_detect_task().unwrap());

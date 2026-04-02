@@ -33,11 +33,12 @@ const CODEC_POWER_DELAY_MS: u32 = 5;
 /// Must be called exactly once from the single-threaded boot context, before
 /// interrupts are enabled and before any audio task starts.
 pub unsafe fn init() {
-    log::debug!("audio: pin-mux SSI0 (P7.11, P6.8-11)"); // ── Pin-mux: SSI peripheral signals ──────────────────────────────────────
-                                                         //
-                                                         // set_pin_mux sets PMC=1 (peripheral mode), the three mux-select bits
-                                                         // (PFC/PFCE/PFCAE), and PIPC=1 so the peripheral controls the buffer
-                                                         // direction automatically.
+    log::debug!("audio: pin-mux SSI0 (P7.11, P6.8-11)");
+    // ── Pin-mux: SSI peripheral signals ──────────────────────────────────────
+    //
+    // set_pin_mux sets PMC=1 (peripheral mode), the three mux-select bits
+    // (PFC/PFCE/PFCAE), and PIPC=1 so the peripheral controls the buffer
+    // direction automatically.
     gpio::set_pin_mux(7, 11, 6); // AUDIO_XOUT — master clock to codec
     gpio::set_pin_mux(6, 8, 3); // SSITXD0    — I²S TX data
     gpio::set_pin_mux(6, 9, 3); // SSISCK0    — I²S BCLK

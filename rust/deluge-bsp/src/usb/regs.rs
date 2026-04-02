@@ -216,6 +216,7 @@ pub const PIPEMAXP_DEVSEL_SHIFT: u32 = 12;
 //
 // Conversion from USB bInterval (FS device, 1-255 frames) to IITV:
 //   IITV = floor(log2(bInterval)).min(7)   (so bInterval=1 → 0, =2 → 1, =4 → 2, ...)
+pub const PIPEPERI_IFIS: u16 = 1 << 12; // isochronous IN buffer flush enable
 pub const PIPEPERI_IITV_MASK: u16 = 0x0007;
 
 // ---------------------------------------------------------------------------
