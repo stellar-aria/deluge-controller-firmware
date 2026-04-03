@@ -252,6 +252,7 @@ pub extern "C" fn main() -> ! {
         spawner.spawn(tasks::pic::pic_task().unwrap());
         spawner.spawn(tasks::encoder::encoder_task().unwrap());
         spawner.spawn(tasks::jack_detect::jack_detect_task().unwrap());
+        spawner.spawn(tasks::analysis::analysis_task().unwrap());
         spawner.spawn(tasks::rgb::rgb_task().unwrap());
         spawner.spawn(tasks::oled::oled_task().unwrap());
         spawner.spawn(tasks::sd::sd_task().unwrap());

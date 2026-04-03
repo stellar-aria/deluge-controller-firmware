@@ -5,6 +5,7 @@ use deluge_bsp::oled;
 use deluge_bsp::pic;
 use crate::pads::pad_get;
 use crate::pads::pad_id_from_xy;
+use crate::tasks::analysis::{AUDIO_STREAMING, WAVEFORM};
 
 // ---------------------------------------------------------------------------
 // OLED layout constants
@@ -50,6 +51,35 @@ pub(crate) fn set_cdc_display(data: &[u8]) {
 pub(crate) fn clear_cdc_display() {
     CDC_FRAME_VALID.store(false, Ordering::Release);
     oled::notify_redraw();
+}
+
+/// Render the latest waveform snapshot from `analysis_task` as a dot-scope.
+///
+/// Each of the 128 OLED columns gets one pixel whose row is proportional to
+/// the sample amplitude.  Positive amplitude → above centre; negative → below.
+/// A faint centre line is also drawn.
+fn render_waveform(fb: &mut oled::FrameBuffer) {
+    fb.fill(0x00);
+
+    // TOPMOST = 5 (first on-screen row); usable rows: [5, 47] = 43 rows.
+    const CENTER: i32 = TOPMOST as i32 + (oled::HEIGHT as i32 - TOPMOST as i32) / 2; // ≈ 26
+    const HALF_SCALE: f32 = 20.0; // ± pixels for a ±1 signal
+
+    // Draw a faint centre line.
+    for x in 0..oled::WIDTH {
+        fb.set_pixel(x, CENTER as usize, true);
+    }
+
+    // SAFETY: written only by analysis_task; no concurrent writer in a
+    //         single-threaded cooperative executor.
+    let waveform = unsafe { &*core::ptr::addr_of!(WAVEFORM) };
+
+    for x in 0..oled::WIDTH {
+        // Positive amplitude → move upward (smaller row index).
+        let y = (CENTER - (waveform[x] * HALF_SCALE) as i32)
+            .clamp(TOPMOST as i32, oled::HEIGHT as i32 - 1) as usize;
+        fb.set_pixel(x, y, true);
+    }
 }
 
 /// Render the current `PAD_BITS` state into `fb`, clearing first.
@@ -108,6 +138,8 @@ pub(crate) async fn oled_task() {
             // runs from the CDC task; since the executor is single-threaded,
             // there is no concurrent access here.
             unsafe { fb.pages.as_flattened_mut().copy_from_slice(&*core::ptr::addr_of!(CDC_FRAME)); }
+        } else if AUDIO_STREAMING.load(Ordering::Acquire) {
+            render_waveform(&mut fb);
         } else {
             render_pads(&mut fb);
         }

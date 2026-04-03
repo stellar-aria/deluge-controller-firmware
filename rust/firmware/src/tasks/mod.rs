@@ -1,4 +1,5 @@
 pub(crate) mod blink;
+pub(crate) mod analysis;
 pub(crate) mod audio;
 pub(crate) mod usb;
 pub(crate) mod encoder;
