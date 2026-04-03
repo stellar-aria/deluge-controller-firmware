@@ -50,8 +50,8 @@ fn spectrum_colours() -> [[[u8; 3]; 16]; 9] {
 
         // Average magnitude across this column's bin group.
         let mut avg = 0.0f32;
-        for b in bin_lo..bin_hi {
-            avg += spectrum[b];
+        for &val in &spectrum[bin_lo..bin_hi] {
+            avg += val;
         }
         avg /= (bin_hi - bin_lo) as f32;
 

@@ -22,10 +22,10 @@ pub fn apply_hann_window<const N: usize>(buf: &mut [Complex; N]) {
 /// Write `|bin|` for the first `N/2 + 1` bins from an `FftBuf<N>`.
 pub fn magnitude_spectrum_soa<const N: usize>(buf: &FftBuf<N>, out: &mut [f32]) {
     let bins = (N / 2 + 1).min(out.len());
-    for i in 0..bins {
+    for (i, out_val) in out.iter_mut().enumerate().take(bins) {
         let re = buf.re[i];
         let im = buf.im[i];
-        out[i] = crate::complex::sqrt_f32_pub(re * re + im * im);
+        *out_val = crate::complex::sqrt_f32_pub(re * re + im * im);
     }
 }
 
@@ -42,8 +42,8 @@ pub fn apply_hann_window_soa<const N: usize>(buf: &mut FftBuf<N>) {
 ///
 /// Use this before passing real samples to `RealFft::process`.
 pub fn apply_hann_window_real<const N: usize>(buf: &mut [f32; N]) {
-    for i in 0..N {
-        buf[i] *= hann_coeff(i, N);
+    for (i, val) in buf.iter_mut().enumerate() {
+        *val *= hann_coeff(i, N);
     }
 }
 

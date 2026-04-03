@@ -6,6 +6,7 @@ use crate::trig::{TWO_PI, cos_f32, sin_f32};
 // ---------------------------------------------------------------------------
 
 /// Build the full natural-order twiddle table.  Entry `k` = `W_N^k`.
+#[allow(dead_code)]
 const fn make_twiddles_aos<const N: usize>() -> [Complex; N] {
     let mut table = [Complex::ZERO; N];
     let mut k = 0usize;
@@ -21,8 +22,10 @@ const fn make_twiddles_aos<const N: usize>() -> [Complex; N] {
 }
 
 /// Natural-order `W_N^k` table.  Only used by `test_utils::dft`.
+#[allow(dead_code)]
 pub(crate) struct TwiddleTable<const N: usize>;
 impl<const N: usize> TwiddleTable<N> {
+    #[allow(dead_code)]
     pub(crate) const TABLE: [Complex; N] = make_twiddles_aos::<N>();
 }
 

@@ -335,18 +335,15 @@ mod tests {
         pic::init().await;
 
         // Flush any leftover bytes from init (firmware version, button states, etc.)
-        loop {
-            match with_timeout(
-                Duration::from_millis(50),
-                rza1::uart::read_byte(pic::UART_CH),
-            )
-            .await
-            {
-                Ok(_) => {}      // discard
-                Err(_) => break, // 50 ms silence → drain complete
-            }
+        while with_timeout(
+            Duration::from_millis(50),
+            rza1::uart::read_byte(pic::UART_CH),
+        )
+        .await
+        .is_ok()
+        {
+            // discard — 50 ms silence → drain complete
         }
-
         // Send the OLED select sequence.
         rza1::uart::write_bytes(pic::UART_CH, &[250u8]).await; // DC_LOW
         rza1::uart::write_bytes(pic::UART_CH, &[247u8]).await; // ENABLE_OLED
@@ -355,22 +352,17 @@ mod tests {
         // Collect all bytes that arrive within 20 ms.
         let mut received: [u8; 16] = [0u8; 16];
         let mut count = 0usize;
-        loop {
-            match with_timeout(
-                Duration::from_millis(20),
-                rza1::uart::read_byte(pic::UART_CH),
-            )
-            .await
-            {
-                Ok(b) => {
-                    if count < received.len() {
-                        received[count] = b;
-                        count += 1;
-                    }
-                }
-                Err(_) => break, // 20 ms silence → done
+        while let Ok(b) = with_timeout(
+            Duration::from_millis(20),
+            rza1::uart::read_byte(pic::UART_CH),
+        )
+        .await
+        {
+            if count < received.len() {
+                received[count] = b;
+                count += 1;
             }
-        }
+        } // 20 ms silence → done
 
         // Send DESELECT_OLED to clean up PIC state.
         rza1::uart::write_bytes(pic::UART_CH, &[249u8]).await;

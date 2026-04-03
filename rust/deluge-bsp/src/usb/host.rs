@@ -1117,7 +1117,7 @@ pub unsafe fn hcd_int_handler(port: u8) {
                 DVSTCTR0_UACT,
             );
             critical_section::with(|cs| {
-                unsafe { &mut *HCD_ALLOC[port as usize].borrow(cs).get() }.need_reset = true;
+                (&mut *HCD_ALLOC[port as usize].borrow(cs).get()).need_reset = true;
             });
             // Switch to detecting detach.
             let enb = rd(core::ptr::addr_of!(e.intenb1));

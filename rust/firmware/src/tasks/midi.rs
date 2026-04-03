@@ -100,7 +100,7 @@ impl MidiParser {
 
         // ---- SysEx body accumulation ----------------------------------------
         if self.in_sysex {
-            if (byte & 0x80 == 0) {
+            if byte & 0x80 == 0 {
                 // SysEx data byte.
                 self.sysex_buf[self.sysex_pos] = byte;
                 self.sysex_pos += 1;

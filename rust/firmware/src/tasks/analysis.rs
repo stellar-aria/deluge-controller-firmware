@@ -95,12 +95,12 @@ pub(crate) async fn analysis_task() {
         // Stack-allocate the working buffers (~2 kB, down from ~4 kB).
         let mut wave_raw = [0.0f32; FFT_N];
 
-        for i in 0..FFT_N {
+        for (i, sample) in wave_raw.iter_mut().enumerate() {
             let idx = (start + i * 2) % buf_len;
             // SAFETY: idx is always within [0, buf_len).
             let raw: i32 = unsafe { base.add(idx).read_volatile() };
             // MSB-aligned 32-bit → f32 in [-1, 1].
-            wave_raw[i] = raw as f32 * (1.0 / 2_147_483_648.0_f32);
+            *sample = raw as f32 * (1.0 / 2_147_483_648.0_f32);
         }
 
         // ── Waveform snapshot (downsample FFT_N → WAVE_PTS) ─────────────────

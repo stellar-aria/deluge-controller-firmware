@@ -315,7 +315,7 @@ pub unsafe fn pipe_xfer_in_start(regs: *mut Rusb1Regs, n: usize, mps: u16) -> bo
                 fifo_bval(&fifo); // Short packet — commit the buffer.
             }
 
-            state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
+            state.buf = core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len));
             state.remaining = state.remaining.saturating_sub(len as u16);
             state.remaining == 0
         })
@@ -388,7 +388,7 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
         let len = rem.min(mps).min(vld);
         if len > 0 {
             hw_to_sw_fifo(&fifo, state.buf.as_ptr(), len);
-            state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
+            state.buf = core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len));
             state.remaining = state.remaining.saturating_sub(len as u16);
             state.transferred += len as u16;
         }
@@ -455,7 +455,7 @@ pub unsafe fn pipe_xfer_in_bemp(regs: *mut Rusb1Regs, n: usize) -> bool {
             fifo_bval(&fifo);
         }
 
-        state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
+        state.buf = core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len));
         state.remaining = state.remaining.saturating_sub(len as u16);
         false
     }

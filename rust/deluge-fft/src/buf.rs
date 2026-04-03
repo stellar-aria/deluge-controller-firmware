@@ -41,8 +41,8 @@ impl<const N: usize> FftBuf<N> {
     #[inline]
     pub fn to_complex(&self) -> [Complex; N] {
         let mut out = [Complex::ZERO; N];
-        for i in 0..N {
-            out[i] = Complex {
+        for (i, out_elem) in out.iter_mut().enumerate() {
+            *out_elem = Complex {
                 re: self.re[i],
                 im: self.im[i],
             };
@@ -54,9 +54,9 @@ impl<const N: usize> FftBuf<N> {
     #[inline]
     pub fn from_complex(src: &[Complex; N]) -> Self {
         let mut buf = Self::ZERO;
-        for i in 0..N {
-            buf.re[i] = src[i].re;
-            buf.im[i] = src[i].im;
+        for (i, s) in src.iter().enumerate() {
+            buf.re[i] = s.re;
+            buf.im[i] = s.im;
         }
         buf
     }

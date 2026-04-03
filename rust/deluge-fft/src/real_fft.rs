@@ -110,7 +110,7 @@ where
         //    covering j = 0..N/2-1 — perfect.
         let tw_off = hn - 1;
 
-        for k in 1..hn {
+        for (k, out_k) in out.iter_mut().enumerate().take(hn).skip(1) {
             let nk = hn - k; // index of the conjugate partner in Z
 
             let zkr = zbuf.re[k];
@@ -142,7 +142,7 @@ where
             let td_r = wr * di + wi * dr;
             let td_i = wi * di - wr * dr;
 
-            out[k] = crate::complex::Complex {
+            *out_k = crate::complex::Complex {
                 re: ar + td_r,
                 im: ai + td_i,
             };

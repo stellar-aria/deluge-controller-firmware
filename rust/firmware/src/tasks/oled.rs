@@ -76,9 +76,9 @@ fn render_waveform(fb: &mut oled::FrameBuffer) {
     //         single-threaded cooperative executor.
     let waveform = unsafe { &*core::ptr::addr_of!(WAVEFORM) };
 
-    for x in 0..oled::WIDTH {
+    for (x, &sample) in waveform.iter().enumerate().take(oled::WIDTH) {
         // Positive amplitude → move upward (smaller row index).
-        let y = (CENTER - (waveform[x] * HALF_SCALE) as i32)
+        let y = (CENTER - (sample * HALF_SCALE) as i32)
             .clamp(TOPMOST as i32, oled::HEIGHT as i32 - 1) as usize;
         fb.set_pixel(x, y, true);
     }
