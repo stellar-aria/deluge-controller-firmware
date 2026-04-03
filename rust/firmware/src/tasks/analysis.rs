@@ -28,8 +28,11 @@ pub(crate) static ANALYSIS_EPOCH: AtomicU32 = AtomicU32::new(0);
 /// Safe in a single-threaded cooperative executor with no concurrent writers.
 pub(crate) static mut WAVEFORM: [f32; 128] = [0.0; 128];
 
-/// 257-bin magnitude spectrum (bins 0 … N/2 of a 512-point FFT), normalised
-/// so that a full-scale sine wave produces a peak of ≈ 1.0.
+/// 257-bin squared-magnitude spectrum (bins 0 … N/2 of a 512-point FFT),
+/// normalised so that a full-scale sine wave produces a peak of ≈ 1.0.
+///
+/// Stored as squared magnitude to avoid 257 `sqrtf` calls per analysis frame;
+/// `rgb_task` takes one `sqrt` per display column (18 total) after averaging.
 ///
 /// Written only by `analysis_task`; read only by `rgb_task`.
 pub(crate) static mut SPECTRUM: [f32; 257] = [0.0; 257];
@@ -121,12 +124,14 @@ pub(crate) async fn analysis_task() {
         let mut spec_cx = [Complex::ZERO; FFT_N / 2 + 1]; // 257 bins — halved stack
         RealFft::<FFT_N, LANES>::process(&wave_raw, &mut spec_cx);
 
-        // Normalise: full-scale sine → RealFft peak ≈ N/4 (Hann halves amplitude).
-        // Scale so peak → 1.0.
+        // Store squared magnitude, normalised so a full-scale sine → peak ≈ 1.0.
+        // Using norm_sq avoids 257 sqrtf calls here; rgb_task takes one sqrt per
+        // column (18 total) after averaging, preserving identical display output.
         let norm = 4.0 / FFT_N as f32;
+        let norm_sq = norm * norm;
         unsafe {
             for i in 0..257 {
-                SPECTRUM[i] = spec_cx[i].abs() * norm;
+                SPECTRUM[i] = spec_cx[i].norm_sq() * norm_sq;
             }
         }
 

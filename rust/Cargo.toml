@@ -8,6 +8,9 @@ lto = true
 codegen-units = 1
 debug = true
 
+[profile.release.package.deluge-fft]
+opt-level = 3
+
 [profile.dev]
 opt-level = 1
 debug = true

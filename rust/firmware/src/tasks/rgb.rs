@@ -5,6 +5,14 @@ use crate::pads::{pad_get, pad_id_from_xy};
 use crate::tasks::analysis::{AUDIO_STREAMING, SPECTRUM};
 use deluge_bsp::pic;
 
+#[inline(always)]
+fn sqrtf(x: f32) -> f32 {
+    unsafe extern "C" {
+        fn sqrtf(x: f32) -> f32;
+    }
+    unsafe { sqrtf(x) }
+}
+
 /// Convert HSV to `[r, g, b]` (all 0–255).
 ///
 /// `h`: hue 0–255 (mapped to 0–360°).  `s`: saturation 0–255.  `v`: value 0–255.
@@ -48,12 +56,14 @@ fn spectrum_colours() -> [[[u8; 3]; 16]; 9] {
         let bin_lo = col * USABLE_BINS / N_COLS + 1; // +1 to skip DC
         let bin_hi = (col + 1) * USABLE_BINS / N_COLS + 1;
 
-        // Average magnitude across this column's bin group.
-        let mut avg = 0.0f32;
+        // Average squared magnitude across this column's bin group, then
+        // take one sqrt to recover linear magnitude (RMS-like response).
+        let mut avg_sq = 0.0f32;
         for &val in &spectrum[bin_lo..bin_hi] {
-            avg += val;
+            avg_sq += val;
         }
-        avg /= (bin_hi - bin_lo) as f32;
+        avg_sq /= (bin_hi - bin_lo) as f32;
+        let avg = sqrtf(avg_sq);
 
         // Map [0, 1] → 0..8 lit rows (bottom-up, VU-meter style).
         let filled = (avg * 8.0).min(8.0) as usize;
