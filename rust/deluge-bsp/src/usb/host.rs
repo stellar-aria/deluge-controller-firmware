@@ -283,83 +283,85 @@ impl Rusb1HostDriver {
     /// - `hcd_int_handler(port)` must be wired to GIC IRQ 73+port before
     ///   calling any async method.
     pub unsafe fn new(port: u8) -> Self {
-        debug_assert!(port <= 1);
-        let regs = Rusb1Regs::ptr(port);
+        unsafe {
+            debug_assert!(port <= 1);
+            let regs = Rusb1Regs::ptr(port);
 
-        // ── PLL / clock init (TRM §28.4.1 (5)) ─────────────────────────
-        // Stop clock supply to this port first.
-        rmw(core::ptr::addr_of_mut!((*regs).suspmode), SUSPMODE_SUSPM, 0);
+            // ── PLL / clock init (TRM §28.4.1 (5)) ─────────────────────────
+            // Stop clock supply to this port first.
+            rmw(core::ptr::addr_of_mut!((*regs).suspmode), SUSPMODE_SUSPM, 0);
 
-        // UPLLE lives in USB0's SYSCFG0 (C reference always writes rusb0->SYSCFG0).
-        let regs0 = Rusb1Regs::ptr(0);
-        rmw(
-            core::ptr::addr_of_mut!((*regs0).syscfg0),
-            SYSCFG_UPLLE,
-            SYSCFG_UPLLE,
-        );
+            // UPLLE lives in USB0's SYSCFG0 (C reference always writes rusb0->SYSCFG0).
+            let regs0 = Rusb1Regs::ptr(0);
+            rmw(
+                core::ptr::addr_of_mut!((*regs0).syscfg0),
+                SYSCFG_UPLLE,
+                SYSCFG_UPLLE,
+            );
 
-        // Wait >= 1 ms for PLL lock (~400 K iterations at 400 MHz).
-        for _ in 0u32..400_000 {
-            core::hint::spin_loop();
+            // Wait >= 1 ms for PLL lock (~400 K iterations at 400 MHz).
+            for _ in 0u32..400_000 {
+                core::hint::spin_loop();
+            }
+
+            // CPU-bus wait cycles and clock re-enable.
+            wr(core::ptr::addr_of_mut!((*regs).buswait), BUSWAIT_VALUE);
+            rmw(
+                core::ptr::addr_of_mut!((*regs).suspmode),
+                SUSPMODE_SUSPM,
+                SUSPMODE_SUSPM,
+            );
+
+            // ── Mode / PHY config ────────────────────────────────────────────
+            // Host mode: DCFM=1, DRPD=1 (pull-downs enabled), DPRPU=0 (no pull-up).
+            // HSE is NOT set here; TRM requires it to be set after ATTCH and before
+            // USBRST — it is written in bus_reset() based on the detected device speed.
+            rmw(
+                core::ptr::addr_of_mut!((*regs).syscfg0),
+                SYSCFG_DCFM | SYSCFG_DRPD | SYSCFG_DPRPU | SYSCFG_HSE,
+                SYSCFG_DCFM | SYSCFG_DRPD,
+            );
+
+            // Power VBUS.
+            rmw(
+                core::ptr::addr_of_mut!((*regs).dvstctr0),
+                DVSTCTR0_VBUSEN,
+                DVSTCTR0_VBUSEN,
+            );
+
+            // Enable the USB module.
+            rmw(
+                core::ptr::addr_of_mut!((*regs).syscfg0),
+                SYSCFG_USBE,
+                SYSCFG_USBE,
+            );
+
+            // Control pipe: always use SHTNAK (NAK on short packet) in host mode.
+            wr(core::ptr::addr_of_mut!((*regs).dcpcfg), DCPCFG_SHTNAK);
+            wr(core::ptr::addr_of_mut!((*regs).dcpmaxp), 64);
+
+            // Global interrupt enables.
+            wr(
+                core::ptr::addr_of_mut!((*regs).intenb0),
+                INTENB0_BRDYE | INTENB0_NRDYE | INTENB0_BEMPE,
+            );
+            // Start watching for device attach (ATTCH); DTCH is enabled by the ISR
+            // after a device is connected.
+            wr(
+                core::ptr::addr_of_mut!((*regs).intenb1),
+                INTENB1_SACKE | INTENB1_SIGNE | INTENB1_ATTCHE,
+            );
+
+            // Enable BEMP/NRDY/BRDY for pipe 0 (the DCP).
+            wr(core::ptr::addr_of_mut!((*regs).bempenb), 1);
+            wr(core::ptr::addr_of_mut!((*regs).nrdyenb), 1);
+            wr(core::ptr::addr_of_mut!((*regs).brdyenb), 1);
+
+            // Register the GIC interrupt for this port.
+            rza1::rusb1::int_enable(port);
+
+            Self { port }
         }
-
-        // CPU-bus wait cycles and clock re-enable.
-        wr(core::ptr::addr_of_mut!((*regs).buswait), BUSWAIT_VALUE);
-        rmw(
-            core::ptr::addr_of_mut!((*regs).suspmode),
-            SUSPMODE_SUSPM,
-            SUSPMODE_SUSPM,
-        );
-
-        // ── Mode / PHY config ────────────────────────────────────────────
-        // Host mode: DCFM=1, DRPD=1 (pull-downs enabled), DPRPU=0 (no pull-up).
-        // HSE is NOT set here; TRM requires it to be set after ATTCH and before
-        // USBRST — it is written in bus_reset() based on the detected device speed.
-        rmw(
-            core::ptr::addr_of_mut!((*regs).syscfg0),
-            SYSCFG_DCFM | SYSCFG_DRPD | SYSCFG_DPRPU | SYSCFG_HSE,
-            SYSCFG_DCFM | SYSCFG_DRPD,
-        );
-
-        // Power VBUS.
-        rmw(
-            core::ptr::addr_of_mut!((*regs).dvstctr0),
-            DVSTCTR0_VBUSEN,
-            DVSTCTR0_VBUSEN,
-        );
-
-        // Enable the USB module.
-        rmw(
-            core::ptr::addr_of_mut!((*regs).syscfg0),
-            SYSCFG_USBE,
-            SYSCFG_USBE,
-        );
-
-        // Control pipe: always use SHTNAK (NAK on short packet) in host mode.
-        wr(core::ptr::addr_of_mut!((*regs).dcpcfg), DCPCFG_SHTNAK);
-        wr(core::ptr::addr_of_mut!((*regs).dcpmaxp), 64);
-
-        // Global interrupt enables.
-        wr(
-            core::ptr::addr_of_mut!((*regs).intenb0),
-            INTENB0_BRDYE | INTENB0_NRDYE | INTENB0_BEMPE,
-        );
-        // Start watching for device attach (ATTCH); DTCH is enabled by the ISR
-        // after a device is connected.
-        wr(
-            core::ptr::addr_of_mut!((*regs).intenb1),
-            INTENB1_SACKE | INTENB1_SIGNE | INTENB1_ATTCHE,
-        );
-
-        // Enable BEMP/NRDY/BRDY for pipe 0 (the DCP).
-        wr(core::ptr::addr_of_mut!((*regs).bempenb), 1);
-        wr(core::ptr::addr_of_mut!((*regs).nrdyenb), 1);
-        wr(core::ptr::addr_of_mut!((*regs).brdyenb), 1);
-
-        // Register the GIC interrupt for this port.
-        rza1::rusb1::int_enable(port);
-
-        Self { port }
     }
 
     // --- Bus-level API ---
@@ -1075,107 +1077,109 @@ async fn poll_pipe(n: usize) -> Result<usize, HcdError> {
 ///
 /// Must be called from the hardware IRQ handler for the corresponding port.
 pub unsafe fn hcd_int_handler(port: u8) {
-    let regs = Rusb1Regs::ptr(port);
-    let e = &mut *regs;
+    unsafe {
+        let regs = Rusb1Regs::ptr(port);
+        let e = &mut *regs;
 
-    let is0 = rd(core::ptr::addr_of!(e.intsts0));
-    let is1 = rd(core::ptr::addr_of!(e.intsts1));
+        let is0 = rd(core::ptr::addr_of!(e.intsts0));
+        let is1 = rd(core::ptr::addr_of!(e.intsts1));
 
-    // Clear sticky bits by writing 0 to each bit that was set (RC-W0 protocol).
-    const STICKY1: u16 = INTSTS1_SACK | INTSTS1_SIGN | INTSTS1_ATTCH | INTSTS1_DTCH;
-    wr(core::ptr::addr_of_mut!(e.intsts1), !(STICKY1 & is1));
-    const STICKY0: u16 = INTSTS0_BRDY | INTSTS0_NRDY | INTSTS0_BEMP;
-    wr(core::ptr::addr_of_mut!(e.intsts0), !(STICKY0 & is0));
+        // Clear sticky bits by writing 0 to each bit that was set (RC-W0 protocol).
+        const STICKY1: u16 = INTSTS1_SACK | INTSTS1_SIGN | INTSTS1_ATTCH | INTSTS1_DTCH;
+        wr(core::ptr::addr_of_mut!(e.intsts1), !(STICKY1 & is1));
+        const STICKY0: u16 = INTSTS0_BRDY | INTSTS0_NRDY | INTSTS0_BEMP;
+        wr(core::ptr::addr_of_mut!(e.intsts0), !(STICKY0 & is0));
 
-    // Mask with enable registers so we only handle enabled sources.
-    let is1 = is1 & rd(core::ptr::addr_of!(e.intenb1));
-    let is0 = is0 & rd(core::ptr::addr_of!(e.intenb0));
+        // Mask with enable registers so we only handle enabled sources.
+        let is1 = is1 & rd(core::ptr::addr_of!(e.intenb1));
+        let is0 = is0 & rd(core::ptr::addr_of!(e.intenb0));
 
-    // ── SACK: setup packet was ACKed ──────────────────────────────────────
-    if is1 & INTSTS1_SACK != 0 {
-        // Advance DATA-stage toggle to DATA1.
-        let ctr = rd(pipectr_ptr(regs, 0));
-        wr(pipectr_ptr(regs, 0), ctr | PIPECTR_SQSET);
-        HCD_EVENTS.fetch_or(EVT_SACK, Ordering::Release);
-        HCD_EVENT_WAKER.wake();
-    }
-
-    // ── SIGN: setup packet was ignored (NAK / error) ──────────────────────
-    if is1 & INTSTS1_SIGN != 0 {
-        HCD_EVENTS.fetch_or(EVT_SIGN, Ordering::Release);
-        HCD_EVENT_WAKER.wake();
-    }
-
-    // ── ATTCH: a device connected ─────────────────────────────────────────
-    if is1 & INTSTS1_ATTCH != 0 {
-        rmw(
-            core::ptr::addr_of_mut!(e.dvstctr0),
-            DVSTCTR0_UACT,
-            DVSTCTR0_UACT,
-        );
-        critical_section::with(|cs| {
-            unsafe { &mut *HCD_ALLOC[port as usize].borrow(cs).get() }.need_reset = true;
-        });
-        // Switch to detecting detach.
-        let enb = rd(core::ptr::addr_of!(e.intenb1));
-        wr(
-            core::ptr::addr_of_mut!(e.intenb1),
-            (enb & !INTENB1_ATTCHE) | INTENB1_DTCHE,
-        );
-        HCD_EVENTS.fetch_or(EVT_ATTACH, Ordering::Release);
-        HCD_EVENT_WAKER.wake();
-    }
-
-    // ── DTCH: the device was removed ─────────────────────────────────────
-    if is1 & INTSTS1_DTCH != 0 {
-        rmw(core::ptr::addr_of_mut!(e.dvstctr0), DVSTCTR0_UACT, 0);
-        // Cancel any pending SETUP.
-        let dcpctr = rd(pipectr_ptr(regs, 0));
-        if dcpctr & DCPCTR_SUREQ != 0 {
-            wr(pipectr_ptr(regs, 0), dcpctr | DCPCTR_SUREQCLR);
+        // ── SACK: setup packet was ACKed ──────────────────────────────────────
+        if is1 & INTSTS1_SACK != 0 {
+            // Advance DATA-stage toggle to DATA1.
+            let ctr = rd(pipectr_ptr(regs, 0));
+            wr(pipectr_ptr(regs, 0), ctr | PIPECTR_SQSET);
+            HCD_EVENTS.fetch_or(EVT_SACK, Ordering::Release);
+            HCD_EVENT_WAKER.wake();
         }
-        // Switch back to detecting attach.
-        let enb = rd(core::ptr::addr_of!(e.intenb1));
-        wr(
-            core::ptr::addr_of_mut!(e.intenb1),
-            (enb & !INTENB1_DTCHE) | INTENB1_ATTCHE,
-        );
-        HCD_EVENTS.fetch_or(EVT_DETACH, Ordering::Release);
-        HCD_EVENT_WAKER.wake();
-    }
 
-    // ── BEMP: FIFO transmitted — continue control OUT ────────────────────
-    if is0 & INTSTS0_BEMP != 0 {
-        let bempsts = rd(core::ptr::addr_of!(e.bempsts));
-        let bempenb = rd(core::ptr::addr_of!(e.bempenb));
-        let active = bempsts & bempenb;
-        wr(core::ptr::addr_of_mut!(e.bempsts), !active);
-        if active & 1 != 0 {
-            pipe0_out_bemp(regs);
+        // ── SIGN: setup packet was ignored (NAK / error) ──────────────────────
+        if is1 & INTSTS1_SIGN != 0 {
+            HCD_EVENTS.fetch_or(EVT_SIGN, Ordering::Release);
+            HCD_EVENT_WAKER.wake();
         }
-    }
 
-    // ── NRDY: NAK or STALL received ──────────────────────────────────────
-    if is0 & INTSTS0_NRDY != 0 {
-        let nrdyenb = rd(core::ptr::addr_of!(e.nrdyenb));
-        let mut active = rd(core::ptr::addr_of!(e.nrdysts)) & nrdyenb;
-        wr(core::ptr::addr_of_mut!(e.nrdysts), !active);
-        while active != 0 {
-            let n = active.trailing_zeros() as usize;
-            pipe_nrdy(regs, n);
-            active &= !(1u16 << n);
+        // ── ATTCH: a device connected ─────────────────────────────────────────
+        if is1 & INTSTS1_ATTCH != 0 {
+            rmw(
+                core::ptr::addr_of_mut!(e.dvstctr0),
+                DVSTCTR0_UACT,
+                DVSTCTR0_UACT,
+            );
+            critical_section::with(|cs| {
+                unsafe { &mut *HCD_ALLOC[port as usize].borrow(cs).get() }.need_reset = true;
+            });
+            // Switch to detecting detach.
+            let enb = rd(core::ptr::addr_of!(e.intenb1));
+            wr(
+                core::ptr::addr_of_mut!(e.intenb1),
+                (enb & !INTENB1_ATTCHE) | INTENB1_DTCHE,
+            );
+            HCD_EVENTS.fetch_or(EVT_ATTACH, Ordering::Release);
+            HCD_EVENT_WAKER.wake();
         }
-    }
 
-    // ── BRDY: data received (IN) or slot ready (OUT) ─────────────────────
-    if is0 & INTSTS0_BRDY != 0 {
-        let brdyenb = rd(core::ptr::addr_of!(e.brdyenb));
-        let mut active = rd(core::ptr::addr_of!(e.brdysts)) & brdyenb;
-        wr(core::ptr::addr_of_mut!(e.brdysts), !active);
-        while active != 0 {
-            let n = active.trailing_zeros() as usize;
-            pipe_brdy(regs, n);
-            active &= !(1u16 << n);
+        // ── DTCH: the device was removed ─────────────────────────────────────
+        if is1 & INTSTS1_DTCH != 0 {
+            rmw(core::ptr::addr_of_mut!(e.dvstctr0), DVSTCTR0_UACT, 0);
+            // Cancel any pending SETUP.
+            let dcpctr = rd(pipectr_ptr(regs, 0));
+            if dcpctr & DCPCTR_SUREQ != 0 {
+                wr(pipectr_ptr(regs, 0), dcpctr | DCPCTR_SUREQCLR);
+            }
+            // Switch back to detecting attach.
+            let enb = rd(core::ptr::addr_of!(e.intenb1));
+            wr(
+                core::ptr::addr_of_mut!(e.intenb1),
+                (enb & !INTENB1_DTCHE) | INTENB1_ATTCHE,
+            );
+            HCD_EVENTS.fetch_or(EVT_DETACH, Ordering::Release);
+            HCD_EVENT_WAKER.wake();
+        }
+
+        // ── BEMP: FIFO transmitted — continue control OUT ────────────────────
+        if is0 & INTSTS0_BEMP != 0 {
+            let bempsts = rd(core::ptr::addr_of!(e.bempsts));
+            let bempenb = rd(core::ptr::addr_of!(e.bempenb));
+            let active = bempsts & bempenb;
+            wr(core::ptr::addr_of_mut!(e.bempsts), !active);
+            if active & 1 != 0 {
+                pipe0_out_bemp(regs);
+            }
+        }
+
+        // ── NRDY: NAK or STALL received ──────────────────────────────────────
+        if is0 & INTSTS0_NRDY != 0 {
+            let nrdyenb = rd(core::ptr::addr_of!(e.nrdyenb));
+            let mut active = rd(core::ptr::addr_of!(e.nrdysts)) & nrdyenb;
+            wr(core::ptr::addr_of_mut!(e.nrdysts), !active);
+            while active != 0 {
+                let n = active.trailing_zeros() as usize;
+                pipe_nrdy(regs, n);
+                active &= !(1u16 << n);
+            }
+        }
+
+        // ── BRDY: data received (IN) or slot ready (OUT) ─────────────────────
+        if is0 & INTSTS0_BRDY != 0 {
+            let brdyenb = rd(core::ptr::addr_of!(e.brdyenb));
+            let mut active = rd(core::ptr::addr_of!(e.brdysts)) & brdyenb;
+            wr(core::ptr::addr_of_mut!(e.brdysts), !active);
+            while active != 0 {
+                let n = active.trailing_zeros() as usize;
+                pipe_brdy(regs, n);
+                active &= !(1u16 << n);
+            }
         }
     }
 }
@@ -1186,187 +1190,200 @@ pub unsafe fn hcd_int_handler(port: u8) {
 
 /// BRDY on pipe 0 IN (control data stage): read data from CFIFO.
 unsafe fn pipe0_in_brdy(regs: *mut Rusb1Regs) {
-    // SAFETY: called from IRQ only; no concurrent async access to CFIFO.
-    let cs = critical_section::CriticalSection::new();
-    let xfer = &mut *HCD_XFER[0].borrow(cs).get();
+    unsafe {
+        // SAFETY: called from IRQ only; no concurrent async access to CFIFO.
+        let cs = critical_section::CriticalSection::new();
+        let xfer = &mut *HCD_XFER[0].borrow(cs).get();
 
-    let mps = (rd(core::ptr::addr_of!((*regs).dcpmaxp)) & DCPMAXP_MXPS_MASK) as usize;
-    let vld = (rd(core::ptr::addr_of!((*regs).cfifoctr)) & CFIFOCTR_DTLN_MASK) as usize;
-    let rem = xfer.remaining as usize;
-    let len = rem.min(mps).min(vld);
+        let mps = (rd(core::ptr::addr_of!((*regs).dcpmaxp)) & DCPMAXP_MXPS_MASK) as usize;
+        let vld = (rd(core::ptr::addr_of!((*regs).cfifoctr)) & CFIFOCTR_DTLN_MASK) as usize;
+        let rem = xfer.remaining as usize;
+        let len = rem.min(mps).min(vld);
 
-    // Byte-level read from CFIFO (matches C `pipe_read_packet`).
-    if len > 0 && !xfer.buf.is_null() {
-        let cfifo_byte =
-            (regs as usize + core::mem::offset_of!(super::regs::Rusb1Regs, cfifo)) as *const u8;
-        for i in 0..len {
-            *xfer.buf.add(i) = cfifo_byte.read_volatile();
+        // Byte-level read from CFIFO (matches C `pipe_read_packet`).
+        if len > 0 && !xfer.buf.is_null() {
+            let cfifo_byte =
+                (regs as usize + core::mem::offset_of!(super::regs::Rusb1Regs, cfifo)) as *const u8;
+            for i in 0..len {
+                *xfer.buf.add(i) = cfifo_byte.read_volatile();
+            }
+            xfer.buf = xfer.buf.add(len);
+            xfer.remaining = xfer.remaining.saturating_sub(len as u16);
         }
-        xfer.buf = xfer.buf.add(len);
-        xfer.remaining = xfer.remaining.saturating_sub(len as u16);
-    }
 
-    // BCLR after a short packet to release the FIFO buffer.
-    if len < mps {
-        wr(core::ptr::addr_of_mut!((*regs).cfifoctr), FIFOCTR_BCLR);
-    }
+        // BCLR after a short packet to release the FIFO buffer.
+        if len < mps {
+            wr(core::ptr::addr_of_mut!((*regs).cfifoctr), FIFOCTR_BCLR);
+        }
 
-    let done = (len < mps) || (xfer.remaining == 0);
-    if done {
-        xfer.buf = core::ptr::null_mut();
-        // NAK to stop receiving further IN tokens.
-        wr(pipectr_ptr(regs, 0), PIPECTR_PID_NAK);
-        HCD_PIPE_DONE.fetch_or(1, Ordering::Release);
-        HCD_PIPE_WAKERS[0].wake();
-    } else {
-        // Re-arm for the next IN packet.
-        wr(pipectr_ptr(regs, 0), PIPECTR_PID_BUF);
+        let done = (len < mps) || (xfer.remaining == 0);
+        if done {
+            xfer.buf = core::ptr::null_mut();
+            // NAK to stop receiving further IN tokens.
+            wr(pipectr_ptr(regs, 0), PIPECTR_PID_NAK);
+            HCD_PIPE_DONE.fetch_or(1, Ordering::Release);
+            HCD_PIPE_WAKERS[0].wake();
+        } else {
+            // Re-arm for the next IN packet.
+            wr(pipectr_ptr(regs, 0), PIPECTR_PID_BUF);
+        }
     }
 }
 
 /// BEMP on pipe 0 OUT (control data stage): write next chunk to CFIFO.
 unsafe fn pipe0_out_bemp(regs: *mut Rusb1Regs) {
-    let cs = critical_section::CriticalSection::new();
-    let xfer = &mut *HCD_XFER[0].borrow(cs).get();
+    unsafe {
+        let cs = critical_section::CriticalSection::new();
+        let xfer = &mut *HCD_XFER[0].borrow(cs).get();
 
-    let rem = xfer.remaining as usize;
-    if rem == 0 || xfer.buf.is_null() {
-        xfer.buf = core::ptr::null_mut();
-        HCD_PIPE_DONE.fetch_or(1, Ordering::Release);
-        HCD_PIPE_WAKERS[0].wake();
-        return;
-    }
+        let rem = xfer.remaining as usize;
+        if rem == 0 || xfer.buf.is_null() {
+            xfer.buf = core::ptr::null_mut();
+            HCD_PIPE_DONE.fetch_or(1, Ordering::Release);
+            HCD_PIPE_WAKERS[0].wake();
+            return;
+        }
 
-    let mps = (rd(core::ptr::addr_of!((*regs).dcpmaxp)) & DCPMAXP_MXPS_MASK) as usize;
-    let len = rem.min(mps);
-    let fifo = FifoPort::cfifo(regs);
-    sw_to_hw_fifo(&fifo, xfer.buf, len);
-    if len < mps {
-        wr(core::ptr::addr_of_mut!((*regs).cfifoctr), FIFOCTR_BVAL);
+        let mps = (rd(core::ptr::addr_of!((*regs).dcpmaxp)) & DCPMAXP_MXPS_MASK) as usize;
+        let len = rem.min(mps);
+        let fifo = FifoPort::cfifo(regs);
+        sw_to_hw_fifo(&fifo, xfer.buf, len);
+        if len < mps {
+            wr(core::ptr::addr_of_mut!((*regs).cfifoctr), FIFOCTR_BVAL);
+        }
+        xfer.buf = xfer.buf.add(len);
+        xfer.remaining = xfer.remaining.saturating_sub(len as u16);
+        // BEMP will fire again after this chunk is transmitted.
     }
-    xfer.buf = xfer.buf.add(len);
-    xfer.remaining = xfer.remaining.saturating_sub(len as u16);
-    // BEMP will fire again after this chunk is transmitted.
 }
 
 /// BRDY on a non-control IN pipe: read data from D0FIFO.
 unsafe fn pipe_brdy_in(regs: *mut Rusb1Regs, n: usize) {
-    let cs = critical_section::CriticalSection::new();
-    let xfer = &mut *HCD_XFER[n].borrow(cs).get();
+    unsafe {
+        let cs = critical_section::CriticalSection::new();
+        let xfer = &mut *HCD_XFER[n].borrow(cs).get();
 
-    if xfer.buf.is_null() {
-        // No buffer — discard and BCLR.
+        if xfer.buf.is_null() {
+            // No buffer — discard and BCLR.
+            wr(core::ptr::addr_of_mut!((*regs).d0fifosel), n as u16);
+            while rd(core::ptr::addr_of!((*regs).d0fifosel)) & D0FIFOSEL_CURPIPE_MASK != n as u16 {}
+            wr(core::ptr::addr_of_mut!((*regs).d0fifoctr), FIFOCTR_BCLR);
+            wr(core::ptr::addr_of_mut!((*regs).d0fifosel), 0);
+            return;
+        }
+
+        // Select D0FIFO on this pipe for reading.
         wr(core::ptr::addr_of_mut!((*regs).d0fifosel), n as u16);
         while rd(core::ptr::addr_of!((*regs).d0fifosel)) & D0FIFOSEL_CURPIPE_MASK != n as u16 {}
-        wr(core::ptr::addr_of_mut!((*regs).d0fifoctr), FIFOCTR_BCLR);
-        wr(core::ptr::addr_of_mut!((*regs).d0fifosel), 0);
-        return;
-    }
+        while rd(core::ptr::addr_of!((*regs).d0fifoctr)) & D0FIFOCTR_FRDY == 0 {}
 
-    // Select D0FIFO on this pipe for reading.
-    wr(core::ptr::addr_of_mut!((*regs).d0fifosel), n as u16);
-    while rd(core::ptr::addr_of!((*regs).d0fifosel)) & D0FIFOSEL_CURPIPE_MASK != n as u16 {}
-    while rd(core::ptr::addr_of!((*regs).d0fifoctr)) & D0FIFOCTR_FRDY == 0 {}
+        // PIPEMAXP is gated by PIPESEL, not by D0FIFOSEL.CURPIPE — select pipe explicitly.
+        wr(core::ptr::addr_of_mut!((*regs).pipesel), n as u16);
+        let mps = (rd(core::ptr::addr_of!((*regs).pipemaxp)) & PIPEMAXP_MXPS_MASK) as usize;
+        wr(core::ptr::addr_of_mut!((*regs).pipesel), 0);
+        let vld = (rd(core::ptr::addr_of!((*regs).d0fifoctr)) & D0FIFOCTR_DTLN_MASK) as usize;
+        let rem = xfer.remaining as usize;
+        let len = rem.min(mps).min(vld);
 
-    // PIPEMAXP is gated by PIPESEL, not by D0FIFOSEL.CURPIPE — select pipe explicitly.
-    wr(core::ptr::addr_of_mut!((*regs).pipesel), n as u16);
-    let mps = (rd(core::ptr::addr_of!((*regs).pipemaxp)) & PIPEMAXP_MXPS_MASK) as usize;
-    wr(core::ptr::addr_of_mut!((*regs).pipesel), 0);
-    let vld = (rd(core::ptr::addr_of!((*regs).d0fifoctr)) & D0FIFOCTR_DTLN_MASK) as usize;
-    let rem = xfer.remaining as usize;
-    let len = rem.min(mps).min(vld);
-
-    // Byte-level read (matches C `pipe_read_packet`).
-    if len > 0 {
-        let d0fifo_byte =
-            (regs as usize + core::mem::offset_of!(super::regs::Rusb1Regs, d0fifo)) as *const u8;
-        for i in 0..len {
-            *xfer.buf.add(i) = d0fifo_byte.read_volatile();
+        // Byte-level read (matches C `pipe_read_packet`).
+        if len > 0 {
+            let d0fifo_byte = (regs as usize
+                + core::mem::offset_of!(super::regs::Rusb1Regs, d0fifo))
+                as *const u8;
+            for i in 0..len {
+                *xfer.buf.add(i) = d0fifo_byte.read_volatile();
+            }
+            xfer.buf = xfer.buf.add(len);
+            xfer.remaining = xfer.remaining.saturating_sub(len as u16);
         }
-        xfer.buf = xfer.buf.add(len);
-        xfer.remaining = xfer.remaining.saturating_sub(len as u16);
-    }
 
-    if len < mps {
-        wr(core::ptr::addr_of_mut!((*regs).d0fifoctr), FIFOCTR_BCLR);
-    }
+        if len < mps {
+            wr(core::ptr::addr_of_mut!((*regs).d0fifoctr), FIFOCTR_BCLR);
+        }
 
-    // Deselect D0FIFO.
-    wr(core::ptr::addr_of_mut!((*regs).d0fifosel), 0);
-    while rd(core::ptr::addr_of!((*regs).d0fifosel)) & D0FIFOSEL_CURPIPE_MASK != 0 {}
+        // Deselect D0FIFO.
+        wr(core::ptr::addr_of_mut!((*regs).d0fifosel), 0);
+        while rd(core::ptr::addr_of!((*regs).d0fifosel)) & D0FIFOSEL_CURPIPE_MASK != 0 {}
 
-    let done = (len < mps) || (xfer.remaining == 0);
-    if done {
-        xfer.buf = core::ptr::null_mut();
-        HCD_PIPE_DONE.fetch_or(1u16 << n, Ordering::Release);
-        HCD_PIPE_WAKERS[n].wake();
+        let done = (len < mps) || (xfer.remaining == 0);
+        if done {
+            xfer.buf = core::ptr::null_mut();
+            HCD_PIPE_DONE.fetch_or(1u16 << n, Ordering::Release);
+            HCD_PIPE_WAKERS[n].wake();
+        }
+        // Hardware continues issuing IN tokens until PID changes from BUF.
     }
-    // Hardware continues issuing IN tokens until PID changes from BUF.
 }
 
 /// BRDY on a non-control OUT pipe: write next chunk to D0FIFO.
 unsafe fn pipe_brdy_out(regs: *mut Rusb1Regs, n: usize) {
-    let cs = critical_section::CriticalSection::new();
-    let xfer = &mut *HCD_XFER[n].borrow(cs).get();
+    unsafe {
+        let cs = critical_section::CriticalSection::new();
+        let xfer = &mut *HCD_XFER[n].borrow(cs).get();
 
-    let rem = xfer.remaining as usize;
-    if rem == 0 || xfer.buf.is_null() {
-        xfer.buf = core::ptr::null_mut();
-        HCD_PIPE_DONE.fetch_or(1u16 << n, Ordering::Release);
-        HCD_PIPE_WAKERS[n].wake();
-        return;
+        let rem = xfer.remaining as usize;
+        if rem == 0 || xfer.buf.is_null() {
+            xfer.buf = core::ptr::null_mut();
+            HCD_PIPE_DONE.fetch_or(1u16 << n, Ordering::Release);
+            HCD_PIPE_WAKERS[n].wake();
+            return;
+        }
+
+        wr(core::ptr::addr_of_mut!((*regs).d0fifosel), n as u16);
+        while rd(core::ptr::addr_of!((*regs).d0fifosel)) & D0FIFOSEL_CURPIPE_MASK != n as u16 {}
+        while rd(core::ptr::addr_of!((*regs).d0fifoctr)) & D0FIFOCTR_FRDY == 0 {}
+
+        // PIPEMAXP is gated by PIPESEL, not by D0FIFOSEL.CURPIPE — select pipe explicitly.
+        wr(core::ptr::addr_of_mut!((*regs).pipesel), n as u16);
+        let mps = (rd(core::ptr::addr_of!((*regs).pipemaxp)) & PIPEMAXP_MXPS_MASK) as usize;
+        wr(core::ptr::addr_of_mut!((*regs).pipesel), 0);
+        let len = rem.min(mps);
+        let fifo = FifoPort::d0fifo(regs);
+        sw_to_hw_fifo(&fifo, xfer.buf, len);
+        if len < mps {
+            fifo_bval(&fifo);
+        }
+        xfer.buf = xfer.buf.add(len);
+        xfer.remaining = xfer.remaining.saturating_sub(len as u16);
+
+        wr(core::ptr::addr_of_mut!((*regs).d0fifosel), 0);
+        while rd(core::ptr::addr_of!((*regs).d0fifosel)) & D0FIFOSEL_CURPIPE_MASK != 0 {}
+        // BRDY fires again when the SIE has consumed this chunk.
     }
-
-    wr(core::ptr::addr_of_mut!((*regs).d0fifosel), n as u16);
-    while rd(core::ptr::addr_of!((*regs).d0fifosel)) & D0FIFOSEL_CURPIPE_MASK != n as u16 {}
-    while rd(core::ptr::addr_of!((*regs).d0fifoctr)) & D0FIFOCTR_FRDY == 0 {}
-
-    // PIPEMAXP is gated by PIPESEL, not by D0FIFOSEL.CURPIPE — select pipe explicitly.
-    wr(core::ptr::addr_of_mut!((*regs).pipesel), n as u16);
-    let mps = (rd(core::ptr::addr_of!((*regs).pipemaxp)) & PIPEMAXP_MXPS_MASK) as usize;
-    wr(core::ptr::addr_of_mut!((*regs).pipesel), 0);
-    let len = rem.min(mps);
-    let fifo = FifoPort::d0fifo(regs);
-    sw_to_hw_fifo(&fifo, xfer.buf, len);
-    if len < mps {
-        fifo_bval(&fifo);
-    }
-    xfer.buf = xfer.buf.add(len);
-    xfer.remaining = xfer.remaining.saturating_sub(len as u16);
-
-    wr(core::ptr::addr_of_mut!((*regs).d0fifosel), 0);
-    while rd(core::ptr::addr_of!((*regs).d0fifosel)) & D0FIFOSEL_CURPIPE_MASK != 0 {}
-    // BRDY fires again when the SIE has consumed this chunk.
 }
 
 /// Dispatch a BRDY event for pipe `n`.
 unsafe fn pipe_brdy(regs: *mut Rusb1Regs, n: usize) {
-    let ep_addr = {
-        let cs = critical_section::CriticalSection::new();
-        (*HCD_XFER[n].borrow(cs).get()).ep_addr
-    };
-    let dir_in = ep_addr & 0x80 != 0;
+    unsafe {
+        let ep_addr = {
+            let cs = critical_section::CriticalSection::new();
+            (*HCD_XFER[n].borrow(cs).get()).ep_addr
+        };
+        let dir_in = ep_addr & 0x80 != 0;
 
-    if n == 0 {
-        if dir_in {
-            pipe0_in_brdy(regs);
+        if n == 0 {
+            if dir_in {
+                pipe0_in_brdy(regs);
+            }
+            // Pipe-0 OUT is handled via BEMP, not BRDY.
+        } else if dir_in {
+            pipe_brdy_in(regs, n);
+        } else {
+            pipe_brdy_out(regs, n);
         }
-        // Pipe-0 OUT is handled via BEMP, not BRDY.
-    } else if dir_in {
-        pipe_brdy_in(regs, n);
-    } else {
-        pipe_brdy_out(regs, n);
     }
 }
 
 /// Handle NRDY (NAK or STALL) for pipe `n`.
 unsafe fn pipe_nrdy(regs: *mut Rusb1Regs, n: usize) {
-    let pid = rd(pipectr_ptr(regs, n)) & PIPECTR_PID_MASK;
-    // PID 0b10 or 0b11 = STALL; otherwise = NAK / general failure.
-    if pid & 0b10 != 0 {
-        HCD_PIPE_STALL.fetch_or(1u16 << n, Ordering::Release);
-    } else {
-        HCD_PIPE_NRDY.fetch_or(1u16 << n, Ordering::Release);
+    unsafe {
+        let pid = rd(pipectr_ptr(regs, n)) & PIPECTR_PID_MASK;
+        // PID 0b10 or 0b11 = STALL; otherwise = NAK / general failure.
+        if pid & 0b10 != 0 {
+            HCD_PIPE_STALL.fetch_or(1u16 << n, Ordering::Release);
+        } else {
+            HCD_PIPE_NRDY.fetch_or(1u16 << n, Ordering::Release);
+        }
+        HCD_PIPE_WAKERS[n].wake();
     }
-    HCD_PIPE_WAKERS[n].wake();
 }

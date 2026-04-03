@@ -64,11 +64,13 @@ impl HandlerCell {
     }
     /// Write a new handler.  Caller must ensure no concurrent read.
     unsafe fn set(&self, h: Handler) {
-        *self.0.get() = Some(h);
+        unsafe {
+            *self.0.get() = Some(h);
+        }
     }
     /// Read the current handler.  Caller must ensure no concurrent write.
     unsafe fn get(&self) -> Option<Handler> {
-        *self.0.get()
+        unsafe { *self.0.get() }
     }
 }
 
@@ -141,59 +143,61 @@ static ICDICFR_INIT: [u32; 37] = [
 /// Writes to memory-mapped GIC registers. Must run exactly once before
 /// `cpsie i`.
 pub unsafe fn init() {
-    log::debug!("gic: init ({} IRQ sources)", INT_ID_TOTAL);
-    let n_isr = (INT_ID_TOTAL / 32) + 1; // 19 — ICDISR count
-    let _n_icfr = ICDICFR_INIT.len(); // 37 — ICDICFR count
-    let n_ipr = (INT_ID_TOTAL / 4) + 1; // 147 — ICDIPR count
-    let n_iptr = n_ipr; // 147 — ICDIPTR count
-    let n_icer = n_isr; // 19  — ICDICER count
+    unsafe {
+        log::debug!("gic: init ({} IRQ sources)", INT_ID_TOTAL);
+        let n_isr = (INT_ID_TOTAL / 32) + 1; // 19 — ICDISR count
+        let _n_icfr = ICDICFR_INIT.len(); // 37 — ICDICFR count
+        let n_ipr = (INT_ID_TOTAL / 4) + 1; // 147 — ICDIPR count
+        let n_iptr = n_ipr; // 147 — ICDIPTR count
+        let n_icer = n_isr; // 19  — ICDICER count
 
-    // 1. Mark all interrupts as secure (Group 0), matching the C driver.
-    let igroupr = GICD_IGROUPR0 as *mut u32;
-    for i in 0..n_isr {
-        igroupr.add(i).write_volatile(0);
+        // 1. Mark all interrupts as secure (Group 0), matching the C driver.
+        let igroupr = GICD_IGROUPR0 as *mut u32;
+        for i in 0..n_isr {
+            igroupr.add(i).write_volatile(0);
+        }
+
+        // 2. Edge/level configuration — Renesas-specific table from intc.c.
+        //    ICDICFR0 (index 0) is read-only per TRM (SGIs are always edge); skip it.
+        let icfgr = GICD_ICFGR0 as *mut u32;
+        for (i, &val) in ICDICFR_INIT.iter().enumerate().skip(1) {
+            icfgr.add(i).write_volatile(val);
+        }
+
+        // 3. Set all interrupt priorities to the lowest active level (31).
+        //    Priority field is [7:3], so 31 << 3 = 0xF8 per byte.
+        let ipr = GICD_IPRIORITYR0 as *mut u32;
+        for i in 0..n_ipr {
+            ipr.add(i).write_volatile(0xF8F8_F8F8);
+        }
+
+        // 4. Route all SPI interrupts (IDs 32+) to CPU 0 (target byte = 0x01).
+        //    ICDIPTR0–ICDIPTR7 (IDs 0–31) are CPU-local and must not be touched.
+        let iptr = GICD_ITARGETSR0 as *mut u32;
+        for i in 8..n_iptr {
+            iptr.add(i).write_volatile(0x0101_0101);
+        }
+
+        // 5. Disable all interrupts (ICDICER — write-1-to-clear).
+        let icer = GICD_ICENABLER0 as *mut u32;
+        for i in 0..n_icer {
+            icer.add(i).write_volatile(0xFFFF_FFFF);
+        }
+
+        // 6. CPU interface: priority mask — accept all priorities 0–30.
+        //    ICCPMR bit field [7:3] is valid; 31 << 3 = 0xF8.
+        (GICC_PMR_ADDR as *mut u32).write_volatile(31u32 << 3);
+
+        // 7. Binary point: group priority [7:3], sub-priority [2:0] unused.
+        (GICC_BPR_ADDR as *mut u32).write_volatile(2);
+
+        // 8. Enable CPU interface — FIQ+IRQ forwarding for secure interrupts.
+        (GICC_CTLR_ADDR as *mut u32).write_volatile(0x3);
+
+        // 9. Enable GIC distributor.
+        (GICD_CTLR as *mut u32).write_volatile(1);
+        log::debug!("gic: distributor + CPU interface enabled");
     }
-
-    // 2. Edge/level configuration — Renesas-specific table from intc.c.
-    //    ICDICFR0 (index 0) is read-only per TRM (SGIs are always edge); skip it.
-    let icfgr = GICD_ICFGR0 as *mut u32;
-    for (i, &val) in ICDICFR_INIT.iter().enumerate().skip(1) {
-        icfgr.add(i).write_volatile(val);
-    }
-
-    // 3. Set all interrupt priorities to the lowest active level (31).
-    //    Priority field is [7:3], so 31 << 3 = 0xF8 per byte.
-    let ipr = GICD_IPRIORITYR0 as *mut u32;
-    for i in 0..n_ipr {
-        ipr.add(i).write_volatile(0xF8F8_F8F8);
-    }
-
-    // 4. Route all SPI interrupts (IDs 32+) to CPU 0 (target byte = 0x01).
-    //    ICDIPTR0–ICDIPTR7 (IDs 0–31) are CPU-local and must not be touched.
-    let iptr = GICD_ITARGETSR0 as *mut u32;
-    for i in 8..n_iptr {
-        iptr.add(i).write_volatile(0x0101_0101);
-    }
-
-    // 5. Disable all interrupts (ICDICER — write-1-to-clear).
-    let icer = GICD_ICENABLER0 as *mut u32;
-    for i in 0..n_icer {
-        icer.add(i).write_volatile(0xFFFF_FFFF);
-    }
-
-    // 6. CPU interface: priority mask — accept all priorities 0–30.
-    //    ICCPMR bit field [7:3] is valid; 31 << 3 = 0xF8.
-    (GICC_PMR_ADDR as *mut u32).write_volatile(31u32 << 3);
-
-    // 7. Binary point: group priority [7:3], sub-priority [2:0] unused.
-    (GICC_BPR_ADDR as *mut u32).write_volatile(2);
-
-    // 8. Enable CPU interface — FIQ+IRQ forwarding for secure interrupts.
-    (GICC_CTLR_ADDR as *mut u32).write_volatile(0x3);
-
-    // 9. Enable GIC distributor.
-    (GICD_CTLR as *mut u32).write_volatile(1);
-    log::debug!("gic: distributor + CPU interface enabled");
 }
 
 /// Register a Rust function as the handler for interrupt `id`.
@@ -203,9 +207,11 @@ pub unsafe fn init() {
 /// # Safety
 /// See struct-level safety note. Must be called before IRQ is enabled.
 pub unsafe fn register(id: u16, handler: Handler) {
-    log::trace!("gic: register IRQ {}", id);
-    if (id as usize) < INT_ID_TOTAL {
-        HANDLERS[id as usize].set(handler);
+    unsafe {
+        log::trace!("gic: register IRQ {}", id);
+        if (id as usize) < INT_ID_TOTAL {
+            HANDLERS[id as usize].set(handler);
+        }
     }
 }
 
@@ -214,11 +220,13 @@ pub unsafe fn register(id: u16, handler: Handler) {
 /// # Safety
 /// Writes to memory-mapped peripheral registers.
 pub unsafe fn enable(id: u16) {
-    if (id as usize) >= INT_ID_TOTAL {
-        return;
+    unsafe {
+        if (id as usize) >= INT_ID_TOTAL {
+            return;
+        }
+        let addr = (GICD_ISENABLER0 as *mut u32).add((id >> 5) as usize);
+        addr.write_volatile(1u32 << (id & 31));
     }
-    let addr = (GICD_ISENABLER0 as *mut u32).add((id >> 5) as usize);
-    addr.write_volatile(1u32 << (id & 31));
 }
 
 /// Disable (mask) interrupt `id` in the GIC distributor.
@@ -226,11 +234,13 @@ pub unsafe fn enable(id: u16) {
 /// # Safety
 /// Writes to memory-mapped peripheral registers.
 pub unsafe fn disable(id: u16) {
-    if (id as usize) >= INT_ID_TOTAL {
-        return;
+    unsafe {
+        if (id as usize) >= INT_ID_TOTAL {
+            return;
+        }
+        let addr = (GICD_ICENABLER0 as *mut u32).add((id >> 5) as usize);
+        addr.write_volatile(1u32 << (id & 31));
     }
-    let addr = (GICD_ICENABLER0 as *mut u32).add((id >> 5) as usize);
-    addr.write_volatile(1u32 << (id & 31));
 }
 
 /// Set priority for interrupt `id` (0 = highest, 31 = lowest).
@@ -238,15 +248,17 @@ pub unsafe fn disable(id: u16) {
 /// # Safety
 /// Writes to memory-mapped peripheral registers.
 pub unsafe fn set_priority(id: u16, priority: u8) {
-    if (id as usize) >= INT_ID_TOTAL || priority >= 32 {
-        return;
+    unsafe {
+        if (id as usize) >= INT_ID_TOTAL || priority >= 32 {
+            return;
+        }
+        let addr = (GICD_IPRIORITYR0 as *mut u32).add((id / 4) as usize);
+        let shift = ((id % 4) * 8) as u32;
+        let mut val = addr.read_volatile();
+        val &= !(0xFFu32 << shift);
+        val |= ((priority as u32) << 3) << shift; // bits [7:3] are the valid field
+        addr.write_volatile(val);
     }
-    let addr = (GICD_IPRIORITYR0 as *mut u32).add((id / 4) as usize);
-    let shift = ((id % 4) * 8) as u32;
-    let mut val = addr.read_volatile();
-    val &= !(0xFFu32 << shift);
-    val |= ((priority as u32) << 3) << shift; // bits [7:3] are the valid field
-    addr.write_volatile(val);
 }
 
 // ---------------------------------------------------------------------------
@@ -261,13 +273,15 @@ pub unsafe fn set_priority(id: u16, priority: u8) {
 /// # Safety
 /// Writes to MMIO.  Call before enabling the interrupt in the GIC.
 pub unsafe fn set_irq_both_edges(irq_num: u8) {
-    const ICR1: usize = 0xFCFE_F802;
-    let shift = (irq_num * 2) as u32;
-    let mask = 0b11u16 << shift;
-    let ptr = ICR1 as *mut u16;
-    let cleared = ptr.read_volatile() & !mask; // clear to level-low (00) first
-    ptr.write_volatile(cleared);
-    ptr.write_volatile(cleared | (0b11u16 << shift)); // then both-edges (11)
+    unsafe {
+        const ICR1: usize = 0xFCFE_F802;
+        let shift = (irq_num * 2) as u32;
+        let mask = 0b11u16 << shift;
+        let ptr = ICR1 as *mut u16;
+        let cleared = ptr.read_volatile() & !mask; // clear to level-low (00) first
+        ptr.write_volatile(cleared);
+        ptr.write_volatile(cleared | (0b11u16 << shift)); // then both-edges (11)
+    }
 }
 
 /// Clear the pending flag for external interrupt `irq_num` (0–7) in IRQRR.
@@ -278,9 +292,11 @@ pub unsafe fn set_irq_both_edges(irq_num: u8) {
 /// # Safety
 /// Writes to MMIO register at `0xFCFEF804`.
 pub unsafe fn clear_irq_pending(irq_num: u8) {
-    const IRQRR: usize = 0xFCFE_F804;
-    let ptr = IRQRR as *mut u16;
-    ptr.write_volatile(ptr.read_volatile() & !(1u16 << irq_num));
+    unsafe {
+        const IRQRR: usize = 0xFCFE_F804;
+        let ptr = IRQRR as *mut u16;
+        ptr.write_volatile(ptr.read_volatile() & !(1u16 << irq_num));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -299,24 +315,26 @@ pub unsafe fn clear_irq_pending(irq_num: u8) {
 #[cfg(target_os = "none")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
-    let int_id = (icciar & 0x3FF) as u16;
+    unsafe {
+        let int_id = (icciar & 0x3FF) as u16;
 
-    // IDs 1022 (0x3FE) and 1023 (0x3FF) are spurious — no EOI needed for them
-    // but we just return; the assembly will still write ICCEOIR with the value
-    // we received, which is harmless for 0x3FE/0x3FF.
-    if int_id >= 0x3FE {
-        log::warn!("GIC: spurious IRQ {}", int_id);
-        return;
-    }
+        // IDs 1022 (0x3FE) and 1023 (0x3FF) are spurious — no EOI needed for them
+        // but we just return; the assembly will still write ICCEOIR with the value
+        // we received, which is harmless for 0x3FE/0x3FF.
+        if int_id >= 0x3FE {
+            log::warn!("GIC: spurious IRQ {}", int_id);
+            return;
+        }
 
-    if (int_id as usize) < INT_ID_TOTAL {
-        if let Some(f) = HANDLERS[int_id as usize].get() {
-            // Re-enable IRQ to allow higher-priority interrupts to preempt.
-            cortex_ar::interrupt::enable();
-            f();
-            cortex_ar::interrupt::disable();
-        } else {
-            log::warn!("GIC: id={} no handler — EOI only", int_id);
+        if (int_id as usize) < INT_ID_TOTAL {
+            if let Some(f) = HANDLERS[int_id as usize].get() {
+                // Re-enable IRQ to allow higher-priority interrupts to preempt.
+                cortex_ar::interrupt::enable();
+                f();
+                cortex_ar::interrupt::disable();
+            } else {
+                log::warn!("GIC: id={} no handler — EOI only", int_id);
+            }
         }
     }
 }

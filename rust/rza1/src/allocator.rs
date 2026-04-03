@@ -63,10 +63,12 @@ impl CsHeap {
     /// - Must be called exactly once per instance, before the first
     ///   allocation.
     pub unsafe fn init(&self, start: *mut u8, size: usize) {
-        critical_section::with(|_| {
-            // SAFETY: exclusive via critical section; caller upholds the rest.
-            (*self.0.get()).init(start, size);
-        });
+        unsafe {
+            critical_section::with(|_| {
+                // SAFETY: exclusive via critical section; caller upholds the rest.
+                (*self.0.get()).init(start, size);
+            });
+        }
     }
 
     /// Returns the number of bytes currently in use.
@@ -97,10 +99,12 @@ unsafe impl Allocator for CsHeap {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        critical_section::with(|_| {
-            // SAFETY: exclusive via critical section; caller guarantees ptr.
-            (*self.0.get()).deallocate(ptr, layout);
-        });
+        unsafe {
+            critical_section::with(|_| {
+                // SAFETY: exclusive via critical section; caller guarantees ptr.
+                (*self.0.get()).deallocate(ptr, layout);
+            });
+        }
     }
 }
 

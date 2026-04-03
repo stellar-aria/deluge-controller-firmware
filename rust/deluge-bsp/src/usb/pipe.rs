@@ -220,63 +220,65 @@ impl Default for BufAllocator {
 /// `regs` must be a valid pointer to the USB register block with USBE=1.
 /// Caller must ensure no transfer is active on this pipe.
 pub unsafe fn pipe_configure(regs: *mut Rusb1Regs, n: usize, cfg: &PipeConfig) {
-    debug_assert!((1..=15).contains(&n), "pipe_configure: invalid pipe number");
+    unsafe {
+        debug_assert!((1..=15).contains(&n), "pipe_configure: invalid pipe number");
 
-    // Deactivate the pipe before reconfiguring.
-    wr(pipectr_ptr(regs, n), PIPECTR_PID_NAK);
+        // Deactivate the pipe before reconfiguring.
+        wr(pipectr_ptr(regs, n), PIPECTR_PID_NAK);
 
-    // Select the pipe and write configuration registers.
-    wr(core::ptr::addr_of_mut!((*regs).pipesel), n as u16);
+        // Select the pipe and write configuration registers.
+        wr(core::ptr::addr_of_mut!((*regs).pipesel), n as u16);
 
-    let mut pipecfg = cfg.ep_num as u16 & PIPECFG_EPNUM_MASK;
-    if cfg.is_in {
-        pipecfg |= PIPECFG_DIR;
-    }
-    pipecfg |= cfg.xfer_type.pipecfg_type_bits();
+        let mut pipecfg = cfg.ep_num as u16 & PIPECFG_EPNUM_MASK;
+        if cfg.is_in {
+            pipecfg |= PIPECFG_DIR;
+        }
+        pipecfg |= cfg.xfer_type.pipecfg_type_bits();
 
-    match cfg.xfer_type {
-        XferType::Bulk => {
-            if !cfg.is_in {
-                // SHTNAK: NAK on short packet (OUT), prevents spurious BRDYs.
-                pipecfg |= PIPECFG_SHTNAK;
-                // Double-buffer bulk OUT is explicitly disabled to avoid the
-                // BRDY race described in dcd_rusb1.c comments.
-            } else if cfg.double_buf {
-                pipecfg |= PIPECFG_DBLB;
+        match cfg.xfer_type {
+            XferType::Bulk => {
+                if !cfg.is_in {
+                    // SHTNAK: NAK on short packet (OUT), prevents spurious BRDYs.
+                    pipecfg |= PIPECFG_SHTNAK;
+                    // Double-buffer bulk OUT is explicitly disabled to avoid the
+                    // BRDY race described in dcd_rusb1.c comments.
+                } else if cfg.double_buf {
+                    pipecfg |= PIPECFG_DBLB;
+                }
             }
+            XferType::Isochronous => {
+                pipecfg |= PIPECFG_DBLB; // ISO always double-buffered
+            }
+            _ => {}
         }
-        XferType::Isochronous => {
-            pipecfg |= PIPECFG_DBLB; // ISO always double-buffered
-        }
-        _ => {}
+
+        wr(core::ptr::addr_of_mut!((*regs).pipecfg), pipecfg);
+
+        // PIPEBUF: BUFNMB (start block) | BUFSIZE ((blocks - 1) in 64-byte units).
+        let bufsize_field = ((cfg.buf_blocks as u16).saturating_sub(1)) << PIPEBUF_BUFSIZE_SHIFT;
+        let pipebuf = cfg.buf_start as u16 | bufsize_field;
+        wr(core::ptr::addr_of_mut!((*regs).pipebuf), pipebuf);
+
+        // PIPEMAXP: max packet size.
+        wr(
+            core::ptr::addr_of_mut!((*regs).pipemaxp),
+            cfg.mps & PIPEMAXP_MXPS_MASK,
+        );
+
+        // PIPEPERI: set IFIS for ISO IN pipes (function controller mode).
+        // IFIS=1 causes the hardware to flush the TX buffer if no IN token arrives
+        // within the interval frame, preventing stale audio data from accumulating
+        // (TRM §28.4.9(5)).
+        let pipeperi = if cfg.xfer_type == XferType::Isochronous && cfg.is_in {
+            PIPEPERI_IFIS
+        } else {
+            0
+        };
+        wr(core::ptr::addr_of_mut!((*regs).pipeperi), pipeperi);
+
+        // Deselect pipe.
+        wr(core::ptr::addr_of_mut!((*regs).pipesel), 0);
     }
-
-    wr(core::ptr::addr_of_mut!((*regs).pipecfg), pipecfg);
-
-    // PIPEBUF: BUFNMB (start block) | BUFSIZE ((blocks - 1) in 64-byte units).
-    let bufsize_field = ((cfg.buf_blocks as u16).saturating_sub(1)) << PIPEBUF_BUFSIZE_SHIFT;
-    let pipebuf = cfg.buf_start as u16 | bufsize_field;
-    wr(core::ptr::addr_of_mut!((*regs).pipebuf), pipebuf);
-
-    // PIPEMAXP: max packet size.
-    wr(
-        core::ptr::addr_of_mut!((*regs).pipemaxp),
-        cfg.mps & PIPEMAXP_MXPS_MASK,
-    );
-
-    // PIPEPERI: set IFIS for ISO IN pipes (function controller mode).
-    // IFIS=1 causes the hardware to flush the TX buffer if no IN token arrives
-    // within the interval frame, preventing stale audio data from accumulating
-    // (TRM §28.4.9(5)).
-    let pipeperi = if cfg.xfer_type == XferType::Isochronous && cfg.is_in {
-        PIPEPERI_IFIS
-    } else {
-        0
-    };
-    wr(core::ptr::addr_of_mut!((*regs).pipeperi), pipeperi);
-
-    // Deselect pipe.
-    wr(core::ptr::addr_of_mut!((*regs).pipesel), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -291,31 +293,33 @@ pub unsafe fn pipe_configure(regs: *mut Rusb1Regs, n: usize, cfg: &PipeConfig) {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn pipe_xfer_in_start(regs: *mut Rusb1Regs, n: usize, mps: u16) -> bool {
-    critical_section::with(|cs| {
-        let state = &mut *PIPE_XFER[n].borrow(cs).get();
-        if state.remaining == 0 {
-            state.buf = core::ptr::NonNull::dangling();
-            return true;
-        }
+    unsafe {
+        critical_section::with(|cs| {
+            let state = &mut *PIPE_XFER[n].borrow(cs).get();
+            if state.remaining == 0 {
+                state.buf = core::ptr::NonNull::dangling();
+                return true;
+            }
 
-        let fifo = fifo_for_pipe(regs, n);
-        fifo_select_pipe(&fifo, n, true); // ISEL=1 for IN
+            let fifo = fifo_for_pipe(regs, n);
+            fifo_select_pipe(&fifo, n, true); // ISEL=1 for IN
 
-        if !fifo_is_ready(&fifo, n) {
-            return false;
-        }
+            if !fifo_is_ready(&fifo, n) {
+                return false;
+            }
 
-        let len = (state.remaining as usize).min(mps as usize);
-        sw_to_hw_fifo(&fifo, state.buf.as_ptr(), len);
+            let len = (state.remaining as usize).min(mps as usize);
+            sw_to_hw_fifo(&fifo, state.buf.as_ptr(), len);
 
-        if len < mps as usize {
-            fifo_bval(&fifo); // Short packet — commit the buffer.
-        }
+            if len < mps as usize {
+                fifo_bval(&fifo); // Short packet — commit the buffer.
+            }
 
-        state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
-        state.remaining = state.remaining.saturating_sub(len as u16);
-        state.remaining == 0
-    })
+            state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
+            state.remaining = state.remaining.saturating_sub(len as u16);
+            state.remaining == 0
+        })
+    }
 }
 
 /// Called from BRDY ISR for an OUT pipe.  Reads available data from FIFO
@@ -331,42 +335,79 @@ pub unsafe fn pipe_xfer_in_start(regs: *mut Rusb1Regs, n: usize, mps: u16) -> bo
 /// `regs` must be valid.  Called from ISR context (critical section not needed
 /// on single-core Cortex-A9 with IRQ disabled).
 pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
-    let state = &mut *{
-        // Access state without critical_section — we're already in IRQ context
-        // where the task cannot run (single-core).
-        PIPE_XFER[n]
-            .borrow(critical_section::CriticalSection::new())
-            .get()
-    };
+    unsafe {
+        let state = &mut *{
+            // Access state without critical_section — we're already in IRQ context
+            // where the task cannot run (single-core).
+            PIPE_XFER[n]
+                .borrow(critical_section::CriticalSection::new())
+                .get()
+        };
 
-    let is_iso = state.xfer_type == XferType::Isochronous;
+        let is_iso = state.xfer_type == XferType::Isochronous;
 
-    if state.remaining == 0 {
-        // No active transfer buffer.  For ISO: do NOT BCLR — leave the packet
-        // in the FIFO so the task can read it without missing it.  The task's
-        // re-arm path (in driver.rs EndpointOut::read) will drain it directly
-        // via fifo_is_ready check, or the next BRDY will deliver it once the
-        // task sets up the transfer state.
-        return false;
-    }
+        if state.remaining == 0 {
+            // No active transfer buffer.  For ISO: do NOT BCLR — leave the packet
+            // in the FIFO so the task can read it without missing it.  The task's
+            // re-arm path (in driver.rs EndpointOut::read) will drain it directly
+            // via fifo_is_ready check, or the next BRDY will deliver it once the
+            // task sets up the transfer state.
+            return false;
+        }
 
-    let ctr_ptr = pipectr_ptr(regs, n);
+        let ctr_ptr = pipectr_ptr(regs, n);
 
-    // For non-ISO: NAK first to prevent the SIE from filling the FIFO while
-    // the CPU is reading it (matches C `process_pipe_brdy` NAK-before-read).
-    if !is_iso {
-        let cur = rd(ctr_ptr);
-        wr(
-            ctr_ptr,
-            (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_NAK,
-        );
-    }
+        // For non-ISO: NAK first to prevent the SIE from filling the FIFO while
+        // the CPU is reading it (matches C `process_pipe_brdy` NAK-before-read).
+        if !is_iso {
+            let cur = rd(ctr_ptr);
+            wr(
+                ctr_ptr,
+                (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_NAK,
+            );
+        }
 
-    let fifo = fifo_for_pipe(regs, n);
-    fifo_select_pipe(&fifo, n, false);
+        let fifo = fifo_for_pipe(regs, n);
+        fifo_select_pipe(&fifo, n, false);
 
-    if !fifo_is_ready(&fifo, n) {
-        // FIFO port not ready; re-arm and retry next BRDY.
+        if !fifo_is_ready(&fifo, n) {
+            // FIFO port not ready; re-arm and retry next BRDY.
+            if !is_iso {
+                let cur = rd(ctr_ptr);
+                wr(
+                    ctr_ptr,
+                    (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF,
+                );
+            }
+            return false;
+        }
+
+        let vld = fifo_dtln(&fifo) as usize;
+        let mps = state.mps as usize;
+        let rem = state.remaining as usize;
+        let len = rem.min(mps).min(vld);
+        if len > 0 {
+            hw_to_sw_fifo(&fifo, state.buf.as_ptr(), len);
+            state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
+            state.remaining = state.remaining.saturating_sub(len as u16);
+            state.transferred += len as u16;
+        }
+
+        // Always BCLR after reading (matches C reference — not just on short packet).
+        fifo_bclr(&fifo);
+
+        let done = len < mps || state.remaining == 0;
+        if done {
+            state.buf = core::ptr::NonNull::dangling();
+            // Reset remaining to 0 so the ISO guard at the top of this function
+            // fires correctly if BRDY re-enters before the task calls read() again.
+            // (For ISO, done can be true via len<mps while remaining is still non-zero.)
+            state.remaining = 0;
+            return true;
+        }
+
+        // Transfer not yet complete; re-arm the pipe so the host can send the
+        // next packet (non-ISO only — ISO stays at BUF/auto-managed).
         if !is_iso {
             let cur = rd(ctr_ptr);
             wr(
@@ -374,44 +415,9 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
                 (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF,
             );
         }
-        return false;
+
+        false
     }
-
-    let vld = fifo_dtln(&fifo) as usize;
-    let mps = state.mps as usize;
-    let rem = state.remaining as usize;
-    let len = rem.min(mps).min(vld);
-    if len > 0 {
-        hw_to_sw_fifo(&fifo, state.buf.as_ptr(), len);
-        state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
-        state.remaining = state.remaining.saturating_sub(len as u16);
-        state.transferred += len as u16;
-    }
-
-    // Always BCLR after reading (matches C reference — not just on short packet).
-    fifo_bclr(&fifo);
-
-    let done = len < mps || state.remaining == 0;
-    if done {
-        state.buf = core::ptr::NonNull::dangling();
-        // Reset remaining to 0 so the ISO guard at the top of this function
-        // fires correctly if BRDY re-enters before the task calls read() again.
-        // (For ISO, done can be true via len<mps while remaining is still non-zero.)
-        state.remaining = 0;
-        return true;
-    }
-
-    // Transfer not yet complete; re-arm the pipe so the host can send the
-    // next packet (non-ISO only — ISO stays at BUF/auto-managed).
-    if !is_iso {
-        let cur = rd(ctr_ptr);
-        wr(
-            ctr_ptr,
-            (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF,
-        );
-    }
-
-    false
 }
 
 /// Called from BEMP ISR for an IN pipe.  Writes the next packet to FIFO,
@@ -422,35 +428,37 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
 /// # Safety
 /// `regs` must be valid.  Called from ISR context.
 pub unsafe fn pipe_xfer_in_bemp(regs: *mut Rusb1Regs, n: usize) -> bool {
-    let state = &mut *{
-        PIPE_XFER[n]
-            .borrow(critical_section::CriticalSection::new())
-            .get()
-    };
+    unsafe {
+        let state = &mut *{
+            PIPE_XFER[n]
+                .borrow(critical_section::CriticalSection::new())
+                .get()
+        };
 
-    if state.remaining == 0 {
-        state.buf = core::ptr::NonNull::dangling();
-        return true;
+        if state.remaining == 0 {
+            state.buf = core::ptr::NonNull::dangling();
+            return true;
+        }
+
+        let mps = state.mps as usize;
+        let fifo = fifo_for_pipe(regs, n);
+        fifo_select_pipe(&fifo, n, true);
+
+        if !fifo_is_ready(&fifo, n) {
+            return false;
+        }
+
+        let len = (state.remaining as usize).min(mps);
+        sw_to_hw_fifo(&fifo, state.buf.as_ptr(), len);
+
+        if len < mps {
+            fifo_bval(&fifo);
+        }
+
+        state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
+        state.remaining = state.remaining.saturating_sub(len as u16);
+        false
     }
-
-    let mps = state.mps as usize;
-    let fifo = fifo_for_pipe(regs, n);
-    fifo_select_pipe(&fifo, n, true);
-
-    if !fifo_is_ready(&fifo, n) {
-        return false;
-    }
-
-    let len = (state.remaining as usize).min(mps);
-    sw_to_hw_fifo(&fifo, state.buf.as_ptr(), len);
-
-    if len < mps {
-        fifo_bval(&fifo);
-    }
-
-    state.buf = unsafe { core::ptr::NonNull::new_unchecked(state.buf.as_ptr().add(len)) };
-    state.remaining = state.remaining.saturating_sub(len as u16);
-    false
 }
 
 // ---------------------------------------------------------------------------
@@ -462,12 +470,14 @@ pub unsafe fn pipe_xfer_in_bemp(regs: *mut Rusb1Regs, n: usize) -> bool {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn pipe_enable(regs: *mut Rusb1Regs, n: usize) {
-    let ctr = pipectr_ptr(regs, n);
-    let cur = rd(ctr);
-    wr(
-        ctr,
-        (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF,
-    );
+    unsafe {
+        let ctr = pipectr_ptr(regs, n);
+        let cur = rd(ctr);
+        wr(
+            ctr,
+            (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_BUF,
+        );
+    }
 }
 
 /// Set PID=NAK to halt data transfer on pipe `n`.
@@ -475,12 +485,14 @@ pub unsafe fn pipe_enable(regs: *mut Rusb1Regs, n: usize) {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn pipe_disable(regs: *mut Rusb1Regs, n: usize) {
-    let ctr = pipectr_ptr(regs, n);
-    let cur = rd(ctr);
-    wr(
-        ctr,
-        (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_NAK,
-    );
+    unsafe {
+        let ctr = pipectr_ptr(regs, n);
+        let cur = rd(ctr);
+        wr(
+            ctr,
+            (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_NAK,
+        );
+    }
 }
 
 /// Set PID=STALL on pipe `n`.
@@ -488,12 +500,14 @@ pub unsafe fn pipe_disable(regs: *mut Rusb1Regs, n: usize) {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn pipe_stall(regs: *mut Rusb1Regs, n: usize) {
-    let ctr = pipectr_ptr(regs, n);
-    let cur = rd(ctr);
-    wr(
-        ctr,
-        (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_STALL,
-    );
+    unsafe {
+        let ctr = pipectr_ptr(regs, n);
+        let cur = rd(ctr);
+        wr(
+            ctr,
+            (cur & !super::regs::PIPECTR_PID_MASK) | PIPECTR_PID_STALL,
+        );
+    }
 }
 
 /// Clear the data toggle and FIFO on pipe `n`, then set PID=NAK.
@@ -501,11 +515,13 @@ pub unsafe fn pipe_stall(regs: *mut Rusb1Regs, n: usize) {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn pipe_reset(regs: *mut Rusb1Regs, n: usize) {
-    let ctr = pipectr_ptr(regs, n);
-    // Set ACLRM (auto clear FIFO and toggle) then clear it, per TRM.
-    wr(ctr, PIPECTR_PID_NAK | PIPECTR_ACLRM);
-    wr(ctr, PIPECTR_PID_NAK);
-    wr(ctr, PIPECTR_PID_NAK | PIPECTR_SQCLR);
+    unsafe {
+        let ctr = pipectr_ptr(regs, n);
+        // Set ACLRM (auto clear FIFO and toggle) then clear it, per TRM.
+        wr(ctr, PIPECTR_PID_NAK | PIPECTR_ACLRM);
+        wr(ctr, PIPECTR_PID_NAK);
+        wr(ctr, PIPECTR_PID_NAK | PIPECTR_SQCLR);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -517,12 +533,14 @@ pub unsafe fn pipe_reset(regs: *mut Rusb1Regs, n: usize) {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn pipe_brdy_enable(regs: *mut Rusb1Regs, n: usize) {
-    let brdysts = core::ptr::addr_of_mut!((*regs).brdysts);
-    let brdyenb = core::ptr::addr_of_mut!((*regs).brdyenb);
-    // Clear any pending BRDY for this pipe before enabling.
-    wr(brdysts, !((1u16) << n));
-    let cur = rd(brdyenb);
-    wr(brdyenb, cur | (1u16 << n));
+    unsafe {
+        let brdysts = core::ptr::addr_of_mut!((*regs).brdysts);
+        let brdyenb = core::ptr::addr_of_mut!((*regs).brdyenb);
+        // Clear any pending BRDY for this pipe before enabling.
+        wr(brdysts, !((1u16) << n));
+        let cur = rd(brdyenb);
+        wr(brdyenb, cur | (1u16 << n));
+    }
 }
 
 /// Disable BRDY interrupt for pipe `n`.
@@ -530,9 +548,11 @@ pub unsafe fn pipe_brdy_enable(regs: *mut Rusb1Regs, n: usize) {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn pipe_brdy_disable(regs: *mut Rusb1Regs, n: usize) {
-    let brdyenb = core::ptr::addr_of_mut!((*regs).brdyenb);
-    let cur = rd(brdyenb);
-    wr(brdyenb, cur & !(1u16 << n));
+    unsafe {
+        let brdyenb = core::ptr::addr_of_mut!((*regs).brdyenb);
+        let cur = rd(brdyenb);
+        wr(brdyenb, cur & !(1u16 << n));
+    }
 }
 
 /// Enable BEMP interrupt for pipe `n`.
@@ -540,11 +560,13 @@ pub unsafe fn pipe_brdy_disable(regs: *mut Rusb1Regs, n: usize) {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn pipe_bemp_enable(regs: *mut Rusb1Regs, n: usize) {
-    let bempsts = core::ptr::addr_of_mut!((*regs).bempsts);
-    let bempenb = core::ptr::addr_of_mut!((*regs).bempenb);
-    wr(bempsts, !((1u16) << n));
-    let cur = rd(bempenb);
-    wr(bempenb, cur | (1u16 << n));
+    unsafe {
+        let bempsts = core::ptr::addr_of_mut!((*regs).bempsts);
+        let bempenb = core::ptr::addr_of_mut!((*regs).bempenb);
+        wr(bempsts, !((1u16) << n));
+        let cur = rd(bempenb);
+        wr(bempenb, cur | (1u16 << n));
+    }
 }
 
 /// Disable BEMP interrupt for pipe `n`.
@@ -552,9 +574,11 @@ pub unsafe fn pipe_bemp_enable(regs: *mut Rusb1Regs, n: usize) {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn pipe_bemp_disable(regs: *mut Rusb1Regs, n: usize) {
-    let bempenb = core::ptr::addr_of_mut!((*regs).bempenb);
-    let cur = rd(bempenb);
-    wr(bempenb, cur & !(1u16 << n));
+    unsafe {
+        let bempenb = core::ptr::addr_of_mut!((*regs).bempenb);
+        let cur = rd(bempenb);
+        wr(bempenb, cur & !(1u16 << n));
+    }
 }
 
 // ---------------------------------------------------------------------------

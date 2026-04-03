@@ -242,48 +242,50 @@ unsafe fn reg32(base: usize, off: usize) -> *mut u32 {
 /// # Safety
 /// Writes to memory-mapped peripheral registers.
 pub unsafe fn init(port: u8) {
-    // ---- enable SDHI module clock (STBCR12: bits 3:0 = SDHI11, 10, 01, 00) ----
-    let stbcr12 = STBCR12 as *mut u8;
-    stbcr12.write_volatile(0xF0); // enable both SDHI0 and SDHI1
-    let _ = stbcr12.read_volatile(); // dummy read (required per RZ/A1 HW manual)
+    unsafe {
+        // ---- enable SDHI module clock (STBCR12: bits 3:0 = SDHI11, 10, 01, 00) ----
+        let stbcr12 = STBCR12 as *mut u8;
+        stbcr12.write_volatile(0xF0); // enable both SDHI0 and SDHI1
+        let _ = stbcr12.read_volatile(); // dummy read (required per RZ/A1 HW manual)
 
-    let base = port_base(port);
+        let base = port_base(port);
 
-    // ---- mask all meaningful interrupts (0 = enabled, 1 = masked) ----
-    // Values match sd_init.c: SD_INFO1_MASK=0x031D, SD_INFO2_MASK=0x8B7F (RZA1)
-    reg16(base, OFF_INFO1_MASK).write_volatile(0x031D);
-    reg16(base, OFF_INFO2_MASK).write_volatile(0x8B7F);
-    reg16(base, OFF_SDIO_INFO1_MASK).write_volatile(0xC007);
+        // ---- mask all meaningful interrupts (0 = enabled, 1 = masked) ----
+        // Values match sd_init.c: SD_INFO1_MASK=0x031D, SD_INFO2_MASK=0x8B7F (RZA1)
+        reg16(base, OFF_INFO1_MASK).write_volatile(0x031D);
+        reg16(base, OFF_INFO2_MASK).write_volatile(0x8B7F);
+        reg16(base, OFF_SDIO_INFO1_MASK).write_volatile(0xC007);
 
-    // ---- clear SDIO mode ----
-    reg16(base, OFF_SDIO_MODE).write_volatile(0x0000);
+        // ---- clear SDIO mode ----
+        reg16(base, OFF_SDIO_MODE).write_volatile(0x0000);
 
-    // ---- clear status registers ----
-    // Clear RESP(bit0) and DATA_TRNS(bit2) only, per sd_init.c: info1 & ~0x0005
-    let info1 = reg16(base, OFF_INFO1).read_volatile();
-    reg16(base, OFF_INFO1).write_volatile(info1 & !0x0005u16);
-    reg16(base, OFF_INFO2).write_volatile(0x0000);
-    reg16(base, OFF_SDIO_INFO1).write_volatile(0x0000);
+        // ---- clear status registers ----
+        // Clear RESP(bit0) and DATA_TRNS(bit2) only, per sd_init.c: info1 & ~0x0005
+        let info1 = reg16(base, OFF_INFO1).read_volatile();
+        reg16(base, OFF_INFO1).write_volatile(info1 & !0x0005u16);
+        reg16(base, OFF_INFO2).write_volatile(0x0000);
+        reg16(base, OFF_SDIO_INFO1).write_volatile(0x0000);
 
-    // ---- soft reset (RZ/A1 variant: 0x0006 → 0x0007) ----
-    reg16(base, OFF_SOFT_RST).write_volatile(0x0006);
-    reg16(base, OFF_SOFT_RST).write_volatile(0x0007);
+        // ---- soft reset (RZ/A1 variant: 0x0006 → 0x0007) ----
+        reg16(base, OFF_SOFT_RST).write_volatile(0x0006);
+        reg16(base, OFF_SOFT_RST).write_volatile(0x0007);
 
-    // ---- SD_OPTION: NCycle = SDCLK×2^23, 4-bit bus ----
-    // Value 0x00BD: Rohan's tuning for faster card detect on the Deluge.
-    reg16(base, OFF_OPTION).write_volatile(0x00BD);
+        // ---- SD_OPTION: NCycle = SDCLK×2^23, 4-bit bus ----
+        // Value 0x00BD: Rohan's tuning for faster card detect on the Deluge.
+        reg16(base, OFF_OPTION).write_volatile(0x00BD);
 
-    // ---- EXT_SWAP: no byte-swap ----
-    reg16(base, OFF_EXT_SWAP).write_volatile(0x0000);
+        // ---- EXT_SWAP: no byte-swap ----
+        reg16(base, OFF_EXT_SWAP).write_volatile(0x0000);
 
-    // ---- CC_EXT_MODE: software transfer mode (no DMA yet) ----
-    reg16(base, OFF_CC_EXT_MODE).write_volatile(0x0000);
+        // ---- CC_EXT_MODE: software transfer mode (no DMA yet) ----
+        reg16(base, OFF_CC_EXT_MODE).write_volatile(0x0000);
 
-    // ---- block size = 512 bytes ----
-    reg16(base, OFF_SIZE).write_volatile(512);
+        // ---- block size = 512 bytes ----
+        reg16(base, OFF_SIZE).write_volatile(512);
 
-    // ---- start at identification clock (~130 kHz, P1/512) ----
-    reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_512 | CLK_ENABLE);
+        // ---- start at identification clock (~130 kHz, P1/512) ----
+        reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_512 | CLK_ENABLE);
+    }
 }
 
 /// Switch the SD clock to high-speed mode (~16.7 MHz, P1/4).
@@ -293,17 +295,19 @@ pub unsafe fn init(port: u8) {
 /// # Safety
 /// Writes to memory-mapped SDHI register.
 pub unsafe fn set_clock_fast(port: u8) {
-    let base = port_base(port);
-    // Wait for clock divider change to settle
-    for _ in 0..10_000u32 {
-        if reg16(base, OFF_INFO2).read_volatile() & INFO2_SCLKDIVEN != 0 {
-            break;
+    unsafe {
+        let base = port_base(port);
+        // Wait for clock divider change to settle
+        for _ in 0..10_000u32 {
+            if reg16(base, OFF_INFO2).read_volatile() & INFO2_SCLKDIVEN != 0 {
+                break;
+            }
         }
-    }
-    reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_4 | CLK_ENABLE);
-    for _ in 0..10_000u32 {
-        if reg16(base, OFF_INFO2).read_volatile() & INFO2_SCLKDIVEN != 0 {
-            break;
+        reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_4 | CLK_ENABLE);
+        for _ in 0..10_000u32 {
+            if reg16(base, OFF_INFO2).read_volatile() & INFO2_SCLKDIVEN != 0 {
+                break;
+            }
         }
     }
 }
@@ -315,16 +319,18 @@ pub unsafe fn set_clock_fast(port: u8) {
 /// # Safety
 /// Writes to GIC registers.
 pub unsafe fn register_irqs(port: u8) {
-    let irqs = if port == 0 { SDHI0_IRQS } else { SDHI1_IRQS };
-    let handlers: [gic::Handler; 3] = if port == 0 {
-        [irq_sdhi0_cd, irq_sdhi0_op, irq_sdhi0_io]
-    } else {
-        [irq_sdhi1_cd, irq_sdhi1_op, irq_sdhi1_io]
-    };
-    for i in 0..3 {
-        gic::register(irqs[i], handlers[i]);
-        gic::set_priority(irqs[i], SDHI_IRQ_PRIORITY);
-        gic::enable(irqs[i]);
+    unsafe {
+        let irqs = if port == 0 { SDHI0_IRQS } else { SDHI1_IRQS };
+        let handlers: [gic::Handler; 3] = if port == 0 {
+            [irq_sdhi0_cd, irq_sdhi0_op, irq_sdhi0_io]
+        } else {
+            [irq_sdhi1_cd, irq_sdhi1_op, irq_sdhi1_io]
+        };
+        for i in 0..3 {
+            gic::register(irqs[i], handlers[i]);
+            gic::set_priority(irqs[i], SDHI_IRQ_PRIORITY);
+            gic::enable(irqs[i]);
+        }
     }
 }
 
@@ -363,25 +369,27 @@ fn irq_sdhi1_io() { /* SDIO not used; clear and ignore */
 /// # Safety
 /// Reads and writes memory-mapped SDHI registers.
 pub unsafe fn interrupt_handler(port: u8) {
-    let base = port_base(port);
+    unsafe {
+        let base = port_base(port);
 
-    // Read status
-    let info1 = reg16(base, OFF_INFO1).read_volatile();
-    let info2 = reg16(base, OFF_INFO2).read_volatile();
+        // Read status
+        let info1 = reg16(base, OFF_INFO1).read_volatile();
+        let info2 = reg16(base, OFF_INFO2).read_volatile();
 
-    // Clear bits by writing 0 (write-0-to-clear per RZ/A1 HW manual).
-    // Only clear the bits we just read to avoid losing a racing edge.
-    reg16(base, OFF_INFO1).write_volatile(!info1);
-    reg16(base, OFF_INFO2).write_volatile(!info2);
+        // Clear bits by writing 0 (write-0-to-clear per RZ/A1 HW manual).
+        // Only clear the bits we just read to avoid losing a racing edge.
+        reg16(base, OFF_INFO1).write_volatile(!info1);
+        reg16(base, OFF_INFO2).write_volatile(!info2);
 
-    // Also clear SDIO status to prevent spurious SDIO interrupts.
-    let sdio = reg16(base, OFF_SDIO_INFO1).read_volatile();
-    reg16(base, OFF_SDIO_INFO1).write_volatile(!sdio);
+        // Also clear SDIO status to prevent spurious SDIO interrupts.
+        let sdio = reg16(base, OFF_SDIO_INFO1).read_volatile();
+        reg16(base, OFF_SDIO_INFO1).write_volatile(!sdio);
 
-    let st = &STATE[port as usize];
-    st.info1.fetch_or(info1, Ordering::Release);
-    st.info2.fetch_or(info2, Ordering::Release);
-    st.waker.wake();
+        let st = &STATE[port as usize];
+        st.info1.fetch_or(info1, Ordering::Release);
+        st.info2.fetch_or(info2, Ordering::Release);
+        st.waker.wake();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -423,9 +431,11 @@ fn clear_info(port: u8) {
 /// Writes to SDHI registers.
 #[inline]
 pub unsafe fn set_arg(port: u8, arg: u32) {
-    let base = port_base(port);
-    reg16(base, OFF_ARG0).write_volatile((arg & 0xFFFF) as u16);
-    reg16(base, OFF_ARG1).write_volatile((arg >> 16) as u16);
+    unsafe {
+        let base = port_base(port);
+        reg16(base, OFF_ARG0).write_volatile((arg & 0xFFFF) as u16);
+        reg16(base, OFF_ARG1).write_volatile((arg >> 16) as u16);
+    }
 }
 
 /// Wait for the clock divider register to be ready (SCLKDIVEN bit).
@@ -433,13 +443,15 @@ pub unsafe fn set_arg(port: u8, arg: u32) {
 /// # Safety
 /// Reads SDHI INFO2 register.
 pub unsafe fn wait_clk_stable(port: u8) {
-    let base = port_base(port);
-    for _ in 0..100_000u32 {
-        if reg16(base, OFF_INFO2).read_volatile() & INFO2_SCLKDIVEN != 0 {
-            return;
+    unsafe {
+        let base = port_base(port);
+        for _ in 0..100_000u32 {
+            if reg16(base, OFF_INFO2).read_volatile() & INFO2_SCLKDIVEN != 0 {
+                return;
+            }
         }
+        // Timeout — continue anyway; hardware may still work.
     }
-    // Timeout — continue anyway; hardware may still work.
 }
 
 // ---------------------------------------------------------------------------
@@ -521,61 +533,63 @@ fn check_info2_errors(info2: u16) -> Result<(), SdhiError> {
 /// Reads/writes SDHI peripheral registers. Must not be called concurrently
 /// for the same port.
 pub async unsafe fn send_cmd(port: u8, cmd_val: u16) -> Result<(), SdhiError> {
-    let base = port_base(port);
+    unsafe {
+        let base = port_base(port);
 
-    // Wait for clock to be stable
-    wait_clk_stable(port);
+        // Wait for clock to be stable
+        wait_clk_stable(port);
 
-    // Clear any stale interrupt state
-    clear_info(port);
+        // Clear any stale interrupt state
+        clear_info(port);
 
-    // Enable response-end and error interrupts.
-    // Hardware polarity: 0 = enabled, 1 = masked → write bitwise complement.
-    // INFO1: enable RESP only  → ~0x0001 = 0xFFFE
-    // INFO2: enable ERR_ALL (includes ILA) → ~INFO2_ERR_ALL = 0x7F80
-    reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_RESP);
-    reg16(base, OFF_INFO2_MASK).write_volatile(!INFO2_ERR_ALL);
+        // Enable response-end and error interrupts.
+        // Hardware polarity: 0 = enabled, 1 = masked → write bitwise complement.
+        // INFO1: enable RESP only  → ~0x0001 = 0xFFFE
+        // INFO2: enable ERR_ALL (includes ILA) → ~INFO2_ERR_ALL = 0x7F80
+        reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_RESP);
+        reg16(base, OFF_INFO2_MASK).write_volatile(!INFO2_ERR_ALL);
 
-    // Issue command
-    reg16(base, OFF_CMD).write_volatile(cmd_val);
+        // Issue command
+        reg16(base, OFF_CMD).write_volatile(cmd_val);
 
-    // Async wait
-    let result = poll_fn(|cx| {
-        let st = &STATE[port as usize];
-        let i1 = st.info1.load(Ordering::Acquire);
-        let i2 = st.info2.load(Ordering::Acquire);
+        // Async wait
+        let result = poll_fn(|cx| {
+            let st = &STATE[port as usize];
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
 
-        // Check errors first
-        if let Err(e) = check_info2_errors(i2) {
-            return Poll::Ready(Err(e));
-        }
-        // Check success
-        if i1 & INFO1_RESP != 0 {
-            return Poll::Ready(Ok(()));
-        }
-        // Still waiting — register waker
-        st.waker.register(cx.waker());
-        // Re-check in case interrupt fired between the load and register
-        let i1 = st.info1.load(Ordering::Acquire);
-        let i2 = st.info2.load(Ordering::Acquire);
-        if let Err(e) = check_info2_errors(i2) {
-            return Poll::Ready(Err(e));
-        }
-        if i1 & INFO1_RESP != 0 {
-            return Poll::Ready(Ok(()));
-        }
-        Poll::Pending
-    })
-    .await;
+            // Check errors first
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            // Check success
+            if i1 & INFO1_RESP != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            // Still waiting — register waker
+            st.waker.register(cx.waker());
+            // Re-check in case interrupt fired between the load and register
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_RESP != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Pending
+        })
+        .await;
 
-    // Disable all interrupts (0 = enabled, 1 = masked → 0xFFFF masks all)
-    reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
-    reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
+        // Disable all interrupts (0 = enabled, 1 = masked → 0xFFFF masks all)
+        reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
+        reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
 
-    // Clear accumulated state
-    clear_info(port);
+        // Clear accumulated state
+        clear_info(port);
 
-    result
+        result
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -587,10 +601,12 @@ pub async unsafe fn send_cmd(port: u8, cmd_val: u16) -> Result<(), SdhiError> {
 /// # Safety
 /// Reads SDHI response registers.
 pub unsafe fn read_r1(port: u8) -> u32 {
-    let base = port_base(port);
-    let lo = reg16(base, OFF_RESP0).read_volatile() as u32;
-    let hi = reg16(base, OFF_RESP1).read_volatile() as u32;
-    (hi << 16) | lo
+    unsafe {
+        let base = port_base(port);
+        let lo = reg16(base, OFF_RESP0).read_volatile() as u32;
+        let hi = reg16(base, OFF_RESP1).read_volatile() as u32;
+        (hi << 16) | lo
+    }
 }
 
 /// Read the full 128-bit R2 response (CID or CSD register).
@@ -600,14 +616,16 @@ pub unsafe fn read_r1(port: u8) -> u32 {
 /// # Safety
 /// Reads SDHI response registers.
 pub unsafe fn read_r2(port: u8) -> [u32; 4] {
-    let base = port_base(port);
-    let r = |off: usize| reg16(base, off).read_volatile() as u32;
-    [
-        (r(OFF_RESP7) << 16) | r(OFF_RESP6),
-        (r(OFF_RESP5) << 16) | r(OFF_RESP4),
-        (r(OFF_RESP3) << 16) | r(OFF_RESP2),
-        (r(OFF_RESP1) << 16) | r(OFF_RESP0),
-    ]
+    unsafe {
+        let base = port_base(port);
+        let r = |off: usize| reg16(base, off).read_volatile() as u32;
+        [
+            (r(OFF_RESP7) << 16) | r(OFF_RESP6),
+            (r(OFF_RESP5) << 16) | r(OFF_RESP4),
+            (r(OFF_RESP3) << 16) | r(OFF_RESP2),
+            (r(OFF_RESP1) << 16) | r(OFF_RESP0),
+        ]
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -627,83 +645,85 @@ pub unsafe fn read_r2(port: u8) -> [u32; 4] {
 /// # Safety
 /// Reads/writes SDHI registers and the provided buffer.
 pub async unsafe fn read_blocks_sw(port: u8, buf: *mut u8, count: u32) -> Result<(), SdhiError> {
-    let base = port_base(port);
+    unsafe {
+        let base = port_base(port);
 
-    // Enable DATA_TRNS (access end), BRE, and all errors.
-    // Hardware polarity: 0 = enabled, 1 = masked → write bitwise complement.
-    // INFO1: enable DATA_TRNS only  → ~INFO1_DATA_TRNS = 0xFFFB
-    // INFO2: enable ERR_ALL + BRE   → ~(INFO2_ERR_ALL | INFO2_BRE) = 0x7E80
-    reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_DATA_TRNS);
-    reg16(base, OFF_INFO2_MASK).write_volatile(!(INFO2_ERR_ALL | INFO2_BRE));
+        // Enable DATA_TRNS (access end), BRE, and all errors.
+        // Hardware polarity: 0 = enabled, 1 = masked → write bitwise complement.
+        // INFO1: enable DATA_TRNS only  → ~INFO1_DATA_TRNS = 0xFFFB
+        // INFO2: enable ERR_ALL + BRE   → ~(INFO2_ERR_ALL | INFO2_BRE) = 0x7E80
+        reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_DATA_TRNS);
+        reg16(base, OFF_INFO2_MASK).write_volatile(!(INFO2_ERR_ALL | INFO2_BRE));
 
-    let mut dst = buf;
-    for _block in 0..count {
-        // Wait for Buffer Read Enable
+        let mut dst = buf;
+        for _block in 0..count {
+            // Wait for Buffer Read Enable
+            poll_fn(|cx| {
+                let st = &STATE[port as usize];
+                let i2 = st.info2.load(Ordering::Acquire);
+                if i2 & INFO2_BRE != 0 {
+                    // Consume the BRE bit only
+                    st.info2.fetch_and(!INFO2_BRE, Ordering::AcqRel);
+                    return Poll::Ready(Ok::<(), SdhiError>(()));
+                }
+                if let Err(e) = check_info2_errors(i2) {
+                    return Poll::Ready(Err(e));
+                }
+                st.waker.register(cx.waker());
+                // Double-check
+                let i2 = st.info2.load(Ordering::Acquire);
+                if i2 & INFO2_BRE != 0 {
+                    st.info2.fetch_and(!INFO2_BRE, Ordering::AcqRel);
+                    return Poll::Ready(Ok(()));
+                }
+                if let Err(e) = check_info2_errors(i2) {
+                    return Poll::Ready(Err(e));
+                }
+                Poll::Pending
+            })
+            .await?;
+
+            // Drain 512 bytes from 32-bit FIFO (128 reads)
+            let fifo = reg32(base, OFF_BUF0);
+            for w in 0..128usize {
+                let word = fifo.read_volatile();
+                let p = dst.add(w * 4) as *mut u32;
+                p.write_unaligned(word);
+            }
+            dst = dst.add(512);
+        }
+
+        // Wait for access end (DATA_TRNS)
         poll_fn(|cx| {
             let st = &STATE[port as usize];
+            let i1 = st.info1.load(Ordering::Acquire);
             let i2 = st.info2.load(Ordering::Acquire);
-            if i2 & INFO2_BRE != 0 {
-                // Consume the BRE bit only
-                st.info2.fetch_and(!INFO2_BRE, Ordering::AcqRel);
-                return Poll::Ready(Ok::<(), SdhiError>(()));
-            }
             if let Err(e) = check_info2_errors(i2) {
                 return Poll::Ready(Err(e));
             }
-            st.waker.register(cx.waker());
-            // Double-check
-            let i2 = st.info2.load(Ordering::Acquire);
-            if i2 & INFO2_BRE != 0 {
-                st.info2.fetch_and(!INFO2_BRE, Ordering::AcqRel);
+            if i1 & INFO1_DATA_TRNS != 0 {
                 return Poll::Ready(Ok(()));
             }
+            st.waker.register(cx.waker());
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
             if let Err(e) = check_info2_errors(i2) {
                 return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_DATA_TRNS != 0 {
+                return Poll::Ready(Ok(()));
             }
             Poll::Pending
         })
         .await?;
 
-        // Drain 512 bytes from 32-bit FIFO (128 reads)
-        let fifo = reg32(base, OFF_BUF0);
-        for w in 0..128usize {
-            let word = fifo.read_volatile();
-            let p = dst.add(w * 4) as *mut u32;
-            p.write_unaligned(word);
-        }
-        dst = dst.add(512);
+        // Disable all interrupts (0xFFFF = all masked)
+        reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
+        reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
+        clear_info(port);
+
+        Ok(())
     }
-
-    // Wait for access end (DATA_TRNS)
-    poll_fn(|cx| {
-        let st = &STATE[port as usize];
-        let i1 = st.info1.load(Ordering::Acquire);
-        let i2 = st.info2.load(Ordering::Acquire);
-        if let Err(e) = check_info2_errors(i2) {
-            return Poll::Ready(Err(e));
-        }
-        if i1 & INFO1_DATA_TRNS != 0 {
-            return Poll::Ready(Ok(()));
-        }
-        st.waker.register(cx.waker());
-        let i1 = st.info1.load(Ordering::Acquire);
-        let i2 = st.info2.load(Ordering::Acquire);
-        if let Err(e) = check_info2_errors(i2) {
-            return Poll::Ready(Err(e));
-        }
-        if i1 & INFO1_DATA_TRNS != 0 {
-            return Poll::Ready(Ok(()));
-        }
-        Poll::Pending
-    })
-    .await?;
-
-    // Disable all interrupts (0xFFFF = all masked)
-    reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
-    reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
-    clear_info(port);
-
-    Ok(())
 }
 
 /// Write `count` 512-byte blocks from `buf` to the card.
@@ -713,79 +733,81 @@ pub async unsafe fn read_blocks_sw(port: u8, buf: *mut u8, count: u32) -> Result
 /// # Safety
 /// Reads/writes SDHI registers and the provided buffer.
 pub async unsafe fn write_blocks_sw(port: u8, buf: *const u8, count: u32) -> Result<(), SdhiError> {
-    let base = port_base(port);
+    unsafe {
+        let base = port_base(port);
 
-    // Enable DATA_TRNS, BWE, and all errors.
-    // Hardware polarity: 0 = enabled, 1 = masked → write bitwise complement.
-    // INFO1: enable DATA_TRNS only  → ~INFO1_DATA_TRNS = 0xFFFB
-    // INFO2: enable ERR_ALL + BWE   → ~(INFO2_ERR_ALL | INFO2_BWE) = 0x7D80
-    reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_DATA_TRNS);
-    reg16(base, OFF_INFO2_MASK).write_volatile(!(INFO2_ERR_ALL | INFO2_BWE));
+        // Enable DATA_TRNS, BWE, and all errors.
+        // Hardware polarity: 0 = enabled, 1 = masked → write bitwise complement.
+        // INFO1: enable DATA_TRNS only  → ~INFO1_DATA_TRNS = 0xFFFB
+        // INFO2: enable ERR_ALL + BWE   → ~(INFO2_ERR_ALL | INFO2_BWE) = 0x7D80
+        reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_DATA_TRNS);
+        reg16(base, OFF_INFO2_MASK).write_volatile(!(INFO2_ERR_ALL | INFO2_BWE));
 
-    let mut src = buf;
-    for _block in 0..count {
-        // Wait for Buffer Write Enable
+        let mut src = buf;
+        for _block in 0..count {
+            // Wait for Buffer Write Enable
+            poll_fn(|cx| {
+                let st = &STATE[port as usize];
+                let i2 = st.info2.load(Ordering::Acquire);
+                if i2 & INFO2_BWE != 0 {
+                    st.info2.fetch_and(!INFO2_BWE, Ordering::AcqRel);
+                    return Poll::Ready(Ok::<(), SdhiError>(()));
+                }
+                if let Err(e) = check_info2_errors(i2) {
+                    return Poll::Ready(Err(e));
+                }
+                st.waker.register(cx.waker());
+                let i2 = st.info2.load(Ordering::Acquire);
+                if i2 & INFO2_BWE != 0 {
+                    st.info2.fetch_and(!INFO2_BWE, Ordering::AcqRel);
+                    return Poll::Ready(Ok(()));
+                }
+                if let Err(e) = check_info2_errors(i2) {
+                    return Poll::Ready(Err(e));
+                }
+                Poll::Pending
+            })
+            .await?;
+
+            // Fill 512 bytes into 32-bit FIFO (128 writes)
+            let fifo = reg32(base, OFF_BUF0);
+            for w in 0..128usize {
+                let p = src.add(w * 4) as *const u32;
+                fifo.write_volatile(p.read_unaligned());
+            }
+            src = src.add(512);
+        }
+
+        // Wait for access end
         poll_fn(|cx| {
             let st = &STATE[port as usize];
+            let i1 = st.info1.load(Ordering::Acquire);
             let i2 = st.info2.load(Ordering::Acquire);
-            if i2 & INFO2_BWE != 0 {
-                st.info2.fetch_and(!INFO2_BWE, Ordering::AcqRel);
-                return Poll::Ready(Ok::<(), SdhiError>(()));
-            }
             if let Err(e) = check_info2_errors(i2) {
                 return Poll::Ready(Err(e));
             }
-            st.waker.register(cx.waker());
-            let i2 = st.info2.load(Ordering::Acquire);
-            if i2 & INFO2_BWE != 0 {
-                st.info2.fetch_and(!INFO2_BWE, Ordering::AcqRel);
+            if i1 & INFO1_DATA_TRNS != 0 {
                 return Poll::Ready(Ok(()));
             }
+            st.waker.register(cx.waker());
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
             if let Err(e) = check_info2_errors(i2) {
                 return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_DATA_TRNS != 0 {
+                return Poll::Ready(Ok(()));
             }
             Poll::Pending
         })
         .await?;
 
-        // Fill 512 bytes into 32-bit FIFO (128 writes)
-        let fifo = reg32(base, OFF_BUF0);
-        for w in 0..128usize {
-            let p = src.add(w * 4) as *const u32;
-            fifo.write_volatile(p.read_unaligned());
-        }
-        src = src.add(512);
+        reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
+        reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
+        clear_info(port);
+
+        Ok(())
     }
-
-    // Wait for access end
-    poll_fn(|cx| {
-        let st = &STATE[port as usize];
-        let i1 = st.info1.load(Ordering::Acquire);
-        let i2 = st.info2.load(Ordering::Acquire);
-        if let Err(e) = check_info2_errors(i2) {
-            return Poll::Ready(Err(e));
-        }
-        if i1 & INFO1_DATA_TRNS != 0 {
-            return Poll::Ready(Ok(()));
-        }
-        st.waker.register(cx.waker());
-        let i1 = st.info1.load(Ordering::Acquire);
-        let i2 = st.info2.load(Ordering::Acquire);
-        if let Err(e) = check_info2_errors(i2) {
-            return Poll::Ready(Err(e));
-        }
-        if i1 & INFO1_DATA_TRNS != 0 {
-            return Poll::Ready(Ok(()));
-        }
-        Poll::Pending
-    })
-    .await?;
-
-    reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
-    reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
-    clear_info(port);
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -799,13 +821,15 @@ pub async unsafe fn write_blocks_sw(port: u8, buf: *const u8, count: u32) -> Res
 /// # Safety
 /// Writes SDHI registers.
 pub unsafe fn set_block_count(port: u8, count: u32) {
-    let base = port_base(port);
-    reg16(base, OFF_SECCNT).write_volatile(count as u16);
-    // Auto-stop enable (bit 8) when count > 1; otherwise no auto-stop.
-    if count > 1 {
-        reg16(base, OFF_STOP).write_volatile(0x0100); // SEC bit: auto-issue CMD12
-    } else {
-        reg16(base, OFF_STOP).write_volatile(0x0000);
+    unsafe {
+        let base = port_base(port);
+        reg16(base, OFF_SECCNT).write_volatile(count as u16);
+        // Auto-stop enable (bit 8) when count > 1; otherwise no auto-stop.
+        if count > 1 {
+            reg16(base, OFF_STOP).write_volatile(0x0100); // SEC bit: auto-issue CMD12
+        } else {
+            reg16(base, OFF_STOP).write_volatile(0x0000);
+        }
     }
 }
 
@@ -814,8 +838,10 @@ pub unsafe fn set_block_count(port: u8, count: u32) {
 /// # Safety
 /// Writes SDHI registers.
 pub async unsafe fn stop_transfer(port: u8) -> Result<(), SdhiError> {
-    set_arg(port, 0);
-    send_cmd(port, 12u16).await // CMD12
+    unsafe {
+        set_arg(port, 0);
+        send_cmd(port, 12u16).await // CMD12
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -833,10 +859,12 @@ pub async unsafe fn stop_transfer(port: u8) -> Result<(), SdhiError> {
 /// # Safety
 /// Reads SDHI INFO1 register.
 pub unsafe fn card_inserted(port: u8) -> bool {
-    let base = port_base(port);
-    let info1 = reg16(base, OFF_INFO1).read_volatile();
-    // INFO1_CD_LEVEL (bit 5 = INFO5): 1 = SD_CD held low = card present.
-    info1 & INFO1_CD_LEVEL != 0
+    unsafe {
+        let base = port_base(port);
+        let info1 = reg16(base, OFF_INFO1).read_volatile();
+        // INFO1_CD_LEVEL (bit 5 = INFO5): 1 = SD_CD held low = card present.
+        info1 & INFO1_CD_LEVEL != 0
+    }
 }
 
 /// Enable card-detect interrupts (insert + remove) in INFO1_MASK.
@@ -844,10 +872,12 @@ pub unsafe fn card_inserted(port: u8) -> bool {
 /// # Safety
 /// Writes SDHI INFO1_MASK register.
 pub unsafe fn enable_card_detect_irq(port: u8) {
-    let base = port_base(port);
-    // Hardware polarity: 0 = enabled, 1 = masked → clear bits to enable.
-    let mask = reg16(base, OFF_INFO1_MASK).read_volatile();
-    reg16(base, OFF_INFO1_MASK).write_volatile(mask & !INFO1_DET_CD);
+    unsafe {
+        let base = port_base(port);
+        // Hardware polarity: 0 = enabled, 1 = masked → clear bits to enable.
+        let mask = reg16(base, OFF_INFO1_MASK).read_volatile();
+        reg16(base, OFF_INFO1_MASK).write_volatile(mask & !INFO1_DET_CD);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -898,40 +928,42 @@ const POLL_TIMEOUT: u32 = 10_000_000;
 /// # Safety
 /// Must not be called concurrently on the same port.  Writes SDHI registers.
 pub unsafe fn send_cmd_poll(port: u8, cmd_val: u16) -> Result<(), SdhiError> {
-    let base = port_base(port);
+    unsafe {
+        let base = port_base(port);
 
-    wait_clk_stable(port);
-    clear_info(port);
+        wait_clk_stable(port);
+        clear_info(port);
 
-    // Mask all interrupts (we poll instead).
-    reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
-    reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
+        // Mask all interrupts (we poll instead).
+        reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
+        reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
 
-    // Issue command.
-    reg16(base, OFF_CMD).write_volatile(cmd_val);
+        // Issue command.
+        reg16(base, OFF_CMD).write_volatile(cmd_val);
 
-    // Spin until RESP or error.
-    for _ in 0..POLL_TIMEOUT {
-        let info1 = reg16(base, OFF_INFO1).read_volatile();
-        let info2 = reg16(base, OFF_INFO2).read_volatile();
+        // Spin until RESP or error.
+        for _ in 0..POLL_TIMEOUT {
+            let info1 = reg16(base, OFF_INFO1).read_volatile();
+            let info2 = reg16(base, OFF_INFO2).read_volatile();
 
-        if info2 & INFO2_ERR_ALL != 0 {
-            // Clear before returning.
-            reg16(base, OFF_INFO1).write_volatile(!info1);
-            reg16(base, OFF_INFO2).write_volatile(!info2);
-            clear_info(port);
-            return check_info2_errors(info2);
+            if info2 & INFO2_ERR_ALL != 0 {
+                // Clear before returning.
+                reg16(base, OFF_INFO1).write_volatile(!info1);
+                reg16(base, OFF_INFO2).write_volatile(!info2);
+                clear_info(port);
+                return check_info2_errors(info2);
+            }
+            if info1 & INFO1_RESP != 0 {
+                reg16(base, OFF_INFO1).write_volatile(!info1);
+                reg16(base, OFF_INFO2).write_volatile(!info2);
+                clear_info(port);
+                return Ok(());
+            }
         }
-        if info1 & INFO1_RESP != 0 {
-            reg16(base, OFF_INFO1).write_volatile(!info1);
-            reg16(base, OFF_INFO2).write_volatile(!info2);
-            clear_info(port);
-            return Ok(());
-        }
+
+        clear_info(port);
+        Err(SdhiError::ResponseTimeout)
     }
-
-    clear_info(port);
-    Err(SdhiError::ResponseTimeout)
 }
 
 /// Read `count` 512-byte blocks from the card using register polling.
@@ -943,55 +975,57 @@ pub unsafe fn send_cmd_poll(port: u8, cmd_val: u16) -> Result<(), SdhiError> {
 /// # Safety
 /// Must not be called concurrently on the same port.
 pub unsafe fn read_blocks_poll(port: u8, buf: *mut u8, count: u32) -> Result<(), SdhiError> {
-    let base = port_base(port);
+    unsafe {
+        let base = port_base(port);
 
-    let mut dst = buf;
-    for _block in 0..count {
-        // Wait for Buffer Read Enable (INFO2_BRE).
-        let mut ready = false;
+        let mut dst = buf;
+        for _block in 0..count {
+            // Wait for Buffer Read Enable (INFO2_BRE).
+            let mut ready = false;
+            for _ in 0..POLL_TIMEOUT {
+                let info2 = reg16(base, OFF_INFO2).read_volatile();
+                if info2 & INFO2_ERR_ALL != 0 {
+                    reg16(base, OFF_INFO2).write_volatile(!info2);
+                    return check_info2_errors(info2);
+                }
+                if info2 & INFO2_BRE != 0 {
+                    // Clear only BRE.
+                    reg16(base, OFF_INFO2).write_volatile(!(INFO2_BRE));
+                    ready = true;
+                    break;
+                }
+            }
+            if !ready {
+                return Err(SdhiError::DataTimeout);
+            }
+
+            // Drain 512 bytes from 32-bit FIFO (128 × 32-bit reads).
+            let fifo = reg32(base, OFF_BUF0);
+            for w in 0..128usize {
+                let word = fifo.read_volatile();
+                let p = dst.add(w * 4) as *mut u32;
+                p.write_unaligned(word);
+            }
+            dst = dst.add(512);
+        }
+
+        // Wait for access end (INFO1_DATA_TRNS).
         for _ in 0..POLL_TIMEOUT {
             let info2 = reg16(base, OFF_INFO2).read_volatile();
             if info2 & INFO2_ERR_ALL != 0 {
                 reg16(base, OFF_INFO2).write_volatile(!info2);
                 return check_info2_errors(info2);
             }
-            if info2 & INFO2_BRE != 0 {
-                // Clear only BRE.
-                reg16(base, OFF_INFO2).write_volatile(!(INFO2_BRE));
-                ready = true;
-                break;
+            let info1 = reg16(base, OFF_INFO1).read_volatile();
+            if info1 & INFO1_DATA_TRNS != 0 {
+                reg16(base, OFF_INFO1).write_volatile(!info1);
+                reg16(base, OFF_INFO2).write_volatile(!info2);
+                return Ok(());
             }
         }
-        if !ready {
-            return Err(SdhiError::DataTimeout);
-        }
 
-        // Drain 512 bytes from 32-bit FIFO (128 × 32-bit reads).
-        let fifo = reg32(base, OFF_BUF0);
-        for w in 0..128usize {
-            let word = fifo.read_volatile();
-            let p = dst.add(w * 4) as *mut u32;
-            p.write_unaligned(word);
-        }
-        dst = dst.add(512);
+        Err(SdhiError::DataTimeout)
     }
-
-    // Wait for access end (INFO1_DATA_TRNS).
-    for _ in 0..POLL_TIMEOUT {
-        let info2 = reg16(base, OFF_INFO2).read_volatile();
-        if info2 & INFO2_ERR_ALL != 0 {
-            reg16(base, OFF_INFO2).write_volatile(!info2);
-            return check_info2_errors(info2);
-        }
-        let info1 = reg16(base, OFF_INFO1).read_volatile();
-        if info1 & INFO1_DATA_TRNS != 0 {
-            reg16(base, OFF_INFO1).write_volatile(!info1);
-            reg16(base, OFF_INFO2).write_volatile(!info2);
-            return Ok(());
-        }
-    }
-
-    Err(SdhiError::DataTimeout)
 }
 
 /// Write `count` 512-byte blocks to the card using register polling.
@@ -1001,53 +1035,55 @@ pub unsafe fn read_blocks_poll(port: u8, buf: *mut u8, count: u32) -> Result<(),
 /// # Safety
 /// Must not be called concurrently on the same port.
 pub unsafe fn write_blocks_poll(port: u8, buf: *const u8, count: u32) -> Result<(), SdhiError> {
-    let base = port_base(port);
+    unsafe {
+        let base = port_base(port);
 
-    let mut src = buf;
-    for _block in 0..count {
-        // Wait for Buffer Write Enable (INFO2_BWE).
-        let mut ready = false;
+        let mut src = buf;
+        for _block in 0..count {
+            // Wait for Buffer Write Enable (INFO2_BWE).
+            let mut ready = false;
+            for _ in 0..POLL_TIMEOUT {
+                let info2 = reg16(base, OFF_INFO2).read_volatile();
+                if info2 & INFO2_ERR_ALL != 0 {
+                    reg16(base, OFF_INFO2).write_volatile(!info2);
+                    return check_info2_errors(info2);
+                }
+                if info2 & INFO2_BWE != 0 {
+                    reg16(base, OFF_INFO2).write_volatile(!(INFO2_BWE));
+                    ready = true;
+                    break;
+                }
+            }
+            if !ready {
+                return Err(SdhiError::DataTimeout);
+            }
+
+            // Fill 512 bytes into 32-bit FIFO (128 × 32-bit writes).
+            let fifo = reg32(base, OFF_BUF0);
+            for w in 0..128usize {
+                let p = src.add(w * 4) as *const u32;
+                fifo.write_volatile(p.read_unaligned());
+            }
+            src = src.add(512);
+        }
+
+        // Wait for access end.
         for _ in 0..POLL_TIMEOUT {
             let info2 = reg16(base, OFF_INFO2).read_volatile();
             if info2 & INFO2_ERR_ALL != 0 {
                 reg16(base, OFF_INFO2).write_volatile(!info2);
                 return check_info2_errors(info2);
             }
-            if info2 & INFO2_BWE != 0 {
-                reg16(base, OFF_INFO2).write_volatile(!(INFO2_BWE));
-                ready = true;
-                break;
+            let info1 = reg16(base, OFF_INFO1).read_volatile();
+            if info1 & INFO1_DATA_TRNS != 0 {
+                reg16(base, OFF_INFO1).write_volatile(!info1);
+                reg16(base, OFF_INFO2).write_volatile(!info2);
+                return Ok(());
             }
         }
-        if !ready {
-            return Err(SdhiError::DataTimeout);
-        }
 
-        // Fill 512 bytes into 32-bit FIFO (128 × 32-bit writes).
-        let fifo = reg32(base, OFF_BUF0);
-        for w in 0..128usize {
-            let p = src.add(w * 4) as *const u32;
-            fifo.write_volatile(p.read_unaligned());
-        }
-        src = src.add(512);
+        Err(SdhiError::DataTimeout)
     }
-
-    // Wait for access end.
-    for _ in 0..POLL_TIMEOUT {
-        let info2 = reg16(base, OFF_INFO2).read_volatile();
-        if info2 & INFO2_ERR_ALL != 0 {
-            reg16(base, OFF_INFO2).write_volatile(!info2);
-            return check_info2_errors(info2);
-        }
-        let info1 = reg16(base, OFF_INFO1).read_volatile();
-        if info1 & INFO1_DATA_TRNS != 0 {
-            reg16(base, OFF_INFO1).write_volatile(!info1);
-            reg16(base, OFF_INFO2).write_volatile(!info2);
-            return Ok(());
-        }
-    }
-
-    Err(SdhiError::DataTimeout)
 }
 
 // ---------------------------------------------------------------------------
@@ -1075,7 +1111,7 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// # Safety
     /// Writes memory-mapped SDHI registers.
     pub unsafe fn init(&self) {
-        init(PORT)
+        unsafe { init(PORT) }
     }
 
     /// Switch the SD clock to high speed (~16.7 MHz, P1/4).
@@ -1083,7 +1119,7 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// # Safety
     /// Writes memory-mapped SDHI registers.
     pub unsafe fn set_clock_fast(&self) {
-        set_clock_fast(PORT)
+        unsafe { set_clock_fast(PORT) }
     }
 
     /// Register GIC IRQs for this port's interrupt handler.
@@ -1091,7 +1127,7 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// # Safety
     /// Writes GIC registers.
     pub unsafe fn register_irqs(&self) {
-        register_irqs(PORT)
+        unsafe { register_irqs(PORT) }
     }
 
     /// Returns `true` if a card is detected in the slot.
@@ -1099,7 +1135,7 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// # Safety
     /// Reads memory-mapped SDHI registers.
     pub unsafe fn card_inserted(&self) -> bool {
-        card_inserted(PORT)
+        unsafe { card_inserted(PORT) }
     }
 
     /// Set the number of blocks for a multi-block transfer command.
@@ -1107,7 +1143,7 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// # Safety
     /// Writes memory-mapped SDHI registers.
     pub unsafe fn set_block_count(&self, count: u32) {
-        set_block_count(PORT, count)
+        unsafe { set_block_count(PORT, count) }
     }
 
     /// Issue an SD command and wait (polling) for a response.
@@ -1115,7 +1151,7 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// # Safety
     /// Must not be called concurrently.  Writes SDHI registers.
     pub unsafe fn send_cmd_poll(&self, cmd_val: u16) -> Result<(), SdhiError> {
-        send_cmd_poll(PORT, cmd_val)
+        unsafe { send_cmd_poll(PORT, cmd_val) }
     }
 
     /// Read `count` 512-byte blocks into `buf` using register polling.
@@ -1123,7 +1159,7 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// # Safety
     /// Must not be called concurrently.  `buf` must be valid for `count * 512` bytes.
     pub unsafe fn read_blocks_poll(&self, buf: *mut u8, count: u32) -> Result<(), SdhiError> {
-        read_blocks_poll(PORT, buf, count)
+        unsafe { read_blocks_poll(PORT, buf, count) }
     }
 
     /// Write `count` 512-byte blocks from `buf` using register polling.
@@ -1131,7 +1167,7 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// # Safety
     /// Must not be called concurrently.  `buf` must be valid for `count * 512` bytes.
     pub unsafe fn write_blocks_poll(&self, buf: *const u8, count: u32) -> Result<(), SdhiError> {
-        write_blocks_poll(PORT, buf, count)
+        unsafe { write_blocks_poll(PORT, buf, count) }
     }
 }
 

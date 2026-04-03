@@ -39,17 +39,19 @@ pub async fn read_midi_byte() -> u8 {
 /// # Safety
 /// Must be called with global IRQs disabled, before the Embassy executor starts.
 pub unsafe fn init_midi(baud_rate: u32) {
-    log::debug!(
-        "bsp uart: MIDI SCIF{} @ {} bps (DMA RX ch13)",
-        MIDI_CH,
-        baud_rate
-    );
-    rza1::uart::init(MIDI_CH, baud_rate);
-    rza1::gpio::set_pin_mux(6, 15, 5); // TxD0
-    rza1::gpio::set_pin_mux(6, 14, 5); // RxD0
-    // TX via TXI interrupt; RX via DMAC channel 13.
-    rza1::uart::register_txi_for(MIDI_CH);
-    rza1::uart::init_dma_rx(MIDI_CH, 13, 0x62);
+    unsafe {
+        log::debug!(
+            "bsp uart: MIDI SCIF{} @ {} bps (DMA RX ch13)",
+            MIDI_CH,
+            baud_rate
+        );
+        rza1::uart::init(MIDI_CH, baud_rate);
+        rza1::gpio::set_pin_mux(6, 15, 5); // TxD0
+        rza1::gpio::set_pin_mux(6, 14, 5); // RxD0
+        // TX via TXI interrupt; RX via DMAC channel 13.
+        rza1::uart::register_txi_for(MIDI_CH);
+        rza1::uart::init_dma_rx(MIDI_CH, 13, 0x62);
+    }
 }
 
 /// Initialise the PIC32 UART (SCIF1) with DMA-backed RX and TX.
@@ -68,18 +70,20 @@ pub unsafe fn init_midi(baud_rate: u32) {
 /// # Safety
 /// Must be called with global IRQs disabled, before the Embassy executor starts.
 pub unsafe fn init_pic(baud_rate: u32) {
-    log::debug!(
-        "bsp uart: PIC SCIF{} @ {} bps (DMA RX ch12, DMA TX ch10)",
-        PIC_CH,
-        baud_rate
-    );
-    rza1::uart::init(PIC_CH, baud_rate);
-    rza1::gpio::set_pin_mux(3, 15, 5); // TxD1
-    rza1::gpio::set_pin_mux(1, 9, 3); // RxD1
-    // RX via DMAC channel 12; TX via DMAC channel 10.
-    rza1::uart::register_txi_for(PIC_CH);
-    rza1::uart::init_dma_rx(PIC_CH, 12, 0x66);
-    rza1::uart::init_dma_tx(PIC_CH, 10, 0x65);
+    unsafe {
+        log::debug!(
+            "bsp uart: PIC SCIF{} @ {} bps (DMA RX ch12, DMA TX ch10)",
+            PIC_CH,
+            baud_rate
+        );
+        rza1::uart::init(PIC_CH, baud_rate);
+        rza1::gpio::set_pin_mux(3, 15, 5); // TxD1
+        rza1::gpio::set_pin_mux(1, 9, 3); // RxD1
+        // RX via DMAC channel 12; TX via DMAC channel 10.
+        rza1::uart::register_txi_for(PIC_CH);
+        rza1::uart::init_dma_rx(PIC_CH, 12, 0x66);
+        rza1::uart::init_dma_tx(PIC_CH, 10, 0x65);
+    }
 }
 
 #[cfg(all(test, not(target_os = "none")))]

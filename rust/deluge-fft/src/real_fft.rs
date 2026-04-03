@@ -63,7 +63,7 @@ where
     /// Process `N` real samples and write `N/2 + 1` complex bins to `out`.
     ///
     /// `out` must have length ≥ `N/2 + 1`.
-    pub fn process(input: &[f32; N], out: &mut [crate::complex::Complex; { N / 2 + 1 }]) {
+    pub fn process(input: &[f32; N], out: &mut [crate::complex::Complex; N / 2 + 1]) {
         assert!(
             N >= 8 && N.is_power_of_two(),
             "RealFft N must be a power of two >= 8"

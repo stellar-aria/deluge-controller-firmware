@@ -95,51 +95,53 @@ fn dac_word(ch: u8, value: u16) -> u32 {
 /// # Safety
 /// Writes to memory-mapped GPIO and RSPI registers.
 pub unsafe fn init() {
-    log::debug!("cv_gate: init");
-    // ---- SPI pin-mux ---------------------------------------------------------
-    gpio::set_pin_mux(SCK_PORT, SCK_PIN, SCK_MUX);
-    gpio::set_pin_mux(MOSI_PORT, MOSI_PIN, MOSI_MUX);
-    log::debug!("cv_gate: pin-mux ok");
+    unsafe {
+        log::debug!("cv_gate: init");
+        // ---- SPI pin-mux ---------------------------------------------------------
+        gpio::set_pin_mux(SCK_PORT, SCK_PIN, SCK_MUX);
+        gpio::set_pin_mux(MOSI_PORT, MOSI_PIN, MOSI_MUX);
+        log::debug!("cv_gate: pin-mux ok");
 
-    // ---- Chip-select: output, start deselected (high) -----------------------
-    gpio::set_as_output(CS_PORT, CS_PIN);
-    gpio::write(CS_PORT, CS_PIN, true);
+        // ---- Chip-select: output, start deselected (high) -----------------------
+        gpio::set_as_output(CS_PORT, CS_PIN);
+        gpio::write(CS_PORT, CS_PIN, true);
 
-    // ---- Gate outputs: all de-asserted (V-trig: high = gate OFF) ------------
-    for &(port, pin) in GATE_PINS.iter() {
-        gpio::set_as_output(port, pin);
-        gpio::write(port, pin, true);
+        // ---- Gate outputs: all de-asserted (V-trig: high = gate OFF) ------------
+        for &(port, pin) in GATE_PINS.iter() {
+            gpio::set_as_output(port, pin);
+            gpio::write(port, pin, true);
+        }
+        log::debug!("cv_gate: gate GPIOs ok");
+
+        // ---- Initialise RSPI0 as 10 MHz SPI master ------------------------------
+        rspi::init(SPI_CH, SPI_RATE_HZ);
+        log::debug!("cv_gate: RSPI0 init at {} Hz ok", SPI_RATE_HZ);
+
+        // ---- MAX5136 linearity initialisation -----------------------------------
+        // Step 1: LIN=1 (linear ramp mode)
+        log::debug!("cv_gate: MAX5136 LIN=1");
+        gpio::write(CS_PORT, CS_PIN, false);
+        rspi::send32_blocking(SPI_CH, 0x0542_0000);
+        gpio::write(CS_PORT, CS_PIN, true);
+        log::debug!("cv_gate: MAX5136 LIN=1 sent");
+
+        // Step 2: wait ≥ 10 ms for internal capacitor to charge
+        log::debug!("cv_gate: LIN delay start");
+        ostm::delay_ms(LIN_DELAY_MS);
+        log::debug!("cv_gate: LIN delay done");
+
+        // Step 3: LIN=0 (return to normal mode)
+        gpio::write(CS_PORT, CS_PIN, false);
+        rspi::send32_blocking(SPI_CH, 0x0540_0000);
+        gpio::write(CS_PORT, CS_PIN, true);
+        log::debug!("cv_gate: MAX5136 linearity init done");
+
+        // ---- Zero all CV outputs ------------------------------------------------
+        for ch in 0..NUM_CV_CHANNELS as u8 {
+            cv_set_blocking(ch, 0);
+        }
+        log::debug!("cv_gate: CV outputs zeroed");
     }
-    log::debug!("cv_gate: gate GPIOs ok");
-
-    // ---- Initialise RSPI0 as 10 MHz SPI master ------------------------------
-    rspi::init(SPI_CH, SPI_RATE_HZ);
-    log::debug!("cv_gate: RSPI0 init at {} Hz ok", SPI_RATE_HZ);
-
-    // ---- MAX5136 linearity initialisation -----------------------------------
-    // Step 1: LIN=1 (linear ramp mode)
-    log::debug!("cv_gate: MAX5136 LIN=1");
-    gpio::write(CS_PORT, CS_PIN, false);
-    rspi::send32_blocking(SPI_CH, 0x0542_0000);
-    gpio::write(CS_PORT, CS_PIN, true);
-    log::debug!("cv_gate: MAX5136 LIN=1 sent");
-
-    // Step 2: wait ≥ 10 ms for internal capacitor to charge
-    log::debug!("cv_gate: LIN delay start");
-    ostm::delay_ms(LIN_DELAY_MS);
-    log::debug!("cv_gate: LIN delay done");
-
-    // Step 3: LIN=0 (return to normal mode)
-    gpio::write(CS_PORT, CS_PIN, false);
-    rspi::send32_blocking(SPI_CH, 0x0540_0000);
-    gpio::write(CS_PORT, CS_PIN, true);
-    log::debug!("cv_gate: MAX5136 linearity init done");
-
-    // ---- Zero all CV outputs ------------------------------------------------
-    for ch in 0..NUM_CV_CHANNELS as u8 {
-        cv_set_blocking(ch, 0);
-    }
-    log::debug!("cv_gate: CV outputs zeroed");
 }
 
 // ── CV output ────────────────────────────────────────────────────────────────
@@ -154,16 +156,18 @@ pub unsafe fn init() {
 /// any other RSPI0 transfer.  Spins briefly if an OLED DMA transfer is in
 /// progress (typically < 1 ms).
 pub unsafe fn cv_set_blocking(ch: u8, value: u16) {
-    // Wait for any in-progress OLED DMA transfer to complete before
-    // reconfiguring RSPI0 for 32-bit mode.  The OLED task sets this flag
-    // around `dmac::start_transfer` … `dmac::wait_transfer_complete`.
-    while crate::RSPI0_DMA_ACTIVE.load(core::sync::atomic::Ordering::Acquire) {
-        core::hint::spin_loop();
+    unsafe {
+        // Wait for any in-progress OLED DMA transfer to complete before
+        // reconfiguring RSPI0 for 32-bit mode.  The OLED task sets this flag
+        // around `dmac::start_transfer` … `dmac::wait_transfer_complete`.
+        while crate::RSPI0_DMA_ACTIVE.load(core::sync::atomic::Ordering::Acquire) {
+            core::hint::spin_loop();
+        }
+        let word = dac_word(ch, value);
+        gpio::write(CS_PORT, CS_PIN, false);
+        rspi::send32_blocking(SPI_CH, word);
+        gpio::write(CS_PORT, CS_PIN, true);
     }
-    let word = dac_word(ch, value);
-    gpio::write(CS_PORT, CS_PIN, false);
-    rspi::send32_blocking(SPI_CH, word);
-    gpio::write(CS_PORT, CS_PIN, true);
 }
 
 // ── Gate output ───────────────────────────────────────────────────────────────
@@ -177,9 +181,11 @@ pub unsafe fn cv_set_blocking(ch: u8, value: u16) {
 /// Writes GPIO registers.
 #[inline]
 pub unsafe fn gate_set(ch: u8, on: bool) {
-    let (port, pin) = GATE_PINS[ch as usize];
-    // V-trig: 0 = active, 1 = inactive  → invert `on`
-    gpio::write(port, pin, !on);
+    unsafe {
+        let (port, pin) = GATE_PINS[ch as usize];
+        // V-trig: 0 = active, 1 = inactive  → invert `on`
+        gpio::write(port, pin, !on);
+    }
 }
 
 // ── Address / logic tests (host only) ────────────────────────────────────────

@@ -108,7 +108,9 @@ fn handler() {
 /// # Safety
 /// Writes to memory-mapped MTU2 and GIC registers.
 pub unsafe fn setup() {
-    mtu2::setup_one_shot(CH, PRESCALER, handler, PRIORITY);
+    unsafe {
+        mtu2::setup_one_shot(CH, PRESCALER, handler, PRIORITY);
+    }
 }
 
 /// Schedule a gate-off event `ticks` from now on gate channel `gate_ch`.
@@ -127,9 +129,11 @@ pub unsafe fn setup() {
 /// Writes to memory-mapped MTU2 and GIC registers.  `gate_ch` must be in
 /// range 0–3.
 pub unsafe fn schedule_gate_off(gate_ch: u8, ticks: u16) {
-    // Store the action before arming; pairs with the Acquire in handler().
-    GATE_CH.store(gate_ch, Ordering::Release);
-    mtu2::arm(CH, ticks);
+    unsafe {
+        // Store the action before arming; pairs with the Acquire in handler().
+        GATE_CH.store(gate_ch, Ordering::Release);
+        mtu2::arm(CH, ticks);
+    }
 }
 
 /// Cancel a pending gate-off shot without firing.
@@ -141,11 +145,13 @@ pub unsafe fn schedule_gate_off(gate_ch: u8, ticks: u16) {
 /// # Safety
 /// Writes to memory-mapped MTU2 and GIC registers.
 pub unsafe fn cancel() {
-    // Disarm first so the ISR cannot begin executing between the store and the
-    // disarm.  On single-core bare-metal this is sequentially consistent, but
-    // the ordering makes the intent explicit.
-    mtu2::disarm(CH);
-    GATE_CH.store(NO_ACTION, Ordering::Release);
+    unsafe {
+        // Disarm first so the ISR cannot begin executing between the store and the
+        // disarm.  On single-core bare-metal this is sequentially consistent, but
+        // the ordering makes the intent explicit.
+        mtu2::disarm(CH);
+        GATE_CH.store(NO_ACTION, Ordering::Release);
+    }
 }
 
 /// Tick frequency of the one-shot timer (Hz): P0 / 64.

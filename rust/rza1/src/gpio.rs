@@ -62,17 +62,19 @@ fn pibc(port: u8) -> *mut u16 {
 /// Writes to memory-mapped peripheral registers; must run with the pin not
 /// already owned by another driver.
 pub unsafe fn set_as_output(port: u8, pin: u8) {
-    // PMC = 0: GPIO (not peripheral multiplexed)
-    let v = core::ptr::read_volatile(pmc(port));
-    core::ptr::write_volatile(pmc(port), v & !(1u16 << pin));
+    unsafe {
+        // PMC = 0: GPIO (not peripheral multiplexed)
+        let v = core::ptr::read_volatile(pmc(port));
+        core::ptr::write_volatile(pmc(port), v & !(1u16 << pin));
 
-    // PM = 0: output direction
-    let v = core::ptr::read_volatile(pm(port));
-    core::ptr::write_volatile(pm(port), v & !(1u16 << pin));
+        // PM = 0: output direction
+        let v = core::ptr::read_volatile(pm(port));
+        core::ptr::write_volatile(pm(port), v & !(1u16 << pin));
 
-    // PIPC = 0: software (not hardware-peripheral) control
-    let v = core::ptr::read_volatile(pipc(port));
-    core::ptr::write_volatile(pipc(port), v & !(1u16 << pin));
+        // PIPC = 0: software (not hardware-peripheral) control
+        let v = core::ptr::read_volatile(pipc(port));
+        core::ptr::write_volatile(pipc(port), v & !(1u16 << pin));
+    }
 }
 
 /// Configure a pin as a software-controlled GPIO input.
@@ -84,17 +86,19 @@ pub unsafe fn set_as_output(port: u8, pin: u8) {
 /// Writes to memory-mapped peripheral registers; must run with the pin not
 /// already owned by another driver.
 pub unsafe fn set_as_input(port: u8, pin: u8) {
-    // PMC = 0: GPIO (not peripheral multiplexed)
-    let v = core::ptr::read_volatile(pmc(port));
-    core::ptr::write_volatile(pmc(port), v & !(1u16 << pin));
+    unsafe {
+        // PMC = 0: GPIO (not peripheral multiplexed)
+        let v = core::ptr::read_volatile(pmc(port));
+        core::ptr::write_volatile(pmc(port), v & !(1u16 << pin));
 
-    // PM = 1: input direction
-    let v = core::ptr::read_volatile(pm(port));
-    core::ptr::write_volatile(pm(port), v | (1u16 << pin));
+        // PM = 1: input direction
+        let v = core::ptr::read_volatile(pm(port));
+        core::ptr::write_volatile(pm(port), v | (1u16 << pin));
 
-    // PIBC = 1: enable input buffer so PPR reflects the live pin state
-    let v = core::ptr::read_volatile(pibc(port));
-    core::ptr::write_volatile(pibc(port), v | (1u16 << pin));
+        // PIBC = 1: enable input buffer so PPR reflects the live pin state
+        let v = core::ptr::read_volatile(pibc(port));
+        core::ptr::write_volatile(pibc(port), v | (1u16 << pin));
+    }
 }
 
 /// Enable the input buffer for a pin already muxed to a peripheral function.
@@ -107,8 +111,10 @@ pub unsafe fn set_as_input(port: u8, pin: u8) {
 /// # Safety
 /// Writes to a memory-mapped peripheral register; `port` must be 1-based (1..=11).
 pub unsafe fn enable_input_buffer(port: u8, pin: u8) {
-    let v = core::ptr::read_volatile(pibc(port));
-    core::ptr::write_volatile(pibc(port), v | (1u16 << pin));
+    unsafe {
+        let v = core::ptr::read_volatile(pibc(port));
+        core::ptr::write_volatile(pibc(port), v | (1u16 << pin));
+    }
 }
 
 /// Read the current logic level of a GPIO pin via the Port Pin Read (PPR) register.
@@ -118,7 +124,7 @@ pub unsafe fn enable_input_buffer(port: u8, pin: u8) {
 /// # Safety
 /// Reads a memory-mapped peripheral register; `port` must be 1-based (1..=11).
 pub unsafe fn read_pin(port: u8, pin: u8) -> bool {
-    (core::ptr::read_volatile(ppr(port)) >> pin) & 1 != 0
+    unsafe { (core::ptr::read_volatile(ppr(port)) >> pin) & 1 != 0 }
 }
 
 /// Drive a GPIO output pin high (`true`) or low (`false`).
@@ -126,11 +132,13 @@ pub unsafe fn read_pin(port: u8, pin: u8) -> bool {
 /// # Safety
 /// The pin must have been configured as an output via [`set_as_output`].
 pub unsafe fn write(port: u8, pin: u8, high: bool) {
-    let v = core::ptr::read_volatile(p(port));
-    if high {
-        core::ptr::write_volatile(p(port), v | (1u16 << pin));
-    } else {
-        core::ptr::write_volatile(p(port), v & !(1u16 << pin));
+    unsafe {
+        let v = core::ptr::read_volatile(p(port));
+        if high {
+            core::ptr::write_volatile(p(port), v | (1u16 << pin));
+        } else {
+            core::ptr::write_volatile(p(port), v & !(1u16 << pin));
+        }
     }
 }
 
@@ -202,8 +210,10 @@ impl<const PORT: u8, const BIT: u8> Pin<PORT, BIT, Output> {
     /// # Safety
     /// Same requirements as [`set_as_output`].
     pub unsafe fn into_output() -> Self {
-        set_as_output(PORT, BIT);
-        Pin(PhantomData)
+        unsafe {
+            set_as_output(PORT, BIT);
+            Pin(PhantomData)
+        }
     }
 }
 

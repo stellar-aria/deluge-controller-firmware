@@ -127,12 +127,14 @@ impl From<SdhiError> for SdError {
 
 /// Issue CMD55 (APP_CMD prefix) with the current RCA, then issue `acmd`.
 async unsafe fn send_acmd(acmd: u16, arg: u32) -> Result<(), SdError> {
-    let rca = CARD_RCA.load(Ordering::Relaxed);
-    sdhi::set_arg(SD_PORT, (rca as u32) << 16);
-    sdhi::send_cmd(SD_PORT, CMD55).await?;
-    sdhi::set_arg(SD_PORT, arg);
-    sdhi::send_cmd(SD_PORT, acmd).await?;
-    Ok(())
+    unsafe {
+        let rca = CARD_RCA.load(Ordering::Relaxed);
+        sdhi::set_arg(SD_PORT, (rca as u32) << 16);
+        sdhi::send_cmd(SD_PORT, CMD55).await?;
+        sdhi::set_arg(SD_PORT, arg);
+        sdhi::send_cmd(SD_PORT, acmd).await?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -45,10 +45,12 @@ impl FifoPort {
     /// # Safety
     /// `regs` must be a valid pointer to the USB register block for the active port.
     pub unsafe fn cfifo(regs: *mut Rusb1Regs) -> Self {
-        Self {
-            data: core::ptr::addr_of_mut!((*regs).cfifo),
-            sel: core::ptr::addr_of_mut!((*regs).cfifosel),
-            ctr: core::ptr::addr_of_mut!((*regs).cfifoctr),
+        unsafe {
+            Self {
+                data: core::ptr::addr_of_mut!((*regs).cfifo),
+                sel: core::ptr::addr_of_mut!((*regs).cfifosel),
+                ctr: core::ptr::addr_of_mut!((*regs).cfifoctr),
+            }
         }
     }
 
@@ -57,10 +59,12 @@ impl FifoPort {
     /// # Safety
     /// Same as [`cfifo`].
     pub unsafe fn d0fifo(regs: *mut Rusb1Regs) -> Self {
-        Self {
-            data: core::ptr::addr_of_mut!((*regs).d0fifo),
-            sel: core::ptr::addr_of_mut!((*regs).d0fifosel),
-            ctr: core::ptr::addr_of_mut!((*regs).d0fifoctr),
+        unsafe {
+            Self {
+                data: core::ptr::addr_of_mut!((*regs).d0fifo),
+                sel: core::ptr::addr_of_mut!((*regs).d0fifosel),
+                ctr: core::ptr::addr_of_mut!((*regs).d0fifoctr),
+            }
         }
     }
 
@@ -69,10 +73,12 @@ impl FifoPort {
     /// # Safety
     /// Same as [`cfifo`].
     pub unsafe fn d1fifo(regs: *mut Rusb1Regs) -> Self {
-        Self {
-            data: core::ptr::addr_of_mut!((*regs).d1fifo),
-            sel: core::ptr::addr_of_mut!((*regs).d1fifosel),
-            ctr: core::ptr::addr_of_mut!((*regs).d1fifoctr),
+        unsafe {
+            Self {
+                data: core::ptr::addr_of_mut!((*regs).d1fifo),
+                sel: core::ptr::addr_of_mut!((*regs).d1fifosel),
+                ctr: core::ptr::addr_of_mut!((*regs).d1fifoctr),
+            }
         }
     }
 }
@@ -88,10 +94,12 @@ impl FifoPort {
 /// # Safety
 /// `regs` must be valid.
 pub unsafe fn fifo_for_pipe(regs: *mut Rusb1Regs, pipe_num: usize) -> FifoPort {
-    match pipe_num {
-        0 => FifoPort::cfifo(regs),
-        1 | 2 => FifoPort::d0fifo(regs),
-        _ => FifoPort::d1fifo(regs),
+    unsafe {
+        match pipe_num {
+            0 => FifoPort::cfifo(regs),
+            1 | 2 => FifoPort::d0fifo(regs),
+            _ => FifoPort::d1fifo(regs),
+        }
     }
 }
 
@@ -104,11 +112,13 @@ pub unsafe fn fifo_for_pipe(regs: *mut Rusb1Regs, pipe_num: usize) -> FifoPort {
 /// # Safety
 /// `sel` must be a valid pointer to a FIFO select register.
 unsafe fn set_mbw(sel: *mut u16, mbw: u16) {
-    let cur = rd(sel);
-    wr(
-        sel,
-        (cur & !FIFOSEL_MBW_MASK) | ((mbw << FIFOSEL_MBW_SHIFT) & FIFOSEL_MBW_MASK),
-    );
+    unsafe {
+        let cur = rd(sel);
+        wr(
+            sel,
+            (cur & !FIFOSEL_MBW_MASK) | ((mbw << FIFOSEL_MBW_SHIFT) & FIFOSEL_MBW_MASK),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -125,18 +135,20 @@ unsafe fn set_mbw(sel: *mut u16, mbw: u16) {
 /// # Safety
 /// `fifo` fields must be valid register pointers.
 pub unsafe fn fifo_is_ready(fifo: &FifoPort, pipe_num: usize) -> bool {
-    // Hardware settles within ~4 reads normally; 64 gives ample margin without
-    // hanging the ISR if the pipe has no data (e.g. after BCLR).
-    for _ in 0..64 {
-        let sel = rd(fifo.sel);
-        if (sel & FIFOSEL_CURPIPE_MASK) as usize != pipe_num {
-            continue;
+    unsafe {
+        // Hardware settles within ~4 reads normally; 64 gives ample margin without
+        // hanging the ISR if the pipe has no data (e.g. after BCLR).
+        for _ in 0..64 {
+            let sel = rd(fifo.sel);
+            if (sel & FIFOSEL_CURPIPE_MASK) as usize != pipe_num {
+                continue;
+            }
+            if (rd(fifo.ctr) & FIFOCTR_FRDY) != 0 {
+                return true;
+            }
         }
-        if (rd(fifo.ctr) & FIFOCTR_FRDY) != 0 {
-            return true;
-        }
+        false
     }
-    false
 }
 
 /// Return the number of valid data bytes waiting in the FIFO.
@@ -144,7 +156,7 @@ pub unsafe fn fifo_is_ready(fifo: &FifoPort, pipe_num: usize) -> bool {
 /// # Safety
 /// `fifo` must be valid.
 pub unsafe fn fifo_dtln(fifo: &FifoPort) -> u16 {
-    rd(fifo.ctr) & FIFOCTR_DTLN_MASK
+    unsafe { rd(fifo.ctr) & FIFOCTR_DTLN_MASK }
 }
 
 /// Issue BCLR (clear the FIFO buffer) on `fifo`.
@@ -152,7 +164,9 @@ pub unsafe fn fifo_dtln(fifo: &FifoPort) -> u16 {
 /// # Safety
 /// `fifo` must be valid.
 pub unsafe fn fifo_bclr(fifo: &FifoPort) {
-    wr(fifo.ctr, FIFOCTR_BCLR);
+    unsafe {
+        wr(fifo.ctr, FIFOCTR_BCLR);
+    }
 }
 
 /// Issue BVAL (commit the write buffer) on `fifo`.
@@ -160,7 +174,9 @@ pub unsafe fn fifo_bclr(fifo: &FifoPort) {
 /// # Safety
 /// `fifo` must be valid.
 pub unsafe fn fifo_bval(fifo: &FifoPort) {
-    wr(fifo.ctr, FIFOCTR_BVAL);
+    unsafe {
+        wr(fifo.ctr, FIFOCTR_BVAL);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,24 +192,26 @@ pub unsafe fn fifo_bval(fifo: &FifoPort) {
 /// - `fifo.data` / `fifo.sel` must be valid.
 /// - The FIFO must have been selected (CURPIPE written) before calling.
 pub unsafe fn sw_to_hw_fifo(fifo: &FifoPort, buf: *const u8, len: usize) {
-    let mut p = buf;
-    let mut rem = len;
+    unsafe {
+        let mut p = buf;
+        let mut rem = len;
 
-    // Switch to MBW=16 for the bulk of the write (C driver uses 16-bit too).
-    set_mbw(fifo.sel, MBW_16);
+        // Switch to MBW=16 for the bulk of the write (C driver uses 16-bit too).
+        set_mbw(fifo.sel, MBW_16);
 
-    // 16-bit words
-    while rem >= 2 {
-        let half = (p as *const u16).read_unaligned();
-        wr32(fifo.data, half as u32);
-        p = p.add(2);
-        rem -= 2;
-    }
+        // 16-bit words
+        while rem >= 2 {
+            let half = (p as *const u16).read_unaligned();
+            wr32(fifo.data, half as u32);
+            p = p.add(2);
+            rem -= 2;
+        }
 
-    // 8-bit tail
-    if rem >= 1 {
-        set_mbw(fifo.sel, MBW_8);
-        wr32(fifo.data, *p as u32);
+        // 8-bit tail
+        if rem >= 1 {
+            set_mbw(fifo.sel, MBW_8);
+            wr32(fifo.data, *p as u32);
+        }
     }
 }
 
@@ -212,18 +230,20 @@ pub unsafe fn sw_to_hw_fifo(fifo: &FifoPort, buf: *const u8, len: usize) {
 /// - `fifo.data` / `fifo.sel` must be valid.
 /// - The FIFO must have been selected (CURPIPE written) before calling.
 pub unsafe fn hw_to_sw_fifo(fifo: &FifoPort, buf: *mut u8, len: usize) {
-    if len == 0 {
-        return;
-    }
+    unsafe {
+        if len == 0 {
+            return;
+        }
 
-    // Switch to byte-access mode so each read yields exactly one USB byte.
-    set_mbw(fifo.sel, MBW_8);
+        // Switch to byte-access mode so each read yields exactly one USB byte.
+        set_mbw(fifo.sel, MBW_8);
 
-    let fifo_byte = fifo.data as *const u8;
-    let mut p = buf;
-    for _ in 0..len {
-        p.write(fifo_byte.read_volatile());
-        p = p.add(1);
+        let fifo_byte = fifo.data as *const u8;
+        let mut p = buf;
+        for _ in 0..len {
+            p.write(fifo_byte.read_volatile());
+            p = p.add(1);
+        }
     }
 }
 
@@ -241,11 +261,13 @@ pub unsafe fn hw_to_sw_fifo(fifo: &FifoPort, buf: *mut u8, len: usize) {
 /// # Safety
 /// `fifo.sel` must be valid.
 pub unsafe fn fifo_select_pipe(fifo: &FifoPort, pipe_num: usize, isel: bool) {
-    let isel_bit: u16 = if isel { 0x0020 } else { 0 };
-    // IN path (isel=true) → MBW=16 for 16-bit writes; OUT path → MBW=8 for byte reads.
-    let mbw: u16 = if isel { MBW_16 } else { MBW_8 };
-    let val: u16 = (pipe_num as u16) | (mbw << FIFOSEL_MBW_SHIFT) | isel_bit;
-    wr(fifo.sel, val);
+    unsafe {
+        let isel_bit: u16 = if isel { 0x0020 } else { 0 };
+        // IN path (isel=true) → MBW=16 for 16-bit writes; OUT path → MBW=8 for byte reads.
+        let mbw: u16 = if isel { MBW_16 } else { MBW_8 };
+        let val: u16 = (pipe_num as u16) | (mbw << FIFOSEL_MBW_SHIFT) | isel_bit;
+        wr(fifo.sel, val);
+    }
 }
 
 #[cfg(all(test, not(target_os = "none")))]

@@ -158,53 +158,55 @@ pub fn irq_spri(ch: u8) -> u16 {
 /// Writes to memory-mapped RSPI registers; must be called once before any
 /// SPI transfers on channel `ch`.
 pub unsafe fn init(ch: u8, bit_rate: u32) {
-    // SPPCR = 0 (no loopback, MOSI idle = low)
-    reg8(ch, OFF_SPPCR).write_volatile(0);
-    let _ = reg8(ch, OFF_SPPCR).read_volatile();
+    unsafe {
+        // SPPCR = 0 (no loopback, MOSI idle = low)
+        reg8(ch, OFF_SPPCR).write_volatile(0);
+        let _ = reg8(ch, OFF_SPPCR).read_volatile();
 
-    // SPBR: baud rate divisor. P1 = 66.666 MHz → SPBR = ceil(P1/(bitRate×2)) - 1
-    let spbr = P1_HZ.div_ceil(bit_rate * 2).saturating_sub(1) as u8;
-    reg8(ch, OFF_SPBR).write_volatile(spbr);
-    let _ = reg8(ch, OFF_SPBR).read_volatile();
+        // SPBR: baud rate divisor. P1 = 66.666 MHz → SPBR = ceil(P1/(bitRate×2)) - 1
+        let spbr = P1_HZ.div_ceil(bit_rate * 2).saturating_sub(1) as u8;
+        reg8(ch, OFF_SPBR).write_volatile(spbr);
+        let _ = reg8(ch, OFF_SPBR).read_volatile();
 
-    // SPDCR: 32-bit longword data
-    reg8(ch, OFF_SPDCR).write_volatile(SPDCR_32BIT);
-    let _ = reg8(ch, OFF_SPDCR).read_volatile();
+        // SPDCR: 32-bit longword data
+        reg8(ch, OFF_SPDCR).write_volatile(SPDCR_32BIT);
+        let _ = reg8(ch, OFF_SPDCR).read_volatile();
 
-    // SPSCR, SPCKD, SSLND, SPND, SSLP, SPSSR: all zero (defaults)
-    reg8(ch, OFF_SPSCR).write_volatile(0);
-    let _ = reg8(ch, OFF_SPSCR).read_volatile();
-    reg8(ch, OFF_SPCKD).write_volatile(0);
-    let _ = reg8(ch, OFF_SPCKD).read_volatile();
-    reg8(ch, OFF_SSLND).write_volatile(0);
-    let _ = reg8(ch, OFF_SSLND).read_volatile();
-    reg8(ch, OFF_SPND).write_volatile(0);
-    let _ = reg8(ch, OFF_SPND).read_volatile();
-    reg8(ch, OFF_SSLP).write_volatile(0);
-    let _ = reg8(ch, OFF_SSLP).read_volatile();
-    reg8(ch, OFF_SPSSR).write_volatile(0);
-    let _ = reg8(ch, OFF_SPSSR).read_volatile();
+        // SPSCR, SPCKD, SSLND, SPND, SSLP, SPSSR: all zero (defaults)
+        reg8(ch, OFF_SPSCR).write_volatile(0);
+        let _ = reg8(ch, OFF_SPSCR).read_volatile();
+        reg8(ch, OFF_SPCKD).write_volatile(0);
+        let _ = reg8(ch, OFF_SPCKD).read_volatile();
+        reg8(ch, OFF_SSLND).write_volatile(0);
+        let _ = reg8(ch, OFF_SSLND).read_volatile();
+        reg8(ch, OFF_SPND).write_volatile(0);
+        let _ = reg8(ch, OFF_SPND).read_volatile();
+        reg8(ch, OFF_SSLP).write_volatile(0);
+        let _ = reg8(ch, OFF_SSLP).read_volatile();
+        reg8(ch, OFF_SPSSR).write_volatile(0);
+        let _ = reg8(ch, OFF_SPSSR).read_volatile();
 
-    // SPBFCR: TX trigger=4 bytes free, RX trigger=2 bytes
-    reg8(ch, OFF_SPBFCR).write_volatile(SPBFCR_INIT_32BIT);
-    let _ = reg8(ch, OFF_SPBFCR).read_volatile();
+        // SPBFCR: TX trigger=4 bytes free, RX trigger=2 bytes
+        reg8(ch, OFF_SPBFCR).write_volatile(SPBFCR_INIT_32BIT);
+        let _ = reg8(ch, OFF_SPBFCR).read_volatile();
 
-    // SPCMD0: 32-bit frame, mode 0
-    reg16(ch, OFF_SPCMD0).write_volatile(SPCMD0_32BIT);
-    let _ = reg16(ch, OFF_SPCMD0).read_volatile();
+        // SPCMD0: 32-bit frame, mode 0
+        reg16(ch, OFF_SPCMD0).write_volatile(SPCMD0_32BIT);
+        let _ = reg16(ch, OFF_SPCMD0).read_volatile();
 
-    // SPCR: master mode, TX interrupt enable (for DMA trigger compatibility)
-    let v = reg8(ch, OFF_SPCR).read_volatile();
-    reg8(ch, OFF_SPCR).write_volatile(v | SPCR_MSTR | SPCR_SPTIE);
-    let _ = reg8(ch, OFF_SPCR).read_volatile();
+        // SPCR: master mode, TX interrupt enable (for DMA trigger compatibility)
+        let v = reg8(ch, OFF_SPCR).read_volatile();
+        reg8(ch, OFF_SPCR).write_volatile(v | SPCR_MSTR | SPCR_SPTIE);
+        let _ = reg8(ch, OFF_SPCR).read_volatile();
 
-    // ---- R_RSPI_Start: clear errors, set SPE --------------------------------
-    let _ = reg8(ch, OFF_SPSR).read_volatile(); // clear error sources
-    reg8(ch, OFF_SPSR).write_volatile(0x00);
+        // ---- R_RSPI_Start: clear errors, set SPE --------------------------------
+        let _ = reg8(ch, OFF_SPSR).read_volatile(); // clear error sources
+        reg8(ch, OFF_SPSR).write_volatile(0x00);
 
-    let v = reg8(ch, OFF_SPCR).read_volatile();
-    reg8(ch, OFF_SPCR).write_volatile(v | SPCR_SPE);
-    let _ = reg8(ch, OFF_SPCR).read_volatile();
+        let v = reg8(ch, OFF_SPCR).read_volatile();
+        reg8(ch, OFF_SPCR).write_volatile(v | SPCR_SPE);
+        let _ = reg8(ch, OFF_SPCR).read_volatile();
+    }
 }
 
 /// Register the SPRI (receive-complete) GIC interrupt for channel `ch`.
@@ -216,10 +218,12 @@ pub unsafe fn init(ch: u8, bit_rate: u32) {
 /// # Safety
 /// Must be called after [`crate::gic::init`] and before interrupts are enabled.
 pub unsafe fn register_irq(ch: u8, handler: fn()) {
-    let id = irq_spri(ch);
-    gic::register(id, handler);
-    gic::set_priority(id, 5);
-    gic::enable(id);
+    unsafe {
+        let id = irq_spri(ch);
+        gic::register(id, handler);
+        gic::set_priority(id, 5);
+        gic::enable(id);
+    }
 }
 
 /// Disable the SPRI interrupt for channel `ch`.
@@ -231,8 +235,10 @@ pub unsafe fn register_irq(ch: u8, handler: fn()) {
 /// Writes SPCR register.
 #[inline]
 pub unsafe fn disable_rx_irq(ch: u8) {
-    let v = reg8(ch, OFF_SPCR).read_volatile();
-    reg8(ch, OFF_SPCR).write_volatile(v & !SPCR_SPRIE);
+    unsafe {
+        let v = reg8(ch, OFF_SPCR).read_volatile();
+        reg8(ch, OFF_SPCR).write_volatile(v & !SPCR_SPRIE);
+    }
 }
 
 /// Enable the SPRI interrupt for channel `ch`.
@@ -243,8 +249,10 @@ pub unsafe fn disable_rx_irq(ch: u8) {
 /// Writes SPCR register.
 #[inline]
 pub unsafe fn enable_rx_irq(ch: u8) {
-    let v = reg8(ch, OFF_SPCR).read_volatile();
-    reg8(ch, OFF_SPCR).write_volatile(v | SPCR_SPRIE);
+    unsafe {
+        let v = reg8(ch, OFF_SPCR).read_volatile();
+        reg8(ch, OFF_SPCR).write_volatile(v | SPCR_SPRIE);
+    }
 }
 
 /// Send a 32-bit word over SPI channel `ch`, using the interrupt-driven
@@ -266,17 +274,19 @@ pub unsafe fn enable_rx_irq(ch: u8) {
 /// Channel must have been initialised with [`init`].  The caller must assert
 /// the chip-select GPIO **before** calling this function.
 pub unsafe fn send32(ch: u8, data: u32) {
-    // Wait until TX buffer has space (SPTEF=1)
-    while reg8(ch, OFF_SPSR).read_volatile() & SPSR_SPTEF == 0 {}
+    unsafe {
+        // Wait until TX buffer has space (SPTEF=1)
+        while reg8(ch, OFF_SPSR).read_volatile() & SPSR_SPTEF == 0 {}
 
-    // Program SPBFCR for CV mode (don't reset RX so the interrupt fires)
-    reg8(ch, OFF_SPBFCR).write_volatile(SPBFCR_CV_TRANSFER);
+        // Program SPBFCR for CV mode (don't reset RX so the interrupt fires)
+        reg8(ch, OFF_SPBFCR).write_volatile(SPBFCR_CV_TRANSFER);
 
-    // Enable receive interrupt: fires when the shift register finishes
-    enable_rx_irq(ch);
+        // Enable receive interrupt: fires when the shift register finishes
+        enable_rx_irq(ch);
 
-    // Write data — transfer starts immediately
-    reg32(ch, OFF_SPDR).write_volatile(data);
+        // Write data — transfer starts immediately
+        reg32(ch, OFF_SPDR).write_volatile(data);
+    }
 }
 
 /// Blocking 32-bit SPI send without interrupt — wait for TEND.
@@ -287,27 +297,29 @@ pub unsafe fn send32(ch: u8, data: u32) {
 /// # Safety
 /// Channel must have been initialised with [`init`].
 pub unsafe fn send32_blocking(ch: u8, data: u32) {
-    log::debug!(
-        "rspi: ch{} blocking send {:#010x}, SPSR={:#04x}",
-        ch,
-        data,
-        reg8(ch, OFF_SPSR).read_volatile()
-    );
-    // Wait for TX buffer space
-    while reg8(ch, OFF_SPSR).read_volatile() & SPSR_SPTEF == 0 {}
-    log::debug!("rspi: ch{} SPTEF ok", ch);
+    unsafe {
+        log::debug!(
+            "rspi: ch{} blocking send {:#010x}, SPSR={:#04x}",
+            ch,
+            data,
+            reg8(ch, OFF_SPSR).read_volatile()
+        );
+        // Wait for TX buffer space
+        while reg8(ch, OFF_SPSR).read_volatile() & SPSR_SPTEF == 0 {}
+        log::debug!("rspi: ch{} SPTEF ok", ch);
 
-    // Reset RX buffer (prevents overflow)
-    let v = reg8(ch, OFF_SPBFCR).read_volatile();
-    reg8(ch, OFF_SPBFCR).write_volatile(v | SPBFCR_RX_RESET);
+        // Reset RX buffer (prevents overflow)
+        let v = reg8(ch, OFF_SPBFCR).read_volatile();
+        reg8(ch, OFF_SPBFCR).write_volatile(v | SPBFCR_RX_RESET);
 
-    // Write data
-    reg32(ch, OFF_SPDR).write_volatile(data);
-    log::debug!("rspi: ch{} SPDR written, waiting TEND", ch);
+        // Write data
+        reg32(ch, OFF_SPDR).write_volatile(data);
+        log::debug!("rspi: ch{} SPDR written, waiting TEND", ch);
 
-    // Wait for all bits to be shifted out
-    while reg8(ch, OFF_SPSR).read_volatile() & SPSR_TEND == 0 {}
-    log::debug!("rspi: ch{} TEND ok", ch);
+        // Wait for all bits to be shifted out
+        while reg8(ch, OFF_SPSR).read_volatile() & SPSR_TEND == 0 {}
+        log::debug!("rspi: ch{} TEND ok", ch);
+    }
 }
 
 /// Reset the RSPI receive FIFO buffer (set RXRST in SPBFCR).
@@ -319,8 +331,10 @@ pub unsafe fn send32_blocking(ch: u8, data: u32) {
 /// Writes SPBFCR register.
 #[inline]
 pub unsafe fn reset_rx_buf(ch: u8) {
-    let v = reg8(ch, OFF_SPBFCR).read_volatile();
-    reg8(ch, OFF_SPBFCR).write_volatile(v | SPBFCR_RX_RESET);
+    unsafe {
+        let v = reg8(ch, OFF_SPBFCR).read_volatile();
+        reg8(ch, OFF_SPBFCR).write_volatile(v | SPBFCR_RX_RESET);
+    }
 }
 
 /// Switch RSPI channel `ch` to 8-bit frame mode for OLED (SSD1309) transfers.
@@ -334,9 +348,11 @@ pub unsafe fn reset_rx_buf(ch: u8) {
 /// # Safety
 /// Writes RSPI registers.  No concurrent SPI transfers must be in progress.
 pub unsafe fn configure_8bit(ch: u8) {
-    reg8(ch, OFF_SPDCR).write_volatile(SPDCR_8BIT);
-    reg16(ch, OFF_SPCMD0).write_volatile(SPCMD0_8BIT);
-    reg8(ch, OFF_SPBFCR).write_volatile(SPBFCR_8BIT);
+    unsafe {
+        reg8(ch, OFF_SPDCR).write_volatile(SPDCR_8BIT);
+        reg16(ch, OFF_SPCMD0).write_volatile(SPCMD0_8BIT);
+        reg8(ch, OFF_SPBFCR).write_volatile(SPBFCR_8BIT);
+    }
 }
 
 /// Restore RSPI channel `ch` to 32-bit frame mode for CV DAC transfers.
@@ -344,9 +360,11 @@ pub unsafe fn configure_8bit(ch: u8) {
 /// # Safety
 /// Writes RSPI registers.  No concurrent SPI transfers must be in progress.
 pub unsafe fn configure_32bit(ch: u8) {
-    reg8(ch, OFF_SPDCR).write_volatile(SPDCR_32BIT);
-    reg16(ch, OFF_SPCMD0).write_volatile(SPCMD0_32BIT);
-    reg8(ch, OFF_SPBFCR).write_volatile(SPBFCR_INIT_32BIT);
+    unsafe {
+        reg8(ch, OFF_SPDCR).write_volatile(SPDCR_32BIT);
+        reg16(ch, OFF_SPCMD0).write_volatile(SPCMD0_32BIT);
+        reg8(ch, OFF_SPBFCR).write_volatile(SPBFCR_INIT_32BIT);
+    }
 }
 
 /// Send a single byte via 8-bit SPI.
@@ -364,13 +382,15 @@ pub unsafe fn configure_32bit(ch: u8) {
 /// mode via [`configure_8bit`].
 #[inline]
 pub unsafe fn send8(ch: u8, data: u8) {
-    // Wait until TX buffer has 4 free bytes (SPTEF=1).
-    while reg8(ch, OFF_SPSR).read_volatile() & SPSR_SPTEF == 0 {}
-    // Reset RX buffer to prevent overflow accumulation.
-    let v = reg8(ch, OFF_SPBFCR).read_volatile();
-    reg8(ch, OFF_SPBFCR).write_volatile(v | SPBFCR_RX_RESET);
-    // Write byte to SPDR.BYTE.LL (little-endian: lowest byte of SPDR = base+0x04).
-    (reg32(ch, OFF_SPDR) as *mut u8).write_volatile(data);
+    unsafe {
+        // Wait until TX buffer has 4 free bytes (SPTEF=1).
+        while reg8(ch, OFF_SPSR).read_volatile() & SPSR_SPTEF == 0 {}
+        // Reset RX buffer to prevent overflow accumulation.
+        let v = reg8(ch, OFF_SPBFCR).read_volatile();
+        reg8(ch, OFF_SPBFCR).write_volatile(v | SPBFCR_RX_RESET);
+        // Write byte to SPDR.BYTE.LL (little-endian: lowest byte of SPDR = base+0x04).
+        (reg32(ch, OFF_SPDR) as *mut u8).write_volatile(data);
+    }
 }
 
 /// Poll until the shift register is idle (TEND=1).
@@ -382,7 +402,7 @@ pub unsafe fn send8(ch: u8, data: u8) {
 /// Reads SPSR register.
 #[inline]
 pub unsafe fn wait_end(ch: u8) {
-    while reg8(ch, OFF_SPSR).read_volatile() & SPSR_TEND == 0 {}
+    unsafe { while reg8(ch, OFF_SPSR).read_volatile() & SPSR_TEND == 0 {} }
 }
 
 // ── embedded-hal SpiBus impls ─────────────────────────────────────────────────

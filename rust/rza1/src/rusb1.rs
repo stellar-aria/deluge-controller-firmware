@@ -42,11 +42,13 @@ const STBCR7: usize = 0xFCFE_0430;
 /// Writes to memory-mapped CPG registers. Must not be called concurrently
 /// with other STBCR7 writers.
 pub unsafe fn module_clock_enable(port: u8) {
-    let bit: u8 = if port == 0 { 1 << 1 } else { 1 << 0 };
-    let cur = core::ptr::read_volatile(STBCR7 as *const u8);
-    core::ptr::write_volatile(STBCR7 as *mut u8, cur & !bit);
-    // Dummy read to flush write buffer (required by HW manual §10).
-    let _ = core::ptr::read_volatile(STBCR7 as *const u8);
+    unsafe {
+        let bit: u8 = if port == 0 { 1 << 1 } else { 1 << 0 };
+        let cur = core::ptr::read_volatile(STBCR7 as *const u8);
+        core::ptr::write_volatile(STBCR7 as *mut u8, cur & !bit);
+        // Dummy read to flush write buffer (required by HW manual §10).
+        let _ = core::ptr::read_volatile(STBCR7 as *const u8);
+    }
 }
 
 /// Stop the clock for USB module `port` in CPG STBCR7.
@@ -54,10 +56,12 @@ pub unsafe fn module_clock_enable(port: u8) {
 /// # Safety
 /// Writes to memory-mapped CPG registers.
 pub unsafe fn module_clock_disable(port: u8) {
-    let bit: u8 = if port == 0 { 1 << 1 } else { 1 << 0 };
-    let cur = core::ptr::read_volatile(STBCR7 as *const u8);
-    core::ptr::write_volatile(STBCR7 as *mut u8, cur | bit);
-    let _ = core::ptr::read_volatile(STBCR7 as *const u8);
+    unsafe {
+        let bit: u8 = if port == 0 { 1 << 1 } else { 1 << 0 };
+        let cur = core::ptr::read_volatile(STBCR7 as *const u8);
+        core::ptr::write_volatile(STBCR7 as *mut u8, cur | bit);
+        let _ = core::ptr::read_volatile(STBCR7 as *const u8);
+    }
 }
 
 /// GIC interrupt priority for USB0/USB1.
@@ -74,8 +78,10 @@ const USB_IRQ_PRIORITY: u8 = 10;
 /// # Safety
 /// Writes to GIC distributor registers.
 pub unsafe fn int_enable(port: u8) {
-    crate::gic::set_priority(irq(port), USB_IRQ_PRIORITY);
-    crate::gic::enable(irq(port));
+    unsafe {
+        crate::gic::set_priority(irq(port), USB_IRQ_PRIORITY);
+        crate::gic::enable(irq(port));
+    }
 }
 
 /// Disable the GIC interrupt for USB module `port`.
@@ -83,7 +89,9 @@ pub unsafe fn int_enable(port: u8) {
 /// # Safety
 /// Writes to GIC distributor registers.
 pub unsafe fn int_disable(port: u8) {
-    crate::gic::disable(irq(port));
+    unsafe {
+        crate::gic::disable(irq(port));
+    }
 }
 
 #[cfg(all(test, not(target_os = "none")))]

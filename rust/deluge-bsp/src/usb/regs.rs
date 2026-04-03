@@ -417,7 +417,7 @@ impl Rusb1Regs {
 /// `reg` must point to a valid, aligned, memory-mapped register.
 #[inline]
 pub unsafe fn rd(reg: *const u16) -> u16 {
-    read_volatile(reg)
+    unsafe { read_volatile(reg) }
 }
 
 /// Write a 16-bit USB register via `write_volatile`.
@@ -426,7 +426,9 @@ pub unsafe fn rd(reg: *const u16) -> u16 {
 /// `reg` must point to a valid, aligned, memory-mapped register.
 #[inline]
 pub unsafe fn wr(reg: *mut u16, val: u16) {
-    write_volatile(reg, val);
+    unsafe {
+        write_volatile(reg, val);
+    }
 }
 
 /// Read-modify-write: apply `mask` and `val` (both un-shifted).
@@ -435,8 +437,10 @@ pub unsafe fn wr(reg: *mut u16, val: u16) {
 /// Same as [`wr`].
 #[inline]
 pub unsafe fn rmw(reg: *mut u16, mask: u16, val: u16) {
-    let cur = read_volatile(reg);
-    write_volatile(reg, (cur & !mask) | (val & mask));
+    unsafe {
+        let cur = read_volatile(reg);
+        write_volatile(reg, (cur & !mask) | (val & mask));
+    }
 }
 
 /// Read a 32-bit FIFO data port.
@@ -445,7 +449,7 @@ pub unsafe fn rmw(reg: *mut u16, mask: u16, val: u16) {
 /// `reg` must be a valid 32-bit-aligned FIFO data register.
 #[inline]
 pub unsafe fn rd32(reg: *const u32) -> u32 {
-    read_volatile(reg)
+    unsafe { read_volatile(reg) }
 }
 
 /// Write a 32-bit FIFO data port.
@@ -454,7 +458,9 @@ pub unsafe fn rd32(reg: *const u32) -> u32 {
 /// `reg` must be a valid 32-bit-aligned FIFO data register.
 #[inline]
 pub unsafe fn wr32(reg: *mut u32, val: u32) {
-    write_volatile(reg, val);
+    unsafe {
+        write_volatile(reg, val);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -467,11 +473,13 @@ pub unsafe fn wr32(reg: *mut u32, val: u32) {
 /// # Safety
 /// `regs` must be a valid pointer to the USB register block.
 pub unsafe fn pipectr_ptr(regs: *mut Rusb1Regs, n: usize) -> *mut u16 {
-    if n == 0 {
-        core::ptr::addr_of_mut!((*regs).dcpctr)
-    } else {
-        // PIPE1CTR is at +0x70; pipes are contiguous u16 words.
-        core::ptr::addr_of_mut!((*regs).pipe1ctr).add(n - 1)
+    unsafe {
+        if n == 0 {
+            core::ptr::addr_of_mut!((*regs).dcpctr)
+        } else {
+            // PIPE1CTR is at +0x70; pipes are contiguous u16 words.
+            core::ptr::addr_of_mut!((*regs).pipe1ctr).add(n - 1)
+        }
     }
 }
 
@@ -480,8 +488,10 @@ pub unsafe fn pipectr_ptr(regs: *mut Rusb1Regs, n: usize) -> *mut u16 {
 /// # Safety
 /// `regs` must be valid.  `dev_addr` must be in the range 0-10.
 pub unsafe fn devadd_ptr(regs: *mut Rusb1Regs, dev_addr: u8) -> *mut u16 {
-    debug_assert!((dev_addr as usize) <= 10);
-    core::ptr::addr_of_mut!((*regs).devadd0).add(dev_addr as usize)
+    unsafe {
+        debug_assert!((dev_addr as usize) <= 10);
+        core::ptr::addr_of_mut!((*regs).devadd0).add(dev_addr as usize)
+    }
 }
 
 // ---------------------------------------------------------------------------

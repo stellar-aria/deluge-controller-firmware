@@ -88,15 +88,17 @@ impl UsbPort<Device> {
     /// # Safety
     /// No active USB traffic must be in progress.
     pub unsafe fn into_host_mode(self) -> (UsbPort<Host>, Rusb1HostDriver) {
-        quiesce_port(self.port);
-        let hd = Rusb1HostDriver::new(self.port);
-        (
-            UsbPort {
-                port: self.port,
-                _mode: PhantomData,
-            },
-            hd,
-        )
+        unsafe {
+            quiesce_port(self.port);
+            let hd = Rusb1HostDriver::new(self.port);
+            (
+                UsbPort {
+                    port: self.port,
+                    _mode: PhantomData,
+                },
+                hd,
+            )
+        }
     }
 }
 
@@ -106,15 +108,17 @@ impl UsbPort<Host> {
     /// # Safety
     /// No active USB traffic must be in progress.
     pub unsafe fn into_device_mode(self) -> (UsbPort<Device>, Rusb1Driver) {
-        quiesce_port(self.port);
-        let drv = Rusb1Driver::new(self.port);
-        (
-            UsbPort {
-                port: self.port,
-                _mode: PhantomData,
-            },
-            drv,
-        )
+        unsafe {
+            quiesce_port(self.port);
+            let drv = Rusb1Driver::new(self.port);
+            (
+                UsbPort {
+                    port: self.port,
+                    _mode: PhantomData,
+                },
+                drv,
+            )
+        }
     }
 }
 
@@ -133,15 +137,17 @@ impl UsbPort<Host> {
 /// the USB clock select (UCKSEL) have been configured in SYSCFG0 before this
 /// call if an external clock is used (the Deluge board uses the internal PLL).
 pub unsafe fn init_device_mode(port: u8) -> (UsbPort<Device>, Rusb1Driver) {
-    rusb1::module_clock_enable(port);
-    let drv = Rusb1Driver::new(port);
-    (
-        UsbPort {
-            port,
-            _mode: PhantomData,
-        },
-        drv,
-    )
+    unsafe {
+        rusb1::module_clock_enable(port);
+        let drv = Rusb1Driver::new(port);
+        (
+            UsbPort {
+                port,
+                _mode: PhantomData,
+            },
+            drv,
+        )
+    }
 }
 
 /// Enable the USB clock, initialise the RUSB1 hardware in **host** mode, and
@@ -154,15 +160,17 @@ pub unsafe fn init_device_mode(port: u8) -> (UsbPort<Device>, Rusb1Driver) {
 /// # Safety
 /// Must only be called once per port.
 pub unsafe fn init_host_mode(port: u8) -> (UsbPort<Host>, Rusb1HostDriver) {
-    rusb1::module_clock_enable(port);
-    let hd = Rusb1HostDriver::new(port);
-    (
-        UsbPort {
-            port,
-            _mode: PhantomData,
-        },
-        hd,
-    )
+    unsafe {
+        rusb1::module_clock_enable(port);
+        let hd = Rusb1HostDriver::new(port);
+        (
+            UsbPort {
+                port,
+                _mode: PhantomData,
+            },
+            hd,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -172,13 +180,15 @@ pub unsafe fn init_host_mode(port: u8) -> (UsbPort<Host>, Rusb1HostDriver) {
 /// Bring a port to a quiescent state (USBE=0, interrupts off) before a mode
 /// switch.
 unsafe fn quiesce_port(port: u8) {
-    use regs::{Rusb1Regs, SYSCFG_USBE, wr};
-    rusb1::int_disable(port);
-    let regs = Rusb1Regs::ptr(port);
-    wr(core::ptr::addr_of_mut!((*regs).intenb0), 0);
-    wr(core::ptr::addr_of_mut!((*regs).brdyenb), 0);
-    wr(core::ptr::addr_of_mut!((*regs).bempenb), 0);
-    // Clear USBE to reset the SIE.
-    let cur = regs::rd(core::ptr::addr_of!((*regs).syscfg0));
-    wr(core::ptr::addr_of_mut!((*regs).syscfg0), cur & !SYSCFG_USBE);
+    unsafe {
+        use regs::{Rusb1Regs, SYSCFG_USBE, wr};
+        rusb1::int_disable(port);
+        let regs = Rusb1Regs::ptr(port);
+        wr(core::ptr::addr_of_mut!((*regs).intenb0), 0);
+        wr(core::ptr::addr_of_mut!((*regs).brdyenb), 0);
+        wr(core::ptr::addr_of_mut!((*regs).bempenb), 0);
+        // Clear USBE to reset the SIE.
+        let cur = regs::rd(core::ptr::addr_of!((*regs).syscfg0));
+        wr(core::ptr::addr_of_mut!((*regs).syscfg0), cur & !SYSCFG_USBE);
+    }
 }

@@ -181,11 +181,13 @@ impl Rusb1Driver {
     /// Caller must ensure this is the only active driver for this port, and
     /// that `rza1::rusb1::module_clock_enable(port)` has already been called.
     pub unsafe fn new(port: u8) -> Self {
-        debug_assert!(port <= 1);
-        // Set BUSWAIT early so register accesses after USBE=1 are safe.
-        let regs = Rusb1Regs::ptr(port);
-        wr(core::ptr::addr_of_mut!((*regs).buswait), BUSWAIT_VALUE);
-        Self { port }
+        unsafe {
+            debug_assert!(port <= 1);
+            // Set BUSWAIT early so register accesses after USBE=1 are safe.
+            let regs = Rusb1Regs::ptr(port);
+            wr(core::ptr::addr_of_mut!((*regs).buswait), BUSWAIT_VALUE);
+            Self { port }
+        }
     }
 }
 
@@ -292,12 +294,12 @@ impl<'d> Driver<'d> for Rusb1Driver {
                 let ep_num = addr.index() as u8;
                 let existing_pipe = alloc.ep_to_pipe[1][ep_num as usize] as usize;
                 if existing_pipe != 0 {
-                    if let Some(ref mut cfg) = alloc.pipe_cfg[existing_pipe] {
-                        if max_packet_size > cfg.mps {
-                            let new_blocks = mps_to_blocks(max_packet_size);
-                            cfg.mps = max_packet_size;
-                            cfg.buf_blocks = new_blocks as u8;
-                        }
+                    if let Some(ref mut cfg) = alloc.pipe_cfg[existing_pipe]
+                        && max_packet_size > cfg.mps
+                    {
+                        let new_blocks = mps_to_blocks(max_packet_size);
+                        cfg.mps = max_packet_size;
+                        cfg.buf_blocks = new_blocks as u8;
                     }
                     let info = EndpointInfo {
                         addr: EndpointAddress::from_parts(ep_num as usize, Direction::In),
@@ -1120,173 +1122,175 @@ impl EndpointIn for Rusb1EndpointIn {
 /// Must only be called from an interrupt context matching the port's GIC IRQ.
 /// Single-core bare-metal only.
 pub unsafe fn dcd_int_handler(port: u8) {
-    let regs = Rusb1Regs::ptr(port);
-    let p = port as usize;
+    unsafe {
+        let regs = Rusb1Regs::ptr(port);
+        let p = port as usize;
 
-    let sts = rd(core::ptr::addr_of!((*regs).intsts0));
+        let sts = rd(core::ptr::addr_of!((*regs).intsts0));
 
-    // Clear all active sticky flags atomically in a single write, preserving
-    // the VALID bit (matches C ISR: don't write 0 to bits we didn't observe,
-    // as hardware may have set new bits since the read).
-    //
-    // RC-W0 semantics: writing 0 to a bit clears it; writing 1 leaves it set.
-    // So: ~(observed_flags) | VALID  →  clears observed bits, keeps VALID=1.
-    const STICKY_FLAGS: u16 = INTSTS0_CTRT | INTSTS0_DVST | INTSTS0_VBINT;
-    wr(
-        core::ptr::addr_of_mut!((*regs).intsts0),
-        !(STICKY_FLAGS & sts) | INTSTS0_VALID,
-    );
+        // Clear all active sticky flags atomically in a single write, preserving
+        // the VALID bit (matches C ISR: don't write 0 to bits we didn't observe,
+        // as hardware may have set new bits since the read).
+        //
+        // RC-W0 semantics: writing 0 to a bit clears it; writing 1 leaves it set.
+        // So: ~(observed_flags) | VALID  →  clears observed bits, keeps VALID=1.
+        const STICKY_FLAGS: u16 = INTSTS0_CTRT | INTSTS0_DVST | INTSTS0_VBINT;
+        wr(
+            core::ptr::addr_of_mut!((*regs).intsts0),
+            !(STICKY_FLAGS & sts) | INTSTS0_VALID,
+        );
 
-    // ── VBINT (VBUS change) ──────────────────────────────────────────────
-    if sts & INTSTS0_VBINT != 0 {
-        if sts & INTSTS0_VBSTS != 0 {
-            BUS_EVENTS[p].fetch_or(BUS_EVT_VBUS_ON, Ordering::Release);
-        } else {
-            BUS_EVENTS[p].fetch_or(BUS_EVT_VBUS_OFF, Ordering::Release);
-        }
-        BUS_WAKERS[p].wake();
-    }
-
-    // ── DVST (device-state change) ───────────────────────────────────────
-    if sts & INTSTS0_DVST != 0 {
-        let dvsq = (sts & INTSTS0_DVSQ_MASK) >> INTSTS0_DVSQ_SHIFT;
-        // DVSQ=2 (Address) and DVSQ=3 (Configured): hardware auto-handles
-        // SET_ADDRESS and SET_CONFIGURATION state transitions.  The C reference
-        // driver does nothing for these states (USB_DS_ADDS / USB_DS_CNFG both
-        // hit `break` in `usb_pstd_interrupt_handler`).  Emitting Resume here
-        // disrupts embassy-usb's enumeration state machine.
-        let evt = match dvsq {
-            d if d == DVSQ_DEFAULT => Some(BUS_EVT_RESET),
-            d if d >= DVSQ_SUSP0 => Some(BUS_EVT_SUSPEND),
-            _ => None,
-        };
-        if let Some(evt) = evt {
-            BUS_EVENTS[p].fetch_or(evt, Ordering::Release);
+        // ── VBINT (VBUS change) ──────────────────────────────────────────────
+        if sts & INTSTS0_VBINT != 0 {
+            if sts & INTSTS0_VBSTS != 0 {
+                BUS_EVENTS[p].fetch_or(BUS_EVT_VBUS_ON, Ordering::Release);
+            } else {
+                BUS_EVENTS[p].fetch_or(BUS_EVT_VBUS_OFF, Ordering::Release);
+            }
             BUS_WAKERS[p].wake();
         }
 
-        // On reset, run the proper bus-reset sequence then reconfigure pipes.
-        if dvsq == DVSQ_DEFAULT {
-            process_bus_reset(port);
-        }
-    }
-
-    // ── CTRT (control transfer stage) ────────────────────────────────────
-    if sts & INTSTS0_CTRT != 0 {
-        // Re-read INTSTS0 to get the live VALID bit (matches C
-        // `process_setup_packet` which re-reads before checking VALID).
-        let intsts_live = rd(core::ptr::addr_of!((*regs).intsts0));
-        if intsts_live & INTSTS0_VALID != 0 {
-            // Clear CFIFO before latching the setup packet — any data left
-            // over from the previous transfer must be discarded (matches C
-            // `process_setup_packet`: rusb->CFIFOCTR = USB_CFIFOCTR_BCLR).
-            wr(core::ptr::addr_of_mut!((*regs).cfifoctr), FIFOCTR_BCLR);
-
-            // Capture setup packet from USBREQ/USBVAL/USBINDX/USBLENG.
-            let req = rd(core::ptr::addr_of!((*regs).usbreq));
-            let val = rd(core::ptr::addr_of!((*regs).usbval));
-            let idx = rd(core::ptr::addr_of!((*regs).usbindx));
-            let len = rd(core::ptr::addr_of!((*regs).usbleng));
-            let pkt = [
-                (req & 0xFF) as u8,
-                (req >> 8) as u8,
-                (val & 0xFF) as u8,
-                (val >> 8) as u8,
-                (idx & 0xFF) as u8,
-                (idx >> 8) as u8,
-                (len & 0xFF) as u8,
-                (len >> 8) as u8,
-            ];
-            let cs = critical_section::CriticalSection::new();
-            *SETUP_PKT[p].borrow(cs).get() = pkt;
-
-            // Clear VALID now that the setup packet has been latched (matches
-            // C `process_setup_packet`: rusb->INTSTS0 = ~USB_INTSTS0_VALID).
-            wr(core::ptr::addr_of_mut!((*regs).intsts0), !INTSTS0_VALID);
-
-            // Signal setup() only when VALID=1 (i.e. a real SETUP packet).
-            // Status-stage CTRT events (VALID=0) must NOT wake setup() or
-            // it would return a stale packet.
-            let ctsq = (sts & INTSTS0_CTSQ_MASK) as u8;
-            CTRL_STAGE[p].store(ctsq, Ordering::Release);
-            CTRL_WAKERS[p].wake();
-        } else {
-            // Non-VALID CTRT: a status-stage transition is completing.
-            let ctsq = (sts & INTSTS0_CTSQ_MASK) as u8;
-            if ctsq == 2 {
-                // Control read status stage (CS_RDSS, ctsq=2): host sends its
-                // zero-length OUT to ACK our IN data.  We must set CCPL so the
-                // hardware ACKs that ZLP.  Mirrors C usb_pstd_stand_req4() ->
-                // usb_pstd_ctrl_end(): disable BEMP0/BRDY0 then PID=BUF|CCPL.
-                // embassy-usb does NOT call accept() for control-read transfers.
-                rmw(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001, 0x0000);
-                rmw(core::ptr::addr_of_mut!((*regs).brdyenb), 0x0001, 0x0000);
-                let ctr = rd(pipectr_ptr(regs, 0));
-                wr(
-                    pipectr_ptr(regs, 0),
-                    (ctr & !PIPECTR_PID_MASK) | PIPECTR_PID_BUF | PIPECTR_CCPL,
-                );
+        // ── DVST (device-state change) ───────────────────────────────────────
+        if sts & INTSTS0_DVST != 0 {
+            let dvsq = (sts & INTSTS0_DVSQ_MASK) >> INTSTS0_DVSQ_SHIFT;
+            // DVSQ=2 (Address) and DVSQ=3 (Configured): hardware auto-handles
+            // SET_ADDRESS and SET_CONFIGURATION state transitions.  The C reference
+            // driver does nothing for these states (USB_DS_ADDS / USB_DS_CNFG both
+            // hit `break` in `usb_pstd_interrupt_handler`).  Emitting Resume here
+            // disrupts embassy-usb's enumeration state machine.
+            let evt = match dvsq {
+                d if d == DVSQ_DEFAULT => Some(BUS_EVT_RESET),
+                d if d >= DVSQ_SUSP0 => Some(BUS_EVT_SUSPEND),
+                _ => None,
+            };
+            if let Some(evt) = evt {
+                BUS_EVENTS[p].fetch_or(evt, Ordering::Release);
+                BUS_WAKERS[p].wake();
             }
-            // ctsq=4 (WRSS) / ctsq=5 (WRND): accept() / accept_set_address()
-            // are called by the embassy-usb task and set CCPL from there.
-        }
-    }
 
-    // ── BRDY (buffer ready — data received on OUT pipe) ──────────────────
-    if sts & INTSTS0_BRDY != 0 {
-        let brdysts = rd(core::ptr::addr_of!((*regs).brdysts));
-        let brdyenb = rd(core::ptr::addr_of!((*regs).brdyenb));
-        let active = brdysts & brdyenb;
-
-        #[allow(clippy::needless_range_loop)]
-        for n in 0..16usize {
-            if active & (1 << n) == 0 {
-                continue;
+            // On reset, run the proper bus-reset sequence then reconfigure pipes.
+            if dvsq == DVSQ_DEFAULT {
+                process_bus_reset(port);
             }
-            // Clear the BRDY flag for this pipe.
-            wr(core::ptr::addr_of_mut!((*regs).brdysts), !((1u16) << n));
+        }
 
-            if n == 0 {
-                // Pipe 0 BRDY: data arrived for the control write data stage.
-                // Signal data_out() which is waiting on PIPE0_BRDY.
-                PIPE0_BRDY[p].store(1, Ordering::Release);
+        // ── CTRT (control transfer stage) ────────────────────────────────────
+        if sts & INTSTS0_CTRT != 0 {
+            // Re-read INTSTS0 to get the live VALID bit (matches C
+            // `process_setup_packet` which re-reads before checking VALID).
+            let intsts_live = rd(core::ptr::addr_of!((*regs).intsts0));
+            if intsts_live & INTSTS0_VALID != 0 {
+                // Clear CFIFO before latching the setup packet — any data left
+                // over from the previous transfer must be discarded (matches C
+                // `process_setup_packet`: rusb->CFIFOCTR = USB_CFIFOCTR_BCLR).
+                wr(core::ptr::addr_of_mut!((*regs).cfifoctr), FIFOCTR_BCLR);
+
+                // Capture setup packet from USBREQ/USBVAL/USBINDX/USBLENG.
+                let req = rd(core::ptr::addr_of!((*regs).usbreq));
+                let val = rd(core::ptr::addr_of!((*regs).usbval));
+                let idx = rd(core::ptr::addr_of!((*regs).usbindx));
+                let len = rd(core::ptr::addr_of!((*regs).usbleng));
+                let pkt = [
+                    (req & 0xFF) as u8,
+                    (req >> 8) as u8,
+                    (val & 0xFF) as u8,
+                    (val >> 8) as u8,
+                    (idx & 0xFF) as u8,
+                    (idx >> 8) as u8,
+                    (len & 0xFF) as u8,
+                    (len >> 8) as u8,
+                ];
+                let cs = critical_section::CriticalSection::new();
+                *SETUP_PKT[p].borrow(cs).get() = pkt;
+
+                // Clear VALID now that the setup packet has been latched (matches
+                // C `process_setup_packet`: rusb->INTSTS0 = ~USB_INTSTS0_VALID).
+                wr(core::ptr::addr_of_mut!((*regs).intsts0), !INTSTS0_VALID);
+
+                // Signal setup() only when VALID=1 (i.e. a real SETUP packet).
+                // Status-stage CTRT events (VALID=0) must NOT wake setup() or
+                // it would return a stale packet.
+                let ctsq = (sts & INTSTS0_CTSQ_MASK) as u8;
+                CTRL_STAGE[p].store(ctsq, Ordering::Release);
                 CTRL_WAKERS[p].wake();
             } else {
-                let done = pipe_xfer_out_brdy(regs, n);
-                if done {
-                    PIPE_DONE.fetch_or(1u16 << n, Ordering::Release);
-                    PIPE_WAKERS[n].wake();
+                // Non-VALID CTRT: a status-stage transition is completing.
+                let ctsq = (sts & INTSTS0_CTSQ_MASK) as u8;
+                if ctsq == 2 {
+                    // Control read status stage (CS_RDSS, ctsq=2): host sends its
+                    // zero-length OUT to ACK our IN data.  We must set CCPL so the
+                    // hardware ACKs that ZLP.  Mirrors C usb_pstd_stand_req4() ->
+                    // usb_pstd_ctrl_end(): disable BEMP0/BRDY0 then PID=BUF|CCPL.
+                    // embassy-usb does NOT call accept() for control-read transfers.
+                    rmw(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001, 0x0000);
+                    rmw(core::ptr::addr_of_mut!((*regs).brdyenb), 0x0001, 0x0000);
+                    let ctr = rd(pipectr_ptr(regs, 0));
+                    wr(
+                        pipectr_ptr(regs, 0),
+                        (ctr & !PIPECTR_PID_MASK) | PIPECTR_PID_BUF | PIPECTR_CCPL,
+                    );
+                }
+                // ctsq=4 (WRSS) / ctsq=5 (WRND): accept() / accept_set_address()
+                // are called by the embassy-usb task and set CCPL from there.
+            }
+        }
+
+        // ── BRDY (buffer ready — data received on OUT pipe) ──────────────────
+        if sts & INTSTS0_BRDY != 0 {
+            let brdysts = rd(core::ptr::addr_of!((*regs).brdysts));
+            let brdyenb = rd(core::ptr::addr_of!((*regs).brdyenb));
+            let active = brdysts & brdyenb;
+
+            #[allow(clippy::needless_range_loop)]
+            for n in 0..16usize {
+                if active & (1 << n) == 0 {
+                    continue;
+                }
+                // Clear the BRDY flag for this pipe.
+                wr(core::ptr::addr_of_mut!((*regs).brdysts), !((1u16) << n));
+
+                if n == 0 {
+                    // Pipe 0 BRDY: data arrived for the control write data stage.
+                    // Signal data_out() which is waiting on PIPE0_BRDY.
+                    PIPE0_BRDY[p].store(1, Ordering::Release);
+                    CTRL_WAKERS[p].wake();
+                } else {
+                    let done = pipe_xfer_out_brdy(regs, n);
+                    if done {
+                        PIPE_DONE.fetch_or(1u16 << n, Ordering::Release);
+                        PIPE_WAKERS[n].wake();
+                    }
                 }
             }
         }
-    }
 
-    // ── BEMP (buffer empty — IN pipe sent its data) ───────────────────────
-    if sts & INTSTS0_BEMP != 0 {
-        let bempsts = rd(core::ptr::addr_of!((*regs).bempsts));
-        let bempenb = rd(core::ptr::addr_of!((*regs).bempenb));
-        let active = bempsts & bempenb;
+        // ── BEMP (buffer empty — IN pipe sent its data) ───────────────────────
+        if sts & INTSTS0_BEMP != 0 {
+            let bempsts = rd(core::ptr::addr_of!((*regs).bempsts));
+            let bempenb = rd(core::ptr::addr_of!((*regs).bempenb));
+            let active = bempsts & bempenb;
 
-        #[allow(clippy::needless_range_loop)]
-        for n in 0..16usize {
-            if active & (1 << n) == 0 {
-                continue;
-            }
-            wr(core::ptr::addr_of_mut!((*regs).bempsts), !((1u16) << n));
+            #[allow(clippy::needless_range_loop)]
+            for n in 0..16usize {
+                if active & (1 << n) == 0 {
+                    continue;
+                }
+                wr(core::ptr::addr_of_mut!((*regs).bempsts), !((1u16) << n));
 
-            if n == 0 {
-                // Pipe 0 BEMP: all data has been sent for the control-read
-                // data stage.  Disable BEMP0 interrupt now (mirrors C
-                // usb_pstd_bemp_pipe WRITESHRT: hw_usb_clear_bempenb(PIPE0)).
-                // CCPL will be set by the CTRT ctsq=2 ISR handler below.
-                rmw(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001, 0x0000);
-                PIPE_DONE.fetch_or(1, Ordering::Release);
-                PIPE_WAKERS[0].wake();
-            } else {
-                let done = pipe_xfer_in_bemp(regs, n);
-                if done {
-                    PIPE_DONE.fetch_or(1u16 << n, Ordering::Release);
-                    PIPE_WAKERS[n].wake();
+                if n == 0 {
+                    // Pipe 0 BEMP: all data has been sent for the control-read
+                    // data stage.  Disable BEMP0 interrupt now (mirrors C
+                    // usb_pstd_bemp_pipe WRITESHRT: hw_usb_clear_bempenb(PIPE0)).
+                    // CCPL will be set by the CTRT ctsq=2 ISR handler below.
+                    rmw(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001, 0x0000);
+                    PIPE_DONE.fetch_or(1, Ordering::Release);
+                    PIPE_WAKERS[0].wake();
+                } else {
+                    let done = pipe_xfer_in_bemp(regs, n);
+                    if done {
+                        PIPE_DONE.fetch_or(1u16 << n, Ordering::Release);
+                        PIPE_WAKERS[n].wake();
+                    }
                 }
             }
         }
@@ -1334,89 +1338,93 @@ fn ep_addr_to_pipe(port: u8, ep_addr: EndpointAddress) -> Option<usize> {
 /// - Aborts any in-progress transfers (wakes waiters with NRDY error).
 /// - Then reconfigures all pipes so they are ready for the re-enumeration.
 unsafe fn process_bus_reset(port: u8) {
-    log::debug!("usb{}: bus reset — reconfiguring", port);
-    let regs = Rusb1Regs::ptr(port);
-    let p = port as usize;
+    unsafe {
+        log::debug!("usb{}: bus reset — reconfiguring", port);
+        let regs = Rusb1Regs::ptr(port);
+        let p = port as usize;
 
-    // Log the negotiated bus speed from DVSTCTR0.RHST.
-    let rhst = rd(core::ptr::addr_of!((*regs).dvstctr0)) & DVSTCTR0_RHST;
-    let speed_str = match rhst {
-        r if r == DVSTCTR0_RHST_HS => "HS (480 Mbps)",
-        r if r == DVSTCTR0_RHST_FS => "FS (12 Mbps)",
-        _ => "LS / unknown",
-    };
-    log::info!(
-        "usb{}: bus reset — negotiated speed: {} (RHST={:#03x})",
-        port,
-        speed_str,
-        rhst
-    );
+        // Log the negotiated bus speed from DVSTCTR0.RHST.
+        let rhst = rd(core::ptr::addr_of!((*regs).dvstctr0)) & DVSTCTR0_RHST;
+        let speed_str = match rhst {
+            r if r == DVSTCTR0_RHST_HS => "HS (480 Mbps)",
+            r if r == DVSTCTR0_RHST_FS => "FS (12 Mbps)",
+            _ => "LS / unknown",
+        };
+        log::info!(
+            "usb{}: bus reset — negotiated speed: {} (RHST={:#03x})",
+            port,
+            speed_str,
+            rhst
+        );
 
-    // Only keep pipe 0 BRDY/BEMP enabled — pipes 1-15 will be re-enabled when
-    // dcd_edpt_open / iso_activate are called by the host stack.
-    // BEMPENB bit 0 must be set so that data_in() receives BEMP on pipe 0
-    // (matches C firmware: USB200.BRDYENB = 1; USB200.BEMPENB = 1).
-    wr(core::ptr::addr_of_mut!((*regs).brdyenb), 0x0001);
-    wr(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001);
+        // Only keep pipe 0 BRDY/BEMP enabled — pipes 1-15 will be re-enabled when
+        // dcd_edpt_open / iso_activate are called by the host stack.
+        // BEMPENB bit 0 must be set so that data_in() receives BEMP on pipe 0
+        // (matches C firmware: USB200.BRDYENB = 1; USB200.BEMPENB = 1).
+        wr(core::ptr::addr_of_mut!((*regs).brdyenb), 0x0001);
+        wr(core::ptr::addr_of_mut!((*regs).bempenb), 0x0001);
 
-    // Clear the control FIFO.
-    wr(core::ptr::addr_of_mut!((*regs).cfifoctr), FIFOCTR_BCLR);
+        // Clear the control FIFO.
+        wr(core::ptr::addr_of_mut!((*regs).cfifoctr), FIFOCTR_BCLR);
 
-    // Deselect D0FIFO and D1FIFO (CURPIPE = 0).
-    wr(core::ptr::addr_of_mut!((*regs).d0fifosel), 0);
-    wr(core::ptr::addr_of_mut!((*regs).d1fifosel), 0);
+        // Deselect D0FIFO and D1FIFO (CURPIPE = 0).
+        wr(core::ptr::addr_of_mut!((*regs).d0fifosel), 0);
+        wr(core::ptr::addr_of_mut!((*regs).d1fifosel), 0);
 
-    // ACLRM + SQCLR every active pipe and abort any in-progress transfer.
-    let mut abort_mask: u16 = 0;
-    critical_section::with(|cs| {
-        let alloc = &*PORT_ALLOC[p].borrow(cs).get();
-        #[allow(clippy::needless_range_loop)]
-        for n in 1..PIPE_COUNT {
-            if alloc.pipe_cfg[n].is_some() {
-                let ctr = pipectr_ptr(regs, n);
-                // ACLRM clears the pipe FIFO and resets the toggle.
-                wr(ctr, PIPECTR_ACLRM | PIPECTR_SQCLR);
-                wr(ctr, 0);
+        // ACLRM + SQCLR every active pipe and abort any in-progress transfer.
+        let mut abort_mask: u16 = 0;
+        critical_section::with(|cs| {
+            let alloc = &*PORT_ALLOC[p].borrow(cs).get();
+            #[allow(clippy::needless_range_loop)]
+            for n in 1..PIPE_COUNT {
+                if alloc.pipe_cfg[n].is_some() {
+                    let ctr = pipectr_ptr(regs, n);
+                    // ACLRM clears the pipe FIFO and resets the toggle.
+                    wr(ctr, PIPECTR_ACLRM | PIPECTR_SQCLR);
+                    wr(ctr, 0);
 
-                // Signal transfer failure to any waiting task.
-                let state = &mut *PIPE_XFER[n].borrow(cs).get();
-                if state.remaining != 0 {
-                    state.remaining = 0;
-                    state.buf = core::ptr::NonNull::dangling();
-                    abort_mask |= 1u16 << n;
+                    // Signal transfer failure to any waiting task.
+                    let state = &mut *PIPE_XFER[n].borrow(cs).get();
+                    if state.remaining != 0 {
+                        state.remaining = 0;
+                        state.buf = core::ptr::NonNull::dangling();
+                        abort_mask |= 1u16 << n;
+                    }
+                }
+            }
+        });
+
+        // Wake aborted waiters (they will observe PIPE_NRDY and return an error).
+        if abort_mask != 0 {
+            PIPE_NRDY.fetch_or(abort_mask, Ordering::Release);
+            #[allow(clippy::needless_range_loop)]
+            for n in 1..16usize {
+                if abort_mask & (1u16 << n) != 0 {
+                    PIPE_WAKERS[n].wake();
                 }
             }
         }
-    });
 
-    // Wake aborted waiters (they will observe PIPE_NRDY and return an error).
-    if abort_mask != 0 {
-        PIPE_NRDY.fetch_or(abort_mask, Ordering::Release);
-        #[allow(clippy::needless_range_loop)]
-        for n in 1..16usize {
-            if abort_mask & (1u16 << n) != 0 {
-                PIPE_WAKERS[n].wake();
-            }
-        }
+        // Re-apply all pipe hardware configs so the host can re-enumerate.
+        configure_all_pipes(port);
     }
-
-    // Re-apply all pipe hardware configs so the host can re-enumerate.
-    configure_all_pipes(port);
 }
 
 /// (Re-)configure all allocated pipes on the hardware.  Called on enable and
 /// on bus reset.
 unsafe fn configure_all_pipes(port: u8) {
-    let regs = Rusb1Regs::ptr(port);
-    critical_section::with(|cs| {
-        let alloc = &*PORT_ALLOC[port as usize].borrow(cs).get();
-        for (n, cfg_opt) in alloc.pipe_cfg.iter().enumerate() {
-            if n == 0 {
-                continue;
-            } // DCP configured via DCPMAXP/DCPCFG
-            if let Some(cfg) = cfg_opt {
-                pipe_configure(regs, n, cfg);
+    unsafe {
+        let regs = Rusb1Regs::ptr(port);
+        critical_section::with(|cs| {
+            let alloc = &*PORT_ALLOC[port as usize].borrow(cs).get();
+            for (n, cfg_opt) in alloc.pipe_cfg.iter().enumerate() {
+                if n == 0 {
+                    continue;
+                } // DCP configured via DCPMAXP/DCPCFG
+                if let Some(cfg) = cfg_opt {
+                    pipe_configure(regs, n, cfg);
+                }
             }
-        }
-    });
+        });
+    }
 }

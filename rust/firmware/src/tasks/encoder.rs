@@ -83,50 +83,52 @@ fn enc_irq_handler(enc_idx: usize, irq_pin: u8, companion: u8, irq_num: u8, inve
 /// # Safety
 /// Must be called before `cortex_ar::interrupt::enable()`.
 pub(crate) unsafe fn encoder_irq_init() {
-    // (irq_pin, companion_pin, gic_id, irq_num, invert)
-    const SETUP: [(u8, u8, u16, u8, bool); 6] = [
-        (11, 12, 35, 3, false), // 0 SCROLL_X
-        (6, 7, 34, 2, true),    // 1 TEMPO  (IRQ on electrical B / pin_b)
-        (0, 15, 36, 4, false),  // 2 MOD_0
-        (5, 4, 33, 1, false),   // 3 MOD_1
-        (8, 10, 32, 0, false),  // 4 SCROLL_Y
-        (2, 3, 38, 6, false),   // 5 SELECT
-    ];
+    unsafe {
+        // (irq_pin, companion_pin, gic_id, irq_num, invert)
+        const SETUP: [(u8, u8, u16, u8, bool); 6] = [
+            (11, 12, 35, 3, false), // 0 SCROLL_X
+            (6, 7, 34, 2, true),    // 1 TEMPO  (IRQ on electrical B / pin_b)
+            (0, 15, 36, 4, false),  // 2 MOD_0
+            (5, 4, 33, 1, false),   // 3 MOD_1
+            (8, 10, 32, 0, false),  // 4 SCROLL_Y
+            (2, 3, 38, 6, false),   // 5 SELECT
+        ];
 
-    for &(irq_pin, comp_pin, _, _, _) in &SETUP {
-        // Mux IRQ pin to IRQ function (2nd alt); enable PIBC so PPR is readable.
-        rza1::gpio::set_pin_mux(1, irq_pin, 2);
-        rza1::gpio::enable_input_buffer(1, irq_pin);
-        // Companion stays plain GPIO input (except P1.15 — overridden below).
-        rza1::gpio::set_as_input(1, comp_pin);
-    }
-    // MOD_0 companion P1.15 can also be IRQ7 (mux=2 same as all other IRQ pins).
-    // Overwrite the set_as_input above with peripheral-mode mux.
-    rza1::gpio::set_pin_mux(1, 15, 2);
-    rza1::gpio::enable_input_buffer(1, 15);
+        for &(irq_pin, comp_pin, _, _, _) in &SETUP {
+            // Mux IRQ pin to IRQ function (2nd alt); enable PIBC so PPR is readable.
+            rza1::gpio::set_pin_mux(1, irq_pin, 2);
+            rza1::gpio::enable_input_buffer(1, irq_pin);
+            // Companion stays plain GPIO input (except P1.15 — overridden below).
+            rza1::gpio::set_as_input(1, comp_pin);
+        }
+        // MOD_0 companion P1.15 can also be IRQ7 (mux=2 same as all other IRQ pins).
+        // Overwrite the set_as_input above with peripheral-mode mux.
+        rza1::gpio::set_pin_mux(1, 15, 2);
+        rza1::gpio::enable_input_buffer(1, 15);
 
-    for &(_, _, _, irq_num, _) in &SETUP {
-        rza1::gic::set_irq_both_edges(irq_num);
-    }
-    // IRQ7 for P1.15 (MOD_0 B pin).
-    rza1::gic::set_irq_both_edges(7);
+        for &(_, _, _, irq_num, _) in &SETUP {
+            rza1::gic::set_irq_both_edges(irq_num);
+        }
+        // IRQ7 for P1.15 (MOD_0 B pin).
+        rza1::gic::set_irq_both_edges(7);
 
-    rza1::gic::register(35, || enc_irq_handler(0, 11, 12, 3, false));
-    rza1::gic::register(34, || enc_irq_handler(1, 6, 7, 2, true));
-    rza1::gic::register(36, || enc_irq_handler(2, 0, 15, 4, false));
-    rza1::gic::register(39, || enc_irq_handler(2, 15, 0, 7, false)); // MOD_0 B
-    rza1::gic::register(33, || enc_irq_handler(3, 5, 4, 1, false));
-    rza1::gic::register(32, || enc_irq_handler(4, 8, 10, 0, false));
-    rza1::gic::register(38, || enc_irq_handler(5, 2, 3, 6, false));
-    for &(_, _, gic_id, _, _) in &SETUP {
-        // Priority must be < 31; GICC_PMR is set to 31 so priority=31 is blocked.
-        rza1::gic::set_priority(gic_id, 14);
-        rza1::gic::enable(gic_id);
+        rza1::gic::register(35, || enc_irq_handler(0, 11, 12, 3, false));
+        rza1::gic::register(34, || enc_irq_handler(1, 6, 7, 2, true));
+        rza1::gic::register(36, || enc_irq_handler(2, 0, 15, 4, false));
+        rza1::gic::register(39, || enc_irq_handler(2, 15, 0, 7, false)); // MOD_0 B
+        rza1::gic::register(33, || enc_irq_handler(3, 5, 4, 1, false));
+        rza1::gic::register(32, || enc_irq_handler(4, 8, 10, 0, false));
+        rza1::gic::register(38, || enc_irq_handler(5, 2, 3, 6, false));
+        for &(_, _, gic_id, _, _) in &SETUP {
+            // Priority must be < 31; GICC_PMR is set to 31 so priority=31 is blocked.
+            rza1::gic::set_priority(gic_id, 14);
+            rza1::gic::enable(gic_id);
+        }
+        // MOD_0 B companion IRQ7 (GIC 39) — same priority as the rest.
+        rza1::gic::set_priority(39, 14);
+        rza1::gic::enable(39);
+        info!("encoder: interrupt-driven init complete (IRQ0/1/2/3/4/6/7 → GIC 32–36, 38–39)");
     }
-    // MOD_0 B companion IRQ7 (GIC 39) — same priority as the rest.
-    rza1::gic::set_priority(39, 14);
-    rza1::gic::enable(39);
-    info!("encoder: interrupt-driven init complete (IRQ0/1/2/3/4/6/7 → GIC 32–36, 38–39)");
 }
 
 /// Quadrature encoder task — interrupt-driven.

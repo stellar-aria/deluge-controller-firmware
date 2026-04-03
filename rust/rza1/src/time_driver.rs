@@ -187,18 +187,20 @@ fn ostm1_alarm_isr() {
 /// but before `cpsie i`. OSTM0 must NOT already be started (this function
 /// re-starts it in the required mode).
 pub unsafe fn init() {
-    // OSTM0: free-running with CMP=0 interrupt (fires at wrap to 0).
-    //
-    // `start_free_running_cmp(0, 0)` stops the channel, sets CMP=0, sets
-    // CTL to free-running-with-interrupt, then starts.  After this, the
-    // channel counts 0 → 1 → … → 0xFFFF_FFFF → [interrupt fires] → 0 → …
-    ostm::start_free_running_cmp(0, 0);
+    unsafe {
+        // OSTM0: free-running with CMP=0 interrupt (fires at wrap to 0).
+        //
+        // `start_free_running_cmp(0, 0)` stops the channel, sets CMP=0, sets
+        // CTL to free-running-with-interrupt, then starts.  After this, the
+        // channel counts 0 → 1 → … → 0xFFFF_FFFF → [interrupt fires] → 0 → …
+        ostm::start_free_running_cmp(0, 0);
 
-    // Register ISRs and set priorities below PMR (default 31 = PMR, never fires).
-    gic::register(OSTM0_IRQ, ostm0_overflow_isr);
-    gic::register(OSTM1_IRQ, ostm1_alarm_isr);
-    gic::set_priority(OSTM0_IRQ, OSTM_IRQ_PRIORITY);
-    gic::set_priority(OSTM1_IRQ, OSTM_IRQ_PRIORITY);
-    gic::enable(OSTM0_IRQ);
-    // OSTM1 will be enabled by try_set_alarm when needed.
+        // Register ISRs and set priorities below PMR (default 31 = PMR, never fires).
+        gic::register(OSTM0_IRQ, ostm0_overflow_isr);
+        gic::register(OSTM1_IRQ, ostm1_alarm_isr);
+        gic::set_priority(OSTM0_IRQ, OSTM_IRQ_PRIORITY);
+        gic::set_priority(OSTM1_IRQ, OSTM_IRQ_PRIORITY);
+        gic::enable(OSTM0_IRQ);
+        // OSTM1 will be enabled by try_set_alarm when needed.
+    }
 }

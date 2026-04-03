@@ -242,7 +242,7 @@ async fn handle_message(
         MSG_TO_SET_SYNCED_LED => {
             // Controls the GPIO "synced" LED (P6.7).  Note: this pin is also
             // toggled by blink_task; the host can override it by calling this.
-            if data.len() >= 1 {
+            if !data.is_empty() {
                 let on = data[0] != 0;
                 unsafe {
                     rza1::gpio::write(6, 7, on);
@@ -265,7 +265,7 @@ async fn handle_message(
             // [level: 0–25]  0=dimmest, 25=brightest.
             // Maps to PIC SET_REFRESH_TIME: interval = 25 - level.
             // TODO: expose set_dimmer_interval from deluge-bsp pic module.
-            if data.len() >= 1 {
+            if !data.is_empty() {
                 let level = data[0].min(25);
                 warn!(
                     "SetBrightness level={} (PIC dimmer not yet exposed from BSP)",

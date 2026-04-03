@@ -45,7 +45,9 @@ const WCR_6WAIT: u32 = 0x0000_0B40;
 
 #[inline(always)]
 unsafe fn wr32(addr: usize, val: u32) {
-    core::ptr::write_volatile(addr as *mut u32, val);
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u32, val);
+    }
 }
 
 /// Configure CS0 for 16-bit external bus access.
@@ -61,8 +63,10 @@ unsafe fn wr32(addr: usize, val: u32) {
 /// # Safety
 /// Writes to memory-mapped BSC registers.
 pub unsafe fn init_cs0() {
-    wr32(CS0BCR, BCR_16BIT_1IDLE);
-    wr32(CS0WCR, WCR_6WAIT);
+    unsafe {
+        wr32(CS0BCR, BCR_16BIT_1IDLE);
+        wr32(CS0WCR, WCR_6WAIT);
+    }
 }
 
 /// Configure CS1 for 16-bit external bus access.
@@ -73,6 +77,8 @@ pub unsafe fn init_cs0() {
 /// # Safety
 /// Writes to memory-mapped BSC registers.
 pub unsafe fn init_cs1() {
-    wr32(CS1BCR, BCR_16BIT_1IDLE);
-    wr32(CS1WCR, WCR_6WAIT);
+    unsafe {
+        wr32(CS1BCR, BCR_16BIT_1IDLE);
+        wr32(CS1WCR, WCR_6WAIT);
+    }
 }

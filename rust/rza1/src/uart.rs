@@ -202,22 +202,26 @@ static UART_STATE: [UartState; NUM_CHANNELS] = [
 
 #[inline(always)]
 unsafe fn rr16(addr: usize) -> u16 {
-    core::ptr::read_volatile(addr as *const u16)
+    unsafe { core::ptr::read_volatile(addr as *const u16) }
 }
 
 #[inline(always)]
 unsafe fn wr16(addr: usize, val: u16) {
-    core::ptr::write_volatile(addr as *mut u16, val);
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u16, val);
+    }
 }
 
 #[inline(always)]
 unsafe fn rr8(addr: usize) -> u8 {
-    core::ptr::read_volatile(addr as *const u8)
+    unsafe { core::ptr::read_volatile(addr as *const u8) }
 }
 
 #[inline(always)]
 unsafe fn wr8(addr: usize, val: u8) {
-    core::ptr::write_volatile(addr as *mut u8, val);
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u8, val);
+    }
 }
 
 /// Base address of SCIF channel `ch`.
@@ -253,50 +257,52 @@ fn scbrr(baud: u32) -> u8 {
 /// # Safety
 /// Writes to memory-mapped SCIF registers. Caller must ensure `ch` < [`NUM_CHANNELS`].
 pub unsafe fn init(ch: usize, baud_rate: u32) {
-    debug_assert!(ch < NUM_CHANNELS);
-    log::debug!(
-        "uart: ch{} init at {} bps (SCBRR={})",
-        ch,
-        baud_rate,
-        scbrr(baud_rate)
-    );
-    let b = base(ch);
+    unsafe {
+        debug_assert!(ch < NUM_CHANNELS);
+        log::debug!(
+            "uart: ch{} init at {} bps (SCBRR={})",
+            ch,
+            baud_rate,
+            scbrr(baud_rate)
+        );
+        let b = base(ch);
 
-    // 1. Stop all SCIF operations.
-    wr16(b + SCSCR, 0x0000);
+        // 1. Stop all SCIF operations.
+        wr16(b + SCSCR, 0x0000);
 
-    // 2. Reset TX and RX FIFOs (TFRST=bit2, RFRST=bit1).
-    wr16(b + SCFCR, 0x0006);
+        // 2. Reset TX and RX FIFOs (TFRST=bit2, RFRST=bit1).
+        wr16(b + SCFCR, 0x0006);
 
-    // 3. Clear status flags: mask out reserved/sticky bits, keep ER/BRK/DR clear.
-    let scfsr = rr16(b + SCFSR);
-    wr16(b + SCFSR, scfsr & 0xFF6E);
+        // 3. Clear status flags: mask out reserved/sticky bits, keep ER/BRK/DR clear.
+        let scfsr = rr16(b + SCFSR);
+        wr16(b + SCFSR, scfsr & 0xFF6E);
 
-    // 4. Clear overrun error in SCLSR (ORER = bit 0).
-    let sclsr = rr16(b + SCLSR);
-    wr16(b + SCLSR, sclsr & !1u16);
+        // 4. Clear overrun error in SCLSR (ORER = bit 0).
+        let sclsr = rr16(b + SCLSR);
+        wr16(b + SCLSR, sclsr & !1u16);
 
-    // 5. Internal clock source: CKE[1:0] = 00 (already 0 from step 1).
+        // 5. Internal clock source: CKE[1:0] = 00 (already 0 from step 1).
 
-    // 6. Async 8N1, CKS=00 (P_CLK/1).
-    wr16(b + SCSMR, 0x0000);
+        // 6. Async 8N1, CKS=00 (P_CLK/1).
+        wr16(b + SCSMR, 0x0000);
 
-    // 7. Double-speed mode: BGDM = bit 7.
-    wr16(b + SCEMR, 0x0080);
+        // 7. Double-speed mode: BGDM = bit 7.
+        wr16(b + SCEMR, 0x0080);
 
-    // 8. Baud rate.
-    wr8(b + SCBRR, scbrr(baud_rate));
+        // 8. Baud rate.
+        wr8(b + SCBRR, scbrr(baud_rate));
 
-    // 9. Release FIFO resets.  TX trigger=8 (TTRG=00), RX trigger=1 (RTRG=00).
-    wr16(b + SCFCR, 0x0000);
+        // 9. Release FIFO resets.  TX trigger=8 (TTRG=00), RX trigger=1 (RTRG=00).
+        wr16(b + SCFCR, 0x0000);
 
-    // 10. Break: keep TxD high.
-    let scsptr = rr16(b + SCSPTR);
-    wr16(b + SCSPTR, scsptr | 0x0003);
+        // 10. Break: keep TxD high.
+        let scsptr = rr16(b + SCSPTR);
+        wr16(b + SCSPTR, scsptr | 0x0003);
 
-    // 11. Enable TX and RX; leave TIE/RIE off (enabled on demand by futures).
-    wr16(b + SCSCR, TE | RE);
-    log::debug!("uart: ch{} ready", ch);
+        // 11. Enable TX and RX; leave TIE/RIE off (enabled on demand by futures).
+        wr16(b + SCSCR, TE | RE);
+        log::debug!("uart: ch{} ready", ch);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -313,26 +319,28 @@ pub unsafe fn init(ch: usize, baud_rate: u32) {
 /// # Safety
 /// Writes to memory-mapped SCIF registers. Caller must ensure `ch` < [`NUM_CHANNELS`].
 pub unsafe fn set_baud(ch: usize, baud_rate: u32) {
-    debug_assert!(ch < NUM_CHANNELS);
-    let b = base(ch);
-    // Stop TE/RE so the baud rate change takes effect cleanly.
-    wr16(b + SCSCR, 0x0000);
-    wr8(b + SCBRR, scbrr(baud_rate));
-    // Clear any accumulated error flags from the previous baud rate.  The TRM
-    // states that ORER (overrun) is NOT cleared by toggling RE, so stale errors
-    // from e.g. the baud-switch transition window must be cleared explicitly;
-    // otherwise the SCIF silently discards all subsequent received bytes.
-    let scfsr = rr16(b + SCFSR);
-    wr16(b + SCFSR, scfsr & 0xFF6E); // clear ER/BRK/DR/RDF
-    let sclsr = rr16(b + SCLSR);
-    wr16(b + SCLSR, sclsr & !1u16); // clear ORER
-    // Re-enable: DMA-RX channels need TIE|RIE set as DMA triggers; others just TE|RE.
-    let scscr = if DMA_RX_ACTIVE[ch] {
-        TIE | RIE | RE | TE
-    } else {
-        TE | RE
-    };
-    wr16(b + SCSCR, scscr);
+    unsafe {
+        debug_assert!(ch < NUM_CHANNELS);
+        let b = base(ch);
+        // Stop TE/RE so the baud rate change takes effect cleanly.
+        wr16(b + SCSCR, 0x0000);
+        wr8(b + SCBRR, scbrr(baud_rate));
+        // Clear any accumulated error flags from the previous baud rate.  The TRM
+        // states that ORER (overrun) is NOT cleared by toggling RE, so stale errors
+        // from e.g. the baud-switch transition window must be cleared explicitly;
+        // otherwise the SCIF silently discards all subsequent received bytes.
+        let scfsr = rr16(b + SCFSR);
+        wr16(b + SCFSR, scfsr & 0xFF6E); // clear ER/BRK/DR/RDF
+        let sclsr = rr16(b + SCLSR);
+        wr16(b + SCLSR, sclsr & !1u16); // clear ORER
+        // Re-enable: DMA-RX channels need TIE|RIE set as DMA triggers; others just TE|RE.
+        let scscr = if DMA_RX_ACTIVE[ch] {
+            TIE | RIE | RE | TE
+        } else {
+            TE | RE
+        };
+        wr16(b + SCSCR, scscr);
+    }
 }
 
 /// Register and enable the RXI and TXI GIC interrupt sources for SCIF
@@ -344,16 +352,18 @@ pub unsafe fn set_baud(ch: usize, baud_rate: u32) {
 /// Writes to memory-mapped GIC registers via [`crate::gic`].
 /// Caller must ensure `ch` < [`NUM_CHANNELS`].
 pub unsafe fn register_irqs_for(ch: usize) {
-    debug_assert!(ch < NUM_CHANNELS);
-    let rxi = RXI_BASE + (ch as u16) * 4;
-    let txi = TXI_BASE + (ch as u16) * 4;
-    log::trace!("uart: ch{} registering RXI={} TXI={}", ch, rxi, txi);
-    gic::register(rxi, RXI_HANDLERS[ch]);
-    gic::register(txi, TXI_HANDLERS[ch]);
-    gic::set_priority(rxi, UART_IRQ_PRIORITY);
-    gic::set_priority(txi, UART_IRQ_PRIORITY);
-    gic::enable(rxi);
-    gic::enable(txi);
+    unsafe {
+        debug_assert!(ch < NUM_CHANNELS);
+        let rxi = RXI_BASE + (ch as u16) * 4;
+        let txi = TXI_BASE + (ch as u16) * 4;
+        log::trace!("uart: ch{} registering RXI={} TXI={}", ch, rxi, txi);
+        gic::register(rxi, RXI_HANDLERS[ch]);
+        gic::register(txi, TXI_HANDLERS[ch]);
+        gic::set_priority(rxi, UART_IRQ_PRIORITY);
+        gic::set_priority(txi, UART_IRQ_PRIORITY);
+        gic::enable(rxi);
+        gic::enable(txi);
+    }
 }
 
 /// Register and enable only the **TXI** GIC interrupt for SCIF channel `ch`.
@@ -364,16 +374,18 @@ pub unsafe fn register_irqs_for(ch: usize) {
 /// # Safety
 /// Writes to memory-mapped GIC registers. Caller must ensure `ch` < [`NUM_CHANNELS`].
 pub unsafe fn register_txi_for(ch: usize) {
-    debug_assert!(ch < NUM_CHANNELS);
-    let txi = TXI_BASE + (ch as u16) * 4;
-    log::trace!(
-        "uart: ch{} registering TXI={} (DMA RX, no RXI GIC)",
-        ch,
-        txi
-    );
-    gic::register(txi, TXI_HANDLERS[ch]);
-    gic::set_priority(txi, UART_IRQ_PRIORITY);
-    gic::enable(txi);
+    unsafe {
+        debug_assert!(ch < NUM_CHANNELS);
+        let txi = TXI_BASE + (ch as u16) * 4;
+        log::trace!(
+            "uart: ch{} registering TXI={} (DMA RX, no RXI GIC)",
+            ch,
+            txi
+        );
+        gic::register(txi, TXI_HANDLERS[ch]);
+        gic::set_priority(txi, UART_IRQ_PRIORITY);
+        gic::enable(txi);
+    }
 }
 
 /// Set up circular DMA RX for SCIF channel `ch`.
@@ -393,60 +405,62 @@ pub unsafe fn register_txi_for(ch: usize) {
 /// Writes to SCIF and DMAC registers.  Must be called after [`init`] and
 /// before global IRQ is enabled.
 pub unsafe fn init_dma_rx(ch: usize, dma_ch: u8, dmars: u32) {
-    debug_assert!(ch < 2, "DMA RX only supported for SCIF ch0 and ch1");
-    let b = base(ch);
-    let slot = ch;
+    unsafe {
+        debug_assert!(ch < 2, "DMA RX only supported for SCIF ch0 and ch1");
+        let b = base(ch);
+        let slot = ch;
 
-    // Cached base address of the ring buffer.
-    let buf_base = core::ptr::addr_of!(DMA_RX_BUF[slot].0[0]) as u32;
+        // Cached base address of the ring buffer.
+        let buf_base = core::ptr::addr_of!(DMA_RX_BUF[slot].0[0]) as u32;
 
-    // CHCFG matches original C firmware link descriptor word[4]:
-    //   0b10000001_00010000_00000000_01100000 | DMA_AM_FOR_SCIF | (dma_ch & 7)
-    //                                          ^^ 0x0200        ^^ channel-group index
-    let chcfg: u32 = 0x8110_0060 | DMA_AM_FOR_SCIF | ((dma_ch & 7) as u32);
+        // CHCFG matches original C firmware link descriptor word[4]:
+        //   0b10000001_00010000_00000000_01100000 | DMA_AM_FOR_SCIF | (dma_ch & 7)
+        //                                          ^^ 0x0200        ^^ channel-group index
+        let chcfg: u32 = 0x8110_0060 | DMA_AM_FOR_SCIF | ((dma_ch & 7) as u32);
 
-    // The link descriptor must be readable by the DMAC without cache interference.
-    // The DMAC accesses physical RAM directly (bypasses the Cortex-A9 L1/L2 cache).
-    // We write through the uncached alias so the values land in physical SRAM
-    // immediately — no cache flush needed.  The NXLA we hand to the DMAC is
-    // also the uncached alias address, since that IS the physical bus address
-    // the DMAC will fetch from.
-    let desc_cached = core::ptr::addr_of_mut!(DMA_RX_DESC[slot]) as usize;
-    let desc_uncached = (desc_cached + UNCACHED_MIRROR_OFFSET) as *mut u32;
-    let desc_addr_uncached = desc_uncached as u32; // address the DMAC will use
+        // The link descriptor must be readable by the DMAC without cache interference.
+        // The DMAC accesses physical RAM directly (bypasses the Cortex-A9 L1/L2 cache).
+        // We write through the uncached alias so the values land in physical SRAM
+        // immediately — no cache flush needed.  The NXLA we hand to the DMAC is
+        // also the uncached alias address, since that IS the physical bus address
+        // the DMAC will fetch from.
+        let desc_cached = core::ptr::addr_of_mut!(DMA_RX_DESC[slot]) as usize;
+        let desc_uncached = (desc_cached + UNCACHED_MIRROR_OFFSET) as *mut u32;
+        let desc_addr_uncached = desc_uncached as u32; // address the DMAC will use
 
-    // Write each descriptor word via the uncached window.
-    desc_uncached.add(0).write_volatile(0b1101); // Header
-    desc_uncached.add(1).write_volatile((b + SCFRDR) as u32); // Source: SCIF SCFRDR
-    desc_uncached.add(2).write_volatile(buf_base); // Destination: ring buffer
-    desc_uncached.add(3).write_volatile(DMA_RX_BUF_SIZE as u32); // Transfer count
-    desc_uncached.add(4).write_volatile(chcfg); // CHCFG
-    desc_uncached.add(5).write_volatile(0); // Interval
-    desc_uncached.add(6).write_volatile(0); // Extension
-    desc_uncached.add(7).write_volatile(desc_addr_uncached); // NXLA: self (circular)
+        // Write each descriptor word via the uncached window.
+        desc_uncached.add(0).write_volatile(0b1101); // Header
+        desc_uncached.add(1).write_volatile((b + SCFRDR) as u32); // Source: SCIF SCFRDR
+        desc_uncached.add(2).write_volatile(buf_base); // Destination: ring buffer
+        desc_uncached.add(3).write_volatile(DMA_RX_BUF_SIZE as u32); // Transfer count
+        desc_uncached.add(4).write_volatile(chcfg); // CHCFG
+        desc_uncached.add(5).write_volatile(0); // Interval
+        desc_uncached.add(6).write_volatile(0); // Extension
+        desc_uncached.add(7).write_volatile(desc_addr_uncached); // NXLA: self (circular)
 
-    // Save per-channel state.
-    DMA_RX_DMACH[ch] = dma_ch;
-    DMA_RX_READ[ch] = buf_base;
-    DMA_RX_BASE[ch] = buf_base;
-    DMA_RX_ACTIVE[ch] = true;
+        // Save per-channel state.
+        DMA_RX_DMACH[ch] = dma_ch;
+        DMA_RX_READ[ch] = buf_base;
+        DMA_RX_BASE[ch] = buf_base;
+        DMA_RX_ACTIVE[ch] = true;
 
-    // Start DMAC — pass the uncached descriptor address so the hardware can
-    // always fetch it coherently.
-    crate::dmac::init_with_link_descriptor(dma_ch, desc_addr_uncached as *const u32, dmars);
-    crate::dmac::channel_start(dma_ch);
+        // Start DMAC — pass the uncached descriptor address so the hardware can
+        // always fetch it coherently.
+        crate::dmac::init_with_link_descriptor(dma_ch, desc_addr_uncached as *const u32, dmars);
+        crate::dmac::channel_start(dma_ch);
 
-    // TIE|RIE|TE|RE = 0x00F0: enables DMA triggers on each TX/RX event.
-    // Because GIC RXI is not enabled, the SCIF request goes only to the DMAC.
-    wr16(b + SCSCR, TIE | RIE | RE | TE);
+        // TIE|RIE|TE|RE = 0x00F0: enables DMA triggers on each TX/RX event.
+        // Because GIC RXI is not enabled, the SCIF request goes only to the DMAC.
+        wr16(b + SCSCR, TIE | RIE | RE | TE);
 
-    log::debug!(
-        "uart: ch{} DMA RX active (dma_ch={}, dmars={:#06x}, buf={:#010x})",
-        ch,
-        dma_ch,
-        dmars,
-        buf_base
-    );
+        log::debug!(
+            "uart: ch{} DMA RX active (dma_ch={}, dmars={:#06x}, buf={:#010x})",
+            ch,
+            dma_ch,
+            dmars,
+            buf_base
+        );
+    }
 }
 
 /// Initialise DMA TX for SCIF channel `ch` using DMAC channel `dma_ch`.
@@ -470,32 +484,34 @@ pub unsafe fn init_dma_rx(ch: usize, dma_ch: u8, dmars: u32) {
 /// Must be called once during hardware initialisation, after [`init`] and
 /// before the Embassy executor starts.
 pub unsafe fn init_dma_tx(ch: usize, dma_ch: u8, dmars: u32) {
-    let ftdr = base(ch) + FTDR;
-    // CHCFG: mirrors C firmware's `DMA_SCIF_TX_CONFIG | DMA_AM_FOR_SCIF | (ch & 7)`.
-    //   0x0020_0068  — 8-bit transfers, SAM=increment (src moves), DAM=fixed (dst=FTDR),
-    //                  REQD=1 (destination-side request), LVL=1, AM=0 before OR
-    //   | DMA_AM_FOR_SCIF (0x0000_0200)  — AM=2: cycle-steal level, SCIF pacing
-    //   | (dma_ch & 7)                   — channel-group index in CHCFG[2:0]
-    let chcfg = 0x0020_0068_u32 | DMA_AM_FOR_SCIF | (dma_ch as u32 & 7);
-    crate::dmac::init_register_mode(dma_ch, chcfg, ftdr as u32, dmars);
-    crate::dmac::register_completion_irq(dma_ch);
-    DMA_TX_DMACH[ch] = dma_ch;
-    DMA_TX_ACTIVE[ch] = true;
-    // TIE in SCSCR controls both the TXI GIC interrupt AND the SCIF→DMAC
-    // DREQ signal.  The on_txi ISR clears TIE to stop repeated TXI fire —
-    // but that also kills the DREQ, stalling any active DMA mid-transfer.
-    // Fix: disable TXI at the GIC distributor so on_txi never runs.
-    // TIE remains set in SCSCR (written by init_dma_rx), so DREQ pulses
-    // continue to reach the DMAC uninterrupted.
-    let txi_id = TXI_BASE + (ch as u16) * 4;
-    gic::disable(txi_id);
-    log::info!(
-        "uart: ch{} DMA TX active (dma_ch={}, dmars={:#06x}, ftdr={:#010x})",
-        ch,
-        dma_ch,
-        dmars,
-        ftdr,
-    );
+    unsafe {
+        let ftdr = base(ch) + FTDR;
+        // CHCFG: mirrors C firmware's `DMA_SCIF_TX_CONFIG | DMA_AM_FOR_SCIF | (ch & 7)`.
+        //   0x0020_0068  — 8-bit transfers, SAM=increment (src moves), DAM=fixed (dst=FTDR),
+        //                  REQD=1 (destination-side request), LVL=1, AM=0 before OR
+        //   | DMA_AM_FOR_SCIF (0x0000_0200)  — AM=2: cycle-steal level, SCIF pacing
+        //   | (dma_ch & 7)                   — channel-group index in CHCFG[2:0]
+        let chcfg = 0x0020_0068_u32 | DMA_AM_FOR_SCIF | (dma_ch as u32 & 7);
+        crate::dmac::init_register_mode(dma_ch, chcfg, ftdr as u32, dmars);
+        crate::dmac::register_completion_irq(dma_ch);
+        DMA_TX_DMACH[ch] = dma_ch;
+        DMA_TX_ACTIVE[ch] = true;
+        // TIE in SCSCR controls both the TXI GIC interrupt AND the SCIF→DMAC
+        // DREQ signal.  The on_txi ISR clears TIE to stop repeated TXI fire —
+        // but that also kills the DREQ, stalling any active DMA mid-transfer.
+        // Fix: disable TXI at the GIC distributor so on_txi never runs.
+        // TIE remains set in SCSCR (written by init_dma_rx), so DREQ pulses
+        // continue to reach the DMAC uninterrupted.
+        let txi_id = TXI_BASE + (ch as u16) * 4;
+        gic::disable(txi_id);
+        log::info!(
+            "uart: ch{} DMA TX active (dma_ch={}, dmars={:#06x}, ftdr={:#010x})",
+            ch,
+            dma_ch,
+            dmars,
+            ftdr,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -694,26 +710,29 @@ async fn read_byte_dma(ch: usize) -> u8 {
 /// channel, and this function must only be called from a single task per
 /// channel.
 unsafe fn try_read_dma(ch: usize) -> Option<u8> {
-    let dma_ch = DMA_RX_DMACH[ch];
-    let buf_base = DMA_RX_BASE[ch];
-    let read_ptr = DMA_RX_READ[ch];
+    unsafe {
+        let dma_ch = DMA_RX_DMACH[ch];
+        let buf_base = DMA_RX_BASE[ch];
+        let read_ptr = DMA_RX_READ[ch];
 
-    // CRDA_n: current DMA write position (cached address space).
-    let write_ptr = crate::dmac::current_dst(dma_ch);
+        // CRDA_n: current DMA write position (cached address space).
+        let write_ptr = crate::dmac::current_dst(dma_ch);
 
-    if write_ptr == read_ptr {
-        return None;
+        if write_ptr == read_ptr {
+            return None;
+        }
+
+        // Read via uncached alias so we see what the DMAC wrote to physical RAM
+        // rather than a potentially stale cache line.
+        let byte =
+            core::ptr::read_volatile((read_ptr as usize + UNCACHED_MIRROR_OFFSET) as *const u8);
+
+        // Advance read pointer with power-of-two wrap.
+        let offset = (read_ptr - buf_base + 1) & (DMA_RX_BUF_SIZE as u32 - 1);
+        DMA_RX_READ[ch] = buf_base + offset;
+
+        Some(byte)
     }
-
-    // Read via uncached alias so we see what the DMAC wrote to physical RAM
-    // rather than a potentially stale cache line.
-    let byte = core::ptr::read_volatile((read_ptr as usize + UNCACHED_MIRROR_OFFSET) as *const u8);
-
-    // Advance read pointer with power-of-two wrap.
-    let offset = (read_ptr - buf_base + 1) & (DMA_RX_BUF_SIZE as u32 - 1);
-    DMA_RX_READ[ch] = buf_base + offset;
-
-    Some(byte)
 }
 
 /// Write `buf` to the transmit FIFO of SCIF channel `ch`.

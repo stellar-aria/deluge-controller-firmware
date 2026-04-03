@@ -201,71 +201,77 @@ fn ssi_reg(off: usize) -> *mut u32 {
 /// Must be called exactly once, from a single-threaded boot context, before
 /// any audio task accesses the buffer pointers.
 pub unsafe fn init() {
-    log::debug!(
-        "ssi: init SSI0 (44.1 kHz I\u{00B2}S, DMA ch{}/{})",
-        TX_DMA_CH,
-        RX_DMA_CH
-    );
-    // 1. Patch self-referential fields in the link descriptors.
-    //    Write through the uncached alias so the DMAC sees the correct values
-    //    without needing a cache flush (DMAC reads physical SRAM directly).
-    //    The NXLA pointer must also be the uncached alias address so every
-    //    reload of the descriptor by the DMAC is coherent.
-    let tx_desc_u = (core::ptr::addr_of!(TX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *mut u32;
-    let rx_desc_u = (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *mut u32;
+    unsafe {
+        log::debug!(
+            "ssi: init SSI0 (44.1 kHz I\u{00B2}S, DMA ch{}/{})",
+            TX_DMA_CH,
+            RX_DMA_CH
+        );
+        // 1. Patch self-referential fields in the link descriptors.
+        //    Write through the uncached alias so the DMAC sees the correct values
+        //    without needing a cache flush (DMAC reads physical SRAM directly).
+        //    The NXLA pointer must also be the uncached alias address so every
+        //    reload of the descriptor by the DMAC is coherent.
+        let tx_desc_u =
+            (core::ptr::addr_of!(TX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *mut u32;
+        let rx_desc_u =
+            (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *mut u32;
 
-    tx_desc_u
-        .add(1)
-        .write_volatile(core::ptr::addr_of!(TX_BUF.0[0]) as u32);
-    tx_desc_u.add(7).write_volatile(tx_desc_u as u32);
+        tx_desc_u
+            .add(1)
+            .write_volatile(core::ptr::addr_of!(TX_BUF.0[0]) as u32);
+        tx_desc_u.add(7).write_volatile(tx_desc_u as u32);
 
-    rx_desc_u
-        .add(2)
-        .write_volatile(core::ptr::addr_of!(RX_BUF.0[0]) as u32);
-    rx_desc_u.add(7).write_volatile(rx_desc_u as u32);
+        rx_desc_u
+            .add(2)
+            .write_volatile(core::ptr::addr_of!(RX_BUF.0[0]) as u32);
+        rx_desc_u.add(7).write_volatile(rx_desc_u as u32);
 
-    // 2. SSI0 software reset via CPG SWRSTCR1 bit 6.
-    let swrstcr = SWRSTCR1 as *mut u8;
-    let reset_bit = 1u8 << (6 - SSI_CH);
-    swrstcr.write_volatile(swrstcr.read_volatile() | reset_bit);
-    let _ = swrstcr.read_volatile(); // mandatory dummy read
-    swrstcr.write_volatile(swrstcr.read_volatile() & !reset_bit);
-    let _ = swrstcr.read_volatile(); // mandatory dummy read
+        // 2. SSI0 software reset via CPG SWRSTCR1 bit 6.
+        let swrstcr = SWRSTCR1 as *mut u8;
+        let reset_bit = 1u8 << (6 - SSI_CH);
+        swrstcr.write_volatile(swrstcr.read_volatile() | reset_bit);
+        let _ = swrstcr.read_volatile(); // mandatory dummy read
+        swrstcr.write_volatile(swrstcr.read_volatile() & !reset_bit);
+        let _ = swrstcr.read_volatile(); // mandatory dummy read
 
-    // 3. Configure SSI registers.
-    ssi_reg(SSITDMR_OFF).write_volatile(0); // no TDM
-    ssi_reg(SSICR_OFF).write_volatile(SSICR_INIT); // master, 24-bit/32-bit, ÷4
-    ssi_reg(SSIFCR_OFF).write_volatile(SSIFCR_INIT); // FIFOs in reset
+        // 3. Configure SSI registers.
+        ssi_reg(SSITDMR_OFF).write_volatile(0); // no TDM
+        ssi_reg(SSICR_OFF).write_volatile(SSICR_INIT); // master, 24-bit/32-bit, ÷4
+        ssi_reg(SSIFCR_OFF).write_volatile(SSIFCR_INIT); // FIFOs in reset
 
-    // 4. Initialise and connect DMA channels to the link descriptors.
-    //    Pass uncached alias addresses so the DMAC can re-fetch them coherently.
-    let tx_desc_u = (core::ptr::addr_of!(TX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
-    let rx_desc_u = (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
-    dmac::init_with_link_descriptor(TX_DMA_CH, tx_desc_u, DMARS_SSI0_TX);
-    dmac::init_with_link_descriptor(RX_DMA_CH, rx_desc_u, DMARS_SSI0_RX);
+        // 4. Initialise and connect DMA channels to the link descriptors.
+        //    Pass uncached alias addresses so the DMAC can re-fetch them coherently.
+        let tx_desc_u =
+            (core::ptr::addr_of!(TX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
+        let rx_desc_u =
+            (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
+        dmac::init_with_link_descriptor(TX_DMA_CH, tx_desc_u, DMARS_SSI0_TX);
+        dmac::init_with_link_descriptor(RX_DMA_CH, rx_desc_u, DMARS_SSI0_RX);
 
-    // 5. Start both DMA channels (software-reset then enable).
-    dmac::channel_start(TX_DMA_CH);
-    dmac::channel_start(RX_DMA_CH);
-    log::debug!("ssi: DMA TX ch{} + RX ch{} started", TX_DMA_CH, RX_DMA_CH);
+        // 5. Start both DMA channels (software-reset then enable).
+        dmac::channel_start(TX_DMA_CH);
+        dmac::channel_start(RX_DMA_CH);
+        log::debug!("ssi: DMA TX ch{} + RX ch{} started", TX_DMA_CH, RX_DMA_CH);
 
-    // 6. Release the FIFOs from reset and enable TX/RX.
-    //    This mirrors `ssiStart()` from the C firmware exactly.
-    let fcr = ssi_reg(SSIFCR_OFF);
+        // 6. Release the FIFOs from reset and enable TX/RX.
+        //    This mirrors `ssiStart()` from the C firmware exactly.
+        let fcr = ssi_reg(SSIFCR_OFF);
 
-    // Release TX FIFO from reset (clear TFRST, bit 1)
-    fcr.write_volatile(fcr.read_volatile() & !(1 << 1));
-    // Enable TX-empty DMA trigger (set TIE, bit 3)
-    fcr.write_volatile(fcr.read_volatile() | (1 << 3));
-    // Release RX FIFO from reset (clear RFRST, bit 0)
-    fcr.write_volatile(fcr.read_volatile() & !(1 << 0));
-    // Enable RX-full DMA trigger (set RIE, bit 2)
-    fcr.write_volatile(fcr.read_volatile() | (1 << 2));
+        // Release TX FIFO from reset (clear TFRST, bit 1)
+        fcr.write_volatile(fcr.read_volatile() & !(1 << 1));
+        // Enable TX-empty DMA trigger (set TIE, bit 3)
+        fcr.write_volatile(fcr.read_volatile() | (1 << 3));
+        // Release RX FIFO from reset (clear RFRST, bit 0)
+        fcr.write_volatile(fcr.read_volatile() & !(1 << 0));
+        // Enable RX-full DMA trigger (set RIE, bit 2)
+        fcr.write_volatile(fcr.read_volatile() | (1 << 2));
 
-    // Enable transmit and receive (TEN = bit 1, REN = bit 0 of SSICR)
-    let cr = ssi_reg(SSICR_OFF);
-    cr.write_volatile(cr.read_volatile() | 0b11);
-    log::debug!("ssi: TX+RX enabled, streaming");
+        // Enable transmit and receive (TEN = bit 1, REN = bit 0 of SSICR)
+        let cr = ssi_reg(SSICR_OFF);
+        cr.write_volatile(cr.read_volatile() | 0b11);
+        log::debug!("ssi: TX+RX enabled, streaming");
+    }
 }
 
 // ── Buffer pointer accessors ─────────────────────────────────────────────────

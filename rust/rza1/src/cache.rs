@@ -47,26 +47,28 @@ const L2C_8WAY: u32 = 0x0000_00FF; // all 8 ways
 /// Modifies CP15 `SCTLR` and `ACTLR`.  Must be called with the MMU already
 /// enabled so that the cache attribute bits in the TTB are honoured.
 pub unsafe fn l1_enable() {
-    log::debug!("cache: enabling L1 I+D, branch prediction, D-prefetch");
-    // Read SCTLR and set I-cache (bit 12), D-cache (bit 2), Z/branch (bit 11).
-    let mut sctlr: u32;
-    asm!("mrc p15, 0, {0}, c1, c0, 0", out(reg) sctlr, options(nomem, nostack));
-    sctlr |= (1 << 12) | (1 << 11) | (1 << 2);
-    // DSB: drain the write buffer so all prior stores reach physical OCRAM
-    // before the cache starts intercepting loads (the ISB that follows
-    // activates D-cache for the very next instruction).
-    asm!("dsb", options(nostack));
-    asm!("mcr p15, 0, {0}, c1, c0, 0", in(reg) sctlr, options(nomem, nostack));
-    asm!("isb", options(nomem, nostack));
-    log::trace!("cache: SCTLR = {:#010x}", sctlr);
+    unsafe {
+        log::debug!("cache: enabling L1 I+D, branch prediction, D-prefetch");
+        // Read SCTLR and set I-cache (bit 12), D-cache (bit 2), Z/branch (bit 11).
+        let mut sctlr: u32;
+        asm!("mrc p15, 0, {0}, c1, c0, 0", out(reg) sctlr, options(nomem, nostack));
+        sctlr |= (1 << 12) | (1 << 11) | (1 << 2);
+        // DSB: drain the write buffer so all prior stores reach physical OCRAM
+        // before the cache starts intercepting loads (the ISB that follows
+        // activates D-cache for the very next instruction).
+        asm!("dsb", options(nostack));
+        asm!("mcr p15, 0, {0}, c1, c0, 0", in(reg) sctlr, options(nomem, nostack));
+        asm!("isb", options(nomem, nostack));
+        log::trace!("cache: SCTLR = {:#010x}", sctlr);
 
-    // Read ACTLR and set D-side prefetch (bit 2).
-    let mut actlr: u32;
-    asm!("mrc p15, 0, {0}, c1, c0, 1", out(reg) actlr, options(nomem, nostack));
-    actlr |= 1 << 2;
-    asm!("mcr p15, 0, {0}, c1, c0, 1", in(reg) actlr, options(nomem, nostack));
-    asm!("isb", options(nomem, nostack));
-    log::debug!("cache: L1 enabled");
+        // Read ACTLR and set D-side prefetch (bit 2).
+        let mut actlr: u32;
+        asm!("mrc p15, 0, {0}, c1, c0, 1", out(reg) actlr, options(nomem, nostack));
+        actlr |= 1 << 2;
+        asm!("mcr p15, 0, {0}, c1, c0, 1", in(reg) actlr, options(nomem, nostack));
+        asm!("isb", options(nomem, nostack));
+        log::debug!("cache: L1 enabled");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -90,34 +92,38 @@ pub unsafe fn l1_enable() {
 /// Writes to memory-mapped PL310 registers.  Must be called after
 /// [`l1_enable`].
 pub unsafe fn l2_init() {
-    log::debug!("cache: initialising L2 (PL310)");
-    // 1. Disable L2 cache.
-    wr32(L2C_REG1_CONTROL, 0x0000_0000);
+    unsafe {
+        log::debug!("cache: initialising L2 (PL310)");
+        // 1. Disable L2 cache.
+        wr32(L2C_REG1_CONTROL, 0x0000_0000);
 
-    // 2. Flush all 8 ways — poll until hardware clears all bits.
-    wr32(L2C_REG7_INV_WAY, L2C_8WAY);
-    log::trace!("cache: L2 invalidating all 8 ways...");
-    while rd32(L2C_REG7_INV_WAY) & L2C_8WAY != 0 {}
-    log::trace!("cache: L2 all ways invalidated");
+        // 2. Flush all 8 ways — poll until hardware clears all bits.
+        wr32(L2C_REG7_INV_WAY, L2C_8WAY);
+        log::trace!("cache: L2 invalidating all 8 ways...");
+        while rd32(L2C_REG7_INV_WAY) & L2C_8WAY != 0 {}
+        log::trace!("cache: L2 all ways invalidated");
 
-    // 3. Clear all interrupt sources in one write (bits [8:0]).
-    wr32(L2C_REG2_INT_CLR, 0x0000_01FF);
+        // 3. Clear all interrupt sources in one write (bits [8:0]).
+        wr32(L2C_REG2_INT_CLR, 0x0000_01FF);
 
-    // 4. Lock D-cache ways (avoid DMA/cache coherency issues with DMA on L2).
-    //    Unlock I-cache ways (allow instruction caching).
-    wr32(L2C_REG9_D_LOCK0, 0xFFFF_FFFF);
-    wr32(L2C_REG9_I_LOCK0, 0x0000_0000);
+        // 4. Lock D-cache ways (avoid DMA/cache coherency issues with DMA on L2).
+        //    Unlock I-cache ways (allow instruction caching).
+        wr32(L2C_REG9_D_LOCK0, 0xFFFF_FFFF);
+        wr32(L2C_REG9_I_LOCK0, 0x0000_0000);
 
-    // 5. Enable L2 cache.
-    wr32(L2C_REG1_CONTROL, 0x0000_0001);
+        // 5. Enable L2 cache.
+        wr32(L2C_REG1_CONTROL, 0x0000_0001);
+    }
 }
 
 #[inline(always)]
 unsafe fn wr32(addr: usize, val: u32) {
-    core::ptr::write_volatile(addr as *mut u32, val);
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u32, val);
+    }
 }
 
 #[inline(always)]
 unsafe fn rd32(addr: usize) -> u32 {
-    core::ptr::read_volatile(addr as *const u32)
+    unsafe { core::ptr::read_volatile(addr as *const u32) }
 }

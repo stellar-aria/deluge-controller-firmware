@@ -98,61 +98,65 @@ const STBCR12_INIT: u8 = 0b11111011;
 /// # Safety
 /// Writes to memory-mapped CPG registers.
 pub unsafe fn init() {
-    log::debug!("stb: enabling module clocks");
-    // Port level is keep in standby mode, [1], [1], [0], [1], [0], [1], CoreSight
-    wr8(STBCR2, STBCR2_INIT);
-    let _: u8 = rd8(STBCR2); // dummy read
+    unsafe {
+        log::debug!("stb: enabling module clocks");
+        // Port level is keep in standby mode, [1], [1], [0], [1], [0], [1], CoreSight
+        wr8(STBCR2, STBCR2_INIT);
+        let _: u8 = rd8(STBCR2); // dummy read
 
-    // IEBus, IrDA, LIN0, LIN1, MTU2, RSCAN2, [0], PWM
-    wr8(STBCR3, STBCR3_INIT);
-    let _: u8 = rd8(STBCR3);
+        // IEBus, IrDA, LIN0, LIN1, MTU2, RSCAN2, [0], PWM
+        wr8(STBCR3, STBCR3_INIT);
+        let _: u8 = rd8(STBCR3);
 
-    // SCIF0, SCIF1, SCIF2, SCIF3, SCIF4, [1], [1], [1]  (0 = running)
-    wr8(STBCR4, STBCR4_INIT);
-    let _: u8 = rd8(STBCR4);
+        // SCIF0, SCIF1, SCIF2, SCIF3, SCIF4, [1], [1], [1]  (0 = running)
+        wr8(STBCR4, STBCR4_INIT);
+        let _: u8 = rd8(STBCR4);
 
-    // SCIM0, SCIM1, [1], [1], [1], [1], OSTM0, OSTM1
-    wr8(STBCR5, STBCR5_INIT);
-    let _: u8 = rd8(STBCR5);
+        // SCIM0, SCIM1, [1], [1], [1], [1], OSTM0, OSTM1
+        wr8(STBCR5, STBCR5_INIT);
+        let _: u8 = rd8(STBCR5);
 
-    // A/D, CEU, [1], [1], [1], [1], JCU, RTClock
-    wr8(STBCR6, STBCR6_INIT);
-    let _: u8 = rd8(STBCR6);
+        // A/D, CEU, [1], [1], [1], [1], JCU, RTClock
+        wr8(STBCR6, STBCR6_INIT);
+        let _: u8 = rd8(STBCR6);
 
-    // DVDEC0, DVDEC1, [1], ETHER, FLCTL, [1], USB0, USB1
-    wr8(STBCR7, STBCR7_INIT);
-    let _: u8 = rd8(STBCR7);
+        // DVDEC0, DVDEC1, [1], ETHER, FLCTL, [1], USB0, USB1
+        wr8(STBCR7, STBCR7_INIT);
+        let _: u8 = rd8(STBCR7);
 
-    // IMR-LS20, IMR-LS21, IMR-LSD, MMCIF, MOST50, [1], SCUX, [1]
-    wr8(STBCR8, STBCR8_INIT);
-    let _: u8 = rd8(STBCR8);
+        // IMR-LS20, IMR-LS21, IMR-LSD, MMCIF, MOST50, [1], SCUX, [1]
+        wr8(STBCR8, STBCR8_INIT);
+        let _: u8 = rd8(STBCR8);
 
-    // I2C0, I2C1, I2C2, I2C3, SPIBSC0, SPIBSC1, VDC50, VDC51
-    wr8(STBCR9, STBCR9_INIT);
-    let _: u8 = rd8(STBCR9);
+        // I2C0, I2C1, I2C2, I2C3, SPIBSC0, SPIBSC1, VDC50, VDC51
+        wr8(STBCR9, STBCR9_INIT);
+        let _: u8 = rd8(STBCR9);
 
-    // RSPI0, RSPI1, RSPI2, RSPI3, RSPI4, CD-ROMDEC, RSPDIF, RGPVG
-    wr8(STBCR10, STBCR10_INIT);
-    let _: u8 = rd8(STBCR10);
+        // RSPI0, RSPI1, RSPI2, RSPI3, RSPI4, CD-ROMDEC, RSPDIF, RGPVG
+        wr8(STBCR10, STBCR10_INIT);
+        let _: u8 = rd8(STBCR10);
 
-    // [1], [1], SSIF0, SSIF1, SSIF2, SSIF3, SSIF4, SSIF5
-    wr8(STBCR11, STBCR11_INIT);
-    let _: u8 = rd8(STBCR11);
+        // [1], [1], SSIF0, SSIF1, SSIF2, SSIF3, SSIF4, SSIF5
+        wr8(STBCR11, STBCR11_INIT);
+        let _: u8 = rd8(STBCR11);
 
-    // [1], [1], [1], [1], SDHI00, SDHI01, SDHI10, SDHI11
-    wr8(STBCR12, STBCR12_INIT);
-    let _: u8 = rd8(STBCR12);
-    log::debug!("stb: done (STBCR2-12 written)");
+        // [1], [1], [1], [1], SDHI00, SDHI01, SDHI10, SDHI11
+        wr8(STBCR12, STBCR12_INIT);
+        let _: u8 = rd8(STBCR12);
+        log::debug!("stb: done (STBCR2-12 written)");
+    }
 }
 
 #[inline(always)]
 unsafe fn wr8(addr: usize, val: u8) {
-    core::ptr::write_volatile(addr as *mut u8, val);
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u8, val);
+    }
 }
 
 #[inline(always)]
 unsafe fn rd8(addr: usize) -> u8 {
-    core::ptr::read_volatile(addr as *const u8)
+    unsafe { core::ptr::read_volatile(addr as *const u8) }
 }
 
 #[cfg(all(test, not(target_os = "none")))]

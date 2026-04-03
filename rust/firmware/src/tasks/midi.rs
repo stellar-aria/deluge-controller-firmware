@@ -100,7 +100,7 @@ impl MidiParser {
 
         // ---- SysEx body accumulation ----------------------------------------
         if self.in_sysex {
-            if !(byte & 0x80 != 0) {
+            if (byte & 0x80 == 0) {
                 // SysEx data byte.
                 self.sysex_buf[self.sysex_pos] = byte;
                 self.sysex_pos += 1;
@@ -212,10 +212,10 @@ pub(crate) async fn midi_din_tx_task(mut sender: Sender<'static, Rusb1Driver>) {
         debug!("MIDI DIN TX: connected");
         loop {
             let byte = bsp_uart::read_midi_byte().await;
-            if let Some(pkt) = parser.push(byte) {
-                if sender.write_packet(&pkt).await.is_err() {
-                    break; // endpoint disabled
-                }
+            if let Some(pkt) = parser.push(byte)
+                && sender.write_packet(&pkt).await.is_err()
+            {
+                break; // endpoint disabled
             }
         }
         debug!("MIDI DIN TX: disconnected");

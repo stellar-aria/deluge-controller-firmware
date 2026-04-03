@@ -80,62 +80,68 @@ static mut TTB: Ttb = Ttb([0; 4096]);
 /// * IRQ and FIQ must be disabled.
 /// * Modifies CP15 registers: SCTLR, TTBCR, TTBR0, DACR, TLBIALL.
 pub unsafe fn init_and_enable() {
-    // SAFETY: TTB is static mut; we call this exactly once at startup before
-    // any other core accesses it.
-    let table_ptr = core::ptr::addr_of_mut!(TTB) as *mut u32;
-    log::debug!(
-        "mmu: building TTB ({} entries) at {:#010x}",
-        4096usize,
-        table_ptr as usize
-    );
-    // Descriptor[n] = (n_mb << 20) | attr  →  flat VA=PA mapping.
-    let mut idx: u32 = 0;
-    for &(size_mb, attr) in AREAS {
-        for _ in 0..size_mb {
-            let descriptor = (idx << 20) | attr;
-            table_ptr.add(idx as usize).write_volatile(descriptor);
-            idx += 1;
+    unsafe {
+        // SAFETY: TTB is static mut; we call this exactly once at startup before
+        // any other core accesses it.
+        let table_ptr = core::ptr::addr_of_mut!(TTB) as *mut u32;
+        log::debug!(
+            "mmu: building TTB ({} entries) at {:#010x}",
+            4096usize,
+            table_ptr as usize
+        );
+        // Descriptor[n] = (n_mb << 20) | attr  →  flat VA=PA mapping.
+        let mut idx: u32 = 0;
+        for &(size_mb, attr) in AREAS {
+            for _ in 0..size_mb {
+                let descriptor = (idx << 20) | attr;
+                table_ptr.add(idx as usize).write_volatile(descriptor);
+                idx += 1;
+            }
         }
+        // idx should equal 4096 here (all entries filled).
+        log::trace!("mmu: TTB filled ({} entries)", idx);
+
+        // TTBCR = 0: N=0, use TTBR0 for all translations.
+        asm!("mcr p15, 0, {0}, c2, c0, 2", in(reg) 0u32, options(nomem, nostack));
+        isb();
+
+        // TTBR0: table base + RGN=b01 (outer WB cached) + IRGN=b01 (inner WB WA).
+        // Bit[3] = RGN[0], bit[6] = IRGN[0] (IRGN encoding: bit[0] is in bit[6]).
+        let ttbr0 = (table_ptr as u32) | 0x08 | 0x40;
+        asm!("mcr p15, 0, {0}, c2, c0, 0", in(reg) ttbr0, options(nomem, nostack));
+        isb();
+        log::trace!("mmu: TTBR0 = {:#010x}", ttbr0);
+
+        // DACR: all 16 domains → Client access (b01 per pair) = 0x55555555.
+        asm!("mcr p15, 0, {0}, c3, c0, 0", in(reg) 0x5555_5555u32, options(nomem, nostack));
+        isb();
+
+        // Invalidate TLBs before enabling the MMU.
+        asm!("mcr p15, 0, {0}, c8, c7, 0", in(reg) 0u32, options(nomem, nostack)); // TLBIALL
+        dsb();
+        isb();
+
+        // Enable MMU: set SCTLR.M (bit 0).
+        // Caches (bits 2 and 12) are kept off here; enable them via cache module.
+        let mut sctlr: u32;
+        asm!("mrc p15, 0, {0}, c1, c0, 0", out(reg) sctlr, options(nomem, nostack));
+        sctlr |= 1; // M bit
+        asm!("mcr p15, 0, {0}, c1, c0, 0", in(reg) sctlr, options(nomem, nostack));
+        isb();
+        log::debug!("mmu: enabled (SCTLR.M set)");
     }
-    // idx should equal 4096 here (all entries filled).
-    log::trace!("mmu: TTB filled ({} entries)", idx);
-
-    // TTBCR = 0: N=0, use TTBR0 for all translations.
-    asm!("mcr p15, 0, {0}, c2, c0, 2", in(reg) 0u32, options(nomem, nostack));
-    isb();
-
-    // TTBR0: table base + RGN=b01 (outer WB cached) + IRGN=b01 (inner WB WA).
-    // Bit[3] = RGN[0], bit[6] = IRGN[0] (IRGN encoding: bit[0] is in bit[6]).
-    let ttbr0 = (table_ptr as u32) | 0x08 | 0x40;
-    asm!("mcr p15, 0, {0}, c2, c0, 0", in(reg) ttbr0, options(nomem, nostack));
-    isb();
-    log::trace!("mmu: TTBR0 = {:#010x}", ttbr0);
-
-    // DACR: all 16 domains → Client access (b01 per pair) = 0x55555555.
-    asm!("mcr p15, 0, {0}, c3, c0, 0", in(reg) 0x5555_5555u32, options(nomem, nostack));
-    isb();
-
-    // Invalidate TLBs before enabling the MMU.
-    asm!("mcr p15, 0, {0}, c8, c7, 0", in(reg) 0u32, options(nomem, nostack)); // TLBIALL
-    dsb();
-    isb();
-
-    // Enable MMU: set SCTLR.M (bit 0).
-    // Caches (bits 2 and 12) are kept off here; enable them via cache module.
-    let mut sctlr: u32;
-    asm!("mrc p15, 0, {0}, c1, c0, 0", out(reg) sctlr, options(nomem, nostack));
-    sctlr |= 1; // M bit
-    asm!("mcr p15, 0, {0}, c1, c0, 0", in(reg) sctlr, options(nomem, nostack));
-    isb();
-    log::debug!("mmu: enabled (SCTLR.M set)");
 }
 
 #[inline(always)]
 unsafe fn isb() {
-    asm!("isb", options(nomem, nostack));
+    unsafe {
+        asm!("isb", options(nomem, nostack));
+    }
 }
 
 #[inline(always)]
 unsafe fn dsb() {
-    asm!("dsb", options(nomem, nostack));
+    unsafe {
+        asm!("dsb", options(nomem, nostack));
+    }
 }

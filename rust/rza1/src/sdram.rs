@@ -62,61 +62,67 @@ const SDRAM_MODE_CS3: usize = 0x3FFF_E040;
 /// Writes to memory-mapped GPIO, BSC, and SDRAM mode registers.
 /// Must not be called while the SDRAM is actively in use.
 pub unsafe fn init() {
-    log::debug!("sdram: init");
-    // ---- SDRAM address pins: P3[0..14] mux1 ----
-    for pin in 0..=14u8 {
-        set_pin_mux(3, pin, 1);
+    unsafe {
+        log::debug!("sdram: init");
+        // ---- SDRAM address pins: P3[0..14] mux1 ----
+        for pin in 0..=14u8 {
+            set_pin_mux(3, pin, 1);
+        }
+
+        // ---- SDRAM data pins: P5[0..15] mux1 ----
+        for pin in 0..=15u8 {
+            set_pin_mux(5, pin, 1);
+        }
+
+        // ---- SDRAM control pins: P2[0..6] mux1 ----
+        // CS3#, RAS#, CAS#, CKE, WE0#, WE1#, RD/!WR
+        for pin in 0..=6u8 {
+            set_pin_mux(2, pin, 1);
+        }
+
+        // ---- BSC configuration (from userdef_bsc_cs2_init, ramSize=0 = 64 MB) ----
+        log::debug!("sdram: pin-mux done, configuring BSC");
+
+        // CS2BCR / CS3BCR: SDRAM, 16-bit bus, 0 idle cycles between W/R and W/W.
+        wr32(CS2BCR, 0x0000_4C00);
+        wr32(CS3BCR, 0x0000_4C00);
+
+        // CS3WCR: precharge 1 cycle, tRCD 1 cycle, CAS latency 2,
+        //         auto-precharge startup 2 cycles, tRC 5 cycles.
+        wr32(CS3WCR, 0x0000_0088);
+
+        // SDCR: CS2 & CS3 both 13 rows, CS2 = 9 col, CS3 = 10 col (64 MB chip),
+        //       auto-refresh on, auto-precharge mode.
+        // 0x00110912: CS2 col=9-bit, CS3 col=10-bit.
+        wr32(SDCR, 0x0011_0912);
+
+        // RTCOR: refresh timer constant — 7.64 µs / 240 ns ≈ 128 cycles.
+        // Written with key 0xA55A in the upper half-word.
+        wr32(RTCOR, 0xA55A_0080);
+
+        // RTCSR: initialisation sequence start, clock = B-phy/4, refresh once.
+        wr32(RTCSR, 0xA55A_0008);
+
+        // SDRAM mode register: burst-length 1, sequential, CAS-latency 2.
+        // A write to the mode address (offset 0x040 from CS base, BA0=1)
+        // generates a Mode Register Set (MRS) command.
+        log::debug!("sdram: BSC configured, sending MRS");
+        wr16(SDRAM_MODE_CS2, 0);
+        wr16(SDRAM_MODE_CS3, 0);
+        log::debug!("sdram: ready");
     }
-
-    // ---- SDRAM data pins: P5[0..15] mux1 ----
-    for pin in 0..=15u8 {
-        set_pin_mux(5, pin, 1);
-    }
-
-    // ---- SDRAM control pins: P2[0..6] mux1 ----
-    // CS3#, RAS#, CAS#, CKE, WE0#, WE1#, RD/!WR
-    for pin in 0..=6u8 {
-        set_pin_mux(2, pin, 1);
-    }
-
-    // ---- BSC configuration (from userdef_bsc_cs2_init, ramSize=0 = 64 MB) ----
-    log::debug!("sdram: pin-mux done, configuring BSC");
-
-    // CS2BCR / CS3BCR: SDRAM, 16-bit bus, 0 idle cycles between W/R and W/W.
-    wr32(CS2BCR, 0x0000_4C00);
-    wr32(CS3BCR, 0x0000_4C00);
-
-    // CS3WCR: precharge 1 cycle, tRCD 1 cycle, CAS latency 2,
-    //         auto-precharge startup 2 cycles, tRC 5 cycles.
-    wr32(CS3WCR, 0x0000_0088);
-
-    // SDCR: CS2 & CS3 both 13 rows, CS2 = 9 col, CS3 = 10 col (64 MB chip),
-    //       auto-refresh on, auto-precharge mode.
-    // 0x00110912: CS2 col=9-bit, CS3 col=10-bit.
-    wr32(SDCR, 0x0011_0912);
-
-    // RTCOR: refresh timer constant — 7.64 µs / 240 ns ≈ 128 cycles.
-    // Written with key 0xA55A in the upper half-word.
-    wr32(RTCOR, 0xA55A_0080);
-
-    // RTCSR: initialisation sequence start, clock = B-phy/4, refresh once.
-    wr32(RTCSR, 0xA55A_0008);
-
-    // SDRAM mode register: burst-length 1, sequential, CAS-latency 2.
-    // A write to the mode address (offset 0x040 from CS base, BA0=1)
-    // generates a Mode Register Set (MRS) command.
-    log::debug!("sdram: BSC configured, sending MRS");
-    wr16(SDRAM_MODE_CS2, 0);
-    wr16(SDRAM_MODE_CS3, 0);
-    log::debug!("sdram: ready");
 }
 
 #[inline(always)]
 unsafe fn wr32(addr: usize, val: u32) {
-    core::ptr::write_volatile(addr as *mut u32, val);
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u32, val);
+    }
 }
 
 #[inline(always)]
 unsafe fn wr16(addr: usize, val: u16) {
-    core::ptr::write_volatile(addr as *mut u16, val);
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u16, val);
+    }
 }

@@ -80,51 +80,53 @@ fn dmars_reg(ch: u8) -> *mut u32 {
 ///   descriptor whose lifetime extends past the end of the DMA operation.
 /// - Must be called before [`channel_start`] for the same channel.
 pub unsafe fn init_with_link_descriptor(ch: u8, descriptor: *const u32, dmars_val: u32) {
-    log::trace!(
-        "dmac: ch{} init, desc={:#010x}, dmars={:#06x}",
-        ch,
-        descriptor as usize,
-        dmars_val
-    );
-    // 1. Clear group DCTRL (priority mode / round-robin reset)
-    log::trace!(
-        "dmac: ch{} writing DCTRL={:#010x}",
-        ch,
-        dctrl_reg(ch) as usize
-    );
-    dctrl_reg(ch).write_volatile(0);
-    log::trace!("dmac: ch{} DCTRL ok", ch);
+    unsafe {
+        log::trace!(
+            "dmac: ch{} init, desc={:#010x}, dmars={:#06x}",
+            ch,
+            descriptor as usize,
+            dmars_val
+        );
+        // 1. Clear group DCTRL (priority mode / round-robin reset)
+        log::trace!(
+            "dmac: ch{} writing DCTRL={:#010x}",
+            ch,
+            dctrl_reg(ch) as usize
+        );
+        dctrl_reg(ch).write_volatile(0);
+        log::trace!("dmac: ch{} DCTRL ok", ch);
 
-    // 2. CHCFG comes from link-descriptor word [4]
-    let chcfg_val = descriptor.add(4).read();
-    log::trace!(
-        "dmac: ch{} desc[4]={:#010x}, writing CHCFG={:#010x}",
-        ch,
-        chcfg_val,
-        ch_reg(ch, OFF_CHCFG) as usize
-    );
-    ch_reg(ch, OFF_CHCFG).write_volatile(chcfg_val);
-    log::trace!("dmac: ch{} CHCFG ok", ch);
+        // 2. CHCFG comes from link-descriptor word [4]
+        let chcfg_val = descriptor.add(4).read();
+        log::trace!(
+            "dmac: ch{} desc[4]={:#010x}, writing CHCFG={:#010x}",
+            ch,
+            chcfg_val,
+            ch_reg(ch, OFF_CHCFG) as usize
+        );
+        ch_reg(ch, OFF_CHCFG).write_volatile(chcfg_val);
+        log::trace!("dmac: ch{} CHCFG ok", ch);
 
-    // 3. DMARS: even channel → bits [15:0], odd channel → bits [31:16]
-    let dmars = dmars_reg(ch);
-    let (shifted, mask) = if ch & 1 == 0 {
-        (dmars_val & 0xFFFF, 0xFFFF_0000u32)
-    } else {
-        ((dmars_val & 0xFFFF) << 16, 0x0000_FFFFu32)
-    };
-    log::trace!("dmac: ch{} writing DMARS={:#010x}", ch, dmars as usize);
-    dmars.write_volatile((dmars.read_volatile() & mask) | shifted);
-    log::trace!("dmac: ch{} DMARS ok", ch);
+        // 3. DMARS: even channel → bits [15:0], odd channel → bits [31:16]
+        let dmars = dmars_reg(ch);
+        let (shifted, mask) = if ch & 1 == 0 {
+            (dmars_val & 0xFFFF, 0xFFFF_0000u32)
+        } else {
+            ((dmars_val & 0xFFFF) << 16, 0x0000_FFFFu32)
+        };
+        log::trace!("dmac: ch{} writing DMARS={:#010x}", ch, dmars as usize);
+        dmars.write_volatile((dmars.read_volatile() & mask) | shifted);
+        log::trace!("dmac: ch{} DMARS ok", ch);
 
-    // 4. NXLA = address of the link descriptor
-    log::trace!(
-        "dmac: ch{} writing NXLA={:#010x}",
-        ch,
-        ch_reg(ch, OFF_NXLA) as usize
-    );
-    ch_reg(ch, OFF_NXLA).write_volatile(descriptor as u32);
-    log::trace!("dmac: ch{} NXLA ok", ch);
+        // 4. NXLA = address of the link descriptor
+        log::trace!(
+            "dmac: ch{} writing NXLA={:#010x}",
+            ch,
+            ch_reg(ch, OFF_NXLA) as usize
+        );
+        ch_reg(ch, OFF_NXLA).write_volatile(descriptor as u32);
+        log::trace!("dmac: ch{} NXLA ok", ch);
+    }
 }
 
 /// Start a DMA channel: software-reset then set-enable.
@@ -134,10 +136,12 @@ pub unsafe fn init_with_link_descriptor(ch: u8, descriptor: *const u32, dmars_va
 /// # Safety
 /// The channel must have been initialised with [`init_with_link_descriptor`].
 pub unsafe fn channel_start(ch: u8) {
-    log::trace!("dmac: ch{} start (SWRST + SETEN)", ch);
-    let chctrl = ch_reg(ch, OFF_CHCTRL);
-    chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SWRST);
-    chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SETEN);
+    unsafe {
+        log::trace!("dmac: ch{} start (SWRST + SETEN)", ch);
+        let chctrl = ch_reg(ch, OFF_CHCTRL);
+        chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SWRST);
+        chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SETEN);
+    }
 }
 
 /// Read the current DMA **source** address for channel `ch` (`CRSA_n`).
@@ -148,7 +152,7 @@ pub unsafe fn channel_start(ch: u8) {
 /// Reads a memory-mapped DMA register.
 #[inline]
 pub unsafe fn current_src(ch: u8) -> u32 {
-    ch_reg(ch, OFF_CRSA).read_volatile()
+    unsafe { ch_reg(ch, OFF_CRSA).read_volatile() }
 }
 
 /// Read the current DMA **destination** address for channel `ch` (`CRDA_n`).
@@ -159,7 +163,7 @@ pub unsafe fn current_src(ch: u8) -> u32 {
 /// Reads a memory-mapped DMA register.
 #[inline]
 pub unsafe fn current_dst(ch: u8) -> u32 {
-    ch_reg(ch, OFF_CRDA).read_volatile()
+    unsafe { ch_reg(ch, OFF_CRDA).read_volatile() }
 }
 
 // ── Register-mode (one-shot) DMA ─────────────────────────────────────────────
@@ -214,39 +218,41 @@ static DMAC_WAKERS: [AtomicWaker; 16] = [
 /// # Safety
 /// Writes to DMAC registers.  Must be called before the channel is used.
 pub unsafe fn init_register_mode(ch: u8, chcfg: u32, dst: u32, dmars: u32) {
-    log::debug!(
-        "dmac: ch{} register-mode init, chcfg={:#010x}, dst={:#010x}, dmars={:#06x}",
-        ch,
-        chcfg,
-        dst,
-        dmars
-    );
+    unsafe {
+        log::debug!(
+            "dmac: ch{} register-mode init, chcfg={:#010x}, dst={:#010x}, dmars={:#06x}",
+            ch,
+            chcfg,
+            dst,
+            dmars
+        );
 
-    // 1. Clear group DCTRL.
-    dctrl_reg(ch).write_volatile(0);
+        // 1. Clear group DCTRL.
+        dctrl_reg(ch).write_volatile(0);
 
-    // 2. CHCFG / CHITVL / CHEXT.
-    ch_reg(ch, OFF_CHCFG).write_volatile(chcfg);
-    ch_reg(ch, OFF_CHITVL).write_volatile(0);
-    ch_reg(ch, OFF_CHEXT).write_volatile(0);
+        // 2. CHCFG / CHITVL / CHEXT.
+        ch_reg(ch, OFF_CHCFG).write_volatile(chcfg);
+        ch_reg(ch, OFF_CHITVL).write_volatile(0);
+        ch_reg(ch, OFF_CHEXT).write_volatile(0);
 
-    // 3. Fixed destination (peripheral register).
-    ch_reg(ch, OFF_N0DA).write_volatile(dst);
+        // 3. Fixed destination (peripheral register).
+        ch_reg(ch, OFF_N0DA).write_volatile(dst);
 
-    // 4. Software reset + clear TC.
-    let chctrl = ch_reg(ch, OFF_CHCTRL);
-    chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SWRST | CHCTRL_CLRTC);
-    // Re-write N0DA after reset (matches C firmware's double-write pattern).
-    ch_reg(ch, OFF_N0DA).write_volatile(dst);
+        // 4. Software reset + clear TC.
+        let chctrl = ch_reg(ch, OFF_CHCTRL);
+        chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SWRST | CHCTRL_CLRTC);
+        // Re-write N0DA after reset (matches C firmware's double-write pattern).
+        ch_reg(ch, OFF_N0DA).write_volatile(dst);
 
-    // 5. DMARS.
-    let dmars_ptr = dmars_reg(ch);
-    let (shifted, mask) = if ch & 1 == 0 {
-        (dmars & 0xFFFF, 0xFFFF_0000u32)
-    } else {
-        ((dmars & 0xFFFF) << 16, 0x0000_FFFFu32)
-    };
-    dmars_ptr.write_volatile((dmars_ptr.read_volatile() & mask) | shifted);
+        // 5. DMARS.
+        let dmars_ptr = dmars_reg(ch);
+        let (shifted, mask) = if ch & 1 == 0 {
+            (dmars & 0xFFFF, 0xFFFF_0000u32)
+        } else {
+            ((dmars & 0xFFFF) << 16, 0x0000_FFFFu32)
+        };
+        dmars_ptr.write_volatile((dmars_ptr.read_volatile() & mask) | shifted);
+    }
 }
 
 /// Register the DMAC completion (DMAINT) GIC interrupt for channel `ch`.
@@ -258,11 +264,13 @@ pub unsafe fn init_register_mode(ch: u8, chcfg: u32, dst: u32, dmars: u32) {
 /// Writes to GIC registers. Call after [`crate::gic::init`] and before IRQs
 /// are enabled.
 pub unsafe fn register_completion_irq(ch: u8) {
-    use crate::gic;
-    let id = DMAINT_BASE + ch as u16;
-    gic::register(id, DMA_INT_HANDLERS[ch as usize]);
-    gic::set_priority(id, 13); // matches original C firmware priority for OLED DMA
-    gic::enable(id);
+    unsafe {
+        use crate::gic;
+        let id = DMAINT_BASE + ch as u16;
+        gic::register(id, DMA_INT_HANDLERS[ch as usize]);
+        gic::set_priority(id, 13); // matches original C firmware priority for OLED DMA
+        gic::enable(id);
+    }
 }
 
 /// Call from the DMAIC completion ISR for channel `ch`.
@@ -282,16 +290,18 @@ pub fn on_dma_int(ch: u8) {
 /// The source data at `[src, src+count)` must be in uncached memory (or have
 /// had its cache lines flushed) so the DMAC reads the correct bytes.
 pub unsafe fn start_transfer(ch: u8, src: u32, count: u32) {
-    log::trace!(
-        "dmac: ch{} start_transfer src={:#010x} count={}",
-        ch,
-        src,
-        count
-    );
-    ch_reg(ch, OFF_N0SA).write_volatile(src);
-    ch_reg(ch, OFF_N0TB).write_volatile(count);
-    let chctrl = ch_reg(ch, OFF_CHCTRL);
-    chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_CLRTC | CHCTRL_SETEN);
+    unsafe {
+        log::trace!(
+            "dmac: ch{} start_transfer src={:#010x} count={}",
+            ch,
+            src,
+            count
+        );
+        ch_reg(ch, OFF_N0SA).write_volatile(src);
+        ch_reg(ch, OFF_N0TB).write_volatile(count);
+        let chctrl = ch_reg(ch, OFF_CHCTRL);
+        chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_CLRTC | CHCTRL_SETEN);
+    }
 }
 
 /// Suspend until the DMA transfer on channel `ch` completes.

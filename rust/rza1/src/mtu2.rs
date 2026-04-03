@@ -151,19 +151,23 @@ fn tpsc(ch: u8, prescaler: u16) -> u8 {
 
 #[inline(always)]
 unsafe fn rd8(addr: usize) -> u8 {
-    core::ptr::read_volatile(addr as *const u8)
+    unsafe { core::ptr::read_volatile(addr as *const u8) }
 }
 #[inline(always)]
 unsafe fn wr8(addr: usize, val: u8) {
-    core::ptr::write_volatile(addr as *mut u8, val);
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u8, val);
+    }
 }
 #[inline(always)]
 unsafe fn rd16(addr: usize) -> u16 {
-    core::ptr::read_volatile(addr as *const u16)
+    unsafe { core::ptr::read_volatile(addr as *const u16) }
 }
 #[inline(always)]
 unsafe fn wr16(addr: usize, val: u16) {
-    core::ptr::write_volatile(addr as *mut u16, val);
+    unsafe {
+        core::ptr::write_volatile(addr as *mut u16, val);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +184,9 @@ unsafe fn wr16(addr: usize, val: u16) {
 /// # Safety
 /// Writes to the memory-mapped TRWER register.
 pub unsafe fn enable_write() {
-    wr8(TRWER, 1);
+    unsafe {
+        wr8(TRWER, 1);
+    }
 }
 
 /// Configure channel `ch` as a free-running up-counter and start it.
@@ -196,24 +202,26 @@ pub unsafe fn enable_write() {
 /// Writes to memory-mapped MTU2 registers. [`enable_write`] must have been
 /// called first.
 pub unsafe fn start_free_running(ch: u8, prescaler: u16) {
-    if ch > 4 {
-        return;
+    unsafe {
+        if ch > 4 {
+            return;
+        }
+
+        // Stop the channel while we configure TCR.
+        let tstr = TSTR as *mut u8;
+        let val = tstr.read_volatile();
+        tstr.write_volatile(val & !CST[ch as usize]);
+
+        // TCR: TPSC only, CCLR = 0 (counter not cleared on any match).
+        wr8(TCR[ch as usize], tpsc(ch, prescaler));
+
+        // Disable compare-match interrupt.
+        wr8(TIER[ch as usize], 0);
+
+        // Start.
+        let val = tstr.read_volatile();
+        tstr.write_volatile(val | CST[ch as usize]);
     }
-
-    // Stop the channel while we configure TCR.
-    let tstr = TSTR as *mut u8;
-    let val = tstr.read_volatile();
-    tstr.write_volatile(val & !CST[ch as usize]);
-
-    // TCR: TPSC only, CCLR = 0 (counter not cleared on any match).
-    wr8(TCR[ch as usize], tpsc(ch, prescaler));
-
-    // Disable compare-match interrupt.
-    wr8(TIER[ch as usize], 0);
-
-    // Start.
-    let val = tstr.read_volatile();
-    tstr.write_volatile(val | CST[ch as usize]);
 }
 
 /// Stop channel `ch`.
@@ -223,11 +231,13 @@ pub unsafe fn start_free_running(ch: u8, prescaler: u16) {
 /// # Safety
 /// Writes to memory-mapped MTU2 registers.
 pub unsafe fn stop(ch: u8) {
-    if ch > 4 {
-        return;
+    unsafe {
+        if ch > 4 {
+            return;
+        }
+        let tstr = TSTR as *mut u8;
+        tstr.write_volatile(tstr.read_volatile() & !CST[ch as usize]);
     }
-    let tstr = TSTR as *mut u8;
-    tstr.write_volatile(tstr.read_volatile() & !CST[ch as usize]);
 }
 
 /// Read the current 16-bit counter value of channel `ch`.
@@ -238,10 +248,12 @@ pub unsafe fn stop(ch: u8) {
 /// # Safety
 /// Reads from memory-mapped MTU2 registers.
 pub unsafe fn count(ch: u8) -> u16 {
-    if ch > 4 {
-        return 0;
+    unsafe {
+        if ch > 4 {
+            return 0;
+        }
+        rd16(TCNT[ch as usize])
     }
-    rd16(TCNT[ch as usize])
 }
 
 /// Configure channel `ch` for one-shot compare-match use.
@@ -261,24 +273,26 @@ pub unsafe fn count(ch: u8) -> u16 {
 /// Writes to memory-mapped MTU2 and GIC registers.  [`enable_write`] and
 /// [`crate::gic::init`] must have been called first.
 pub unsafe fn setup_one_shot(ch: u8, prescaler: u16, handler: crate::gic::Handler, priority: u8) {
-    if ch > 4 {
-        return;
+    unsafe {
+        if ch > 4 {
+            return;
+        }
+
+        // Stop channel.
+        let tstr = TSTR as *mut u8;
+        tstr.write_volatile(tstr.read_volatile() & !CST[ch as usize]);
+
+        // TCR: prescaler + CCLR = 0b001 (clear TCNT on TGRA match).
+        wr8(TCR[ch as usize], tpsc(ch, prescaler) | (1 << 5));
+
+        // Start with interrupts off.
+        wr8(TIER[ch as usize], 0);
+
+        // Register handler with GIC (priority, target CPU, but NOT enabled yet).
+        let irq = TGIA_IRQ[ch as usize];
+        crate::gic::register(irq, handler);
+        crate::gic::set_priority(irq, priority);
     }
-
-    // Stop channel.
-    let tstr = TSTR as *mut u8;
-    tstr.write_volatile(tstr.read_volatile() & !CST[ch as usize]);
-
-    // TCR: prescaler + CCLR = 0b001 (clear TCNT on TGRA match).
-    wr8(TCR[ch as usize], tpsc(ch, prescaler) | (1 << 5));
-
-    // Start with interrupts off.
-    wr8(TIER[ch as usize], 0);
-
-    // Register handler with GIC (priority, target CPU, but NOT enabled yet).
-    let irq = TGIA_IRQ[ch as usize];
-    crate::gic::register(irq, handler);
-    crate::gic::set_priority(irq, priority);
 }
 
 /// Arm channel `ch` for a one-shot event `tgra` ticks from now.
@@ -294,29 +308,31 @@ pub unsafe fn setup_one_shot(ch: u8, prescaler: u16, handler: crate::gic::Handle
 /// # Safety
 /// Writes to memory-mapped MTU2 registers and GIC ISENABLER.
 pub unsafe fn arm(ch: u8, tgra: u16) {
-    if ch > 4 {
-        return;
+    unsafe {
+        if ch > 4 {
+            return;
+        }
+
+        // Stop while reconfiguring.
+        let tstr = TSTR as *mut u8;
+        tstr.write_volatile(tstr.read_volatile() & !CST[ch as usize]);
+
+        // Write compare value then reset counter.
+        wr16(TGRA[ch as usize], tgra);
+        wr16(TCNT[ch as usize], 0);
+
+        // Clear any pending compare-match flag (write 0 to TGFA bit).
+        clear_flag(ch);
+
+        // Enable the GIC source so the handler fires.
+        crate::gic::enable(TGIA_IRQ[ch as usize]);
+
+        // Enable the channel's own interrupt output.
+        wr8(TIER[ch as usize], 1); // TGIEA = 1
+
+        // Start.
+        tstr.write_volatile(tstr.read_volatile() | CST[ch as usize]);
     }
-
-    // Stop while reconfiguring.
-    let tstr = TSTR as *mut u8;
-    tstr.write_volatile(tstr.read_volatile() & !CST[ch as usize]);
-
-    // Write compare value then reset counter.
-    wr16(TGRA[ch as usize], tgra);
-    wr16(TCNT[ch as usize], 0);
-
-    // Clear any pending compare-match flag (write 0 to TGFA bit).
-    clear_flag(ch);
-
-    // Enable the GIC source so the handler fires.
-    crate::gic::enable(TGIA_IRQ[ch as usize]);
-
-    // Enable the channel's own interrupt output.
-    wr8(TIER[ch as usize], 1); // TGIEA = 1
-
-    // Start.
-    tstr.write_volatile(tstr.read_volatile() | CST[ch as usize]);
 }
 
 /// Clear the compare-match-A flag (TGFA) in channel `ch`'s TSR.
@@ -328,17 +344,19 @@ pub unsafe fn arm(ch: u8, tgra: u16) {
 /// # Safety
 /// Reads and writes to memory-mapped MTU2 registers.
 pub unsafe fn clear_flag(ch: u8) {
-    if ch > 4 {
-        return;
-    }
-    let addr = TSR[ch as usize];
-    // Loop until the flag is clear (may require multiple writes on some hardware).
-    loop {
-        let val = rd8(addr);
-        if val & 0x01 == 0 {
-            break;
+    unsafe {
+        if ch > 4 {
+            return;
         }
-        wr8(addr, val & !0x01);
+        let addr = TSR[ch as usize];
+        // Loop until the flag is clear (may require multiple writes on some hardware).
+        loop {
+            let val = rd8(addr);
+            if val & 0x01 == 0 {
+                break;
+            }
+            wr8(addr, val & !0x01);
+        }
     }
 }
 
@@ -350,17 +368,19 @@ pub unsafe fn clear_flag(ch: u8) {
 /// # Safety
 /// Writes to memory-mapped MTU2 registers and GIC ICENABLER.
 pub unsafe fn disarm(ch: u8) {
-    if ch > 4 {
-        return;
+    unsafe {
+        if ch > 4 {
+            return;
+        }
+
+        // Disable the channel's interrupt output first.
+        wr8(TIER[ch as usize], 0);
+
+        // Stop the counter.
+        let tstr = TSTR as *mut u8;
+        tstr.write_volatile(tstr.read_volatile() & !CST[ch as usize]);
+
+        // Mask the GIC source.
+        crate::gic::disable(TGIA_IRQ[ch as usize]);
     }
-
-    // Disable the channel's interrupt output first.
-    wr8(TIER[ch as usize], 0);
-
-    // Stop the counter.
-    let tstr = TSTR as *mut u8;
-    tstr.write_volatile(tstr.read_volatile() & !CST[ch as usize]);
-
-    // Mask the GIC source.
-    crate::gic::disable(TGIA_IRQ[ch as usize]);
 }

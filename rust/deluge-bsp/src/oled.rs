@@ -216,10 +216,12 @@ const INIT_CMDS: &[u8] = &[
 /// # Safety
 /// RSPI0 must be configured for 8-bit operation.
 unsafe fn send_init_commands() {
-    for &b in INIT_CMDS {
-        rspi::send8(SPI_CH, b);
+    unsafe {
+        for &b in INIT_CMDS {
+            rspi::send8(SPI_CH, b);
+        }
+        rspi::wait_end(SPI_CH);
     }
-    rspi::wait_end(SPI_CH);
 }
 
 // ── Public async API (embedded only) ─────────────────────────────────────────

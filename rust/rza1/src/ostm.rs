@@ -78,10 +78,12 @@ const STBCR5: usize = 0xFCFE_0428;
 /// Writes to memory-mapped CPG registers. Safe to call once before starting
 /// any OSTM channel.
 pub unsafe fn enable_clock() {
-    let reg = STBCR5 as *mut u8;
-    let val = reg.read_volatile();
-    reg.write_volatile(val & !0x03); // clear MSTP50 (OSTM0) and MSTP51 (OSTM1)
-    let _ = reg.read_volatile(); // mandatory dummy read per HW spec
+    unsafe {
+        let reg = STBCR5 as *mut u8;
+        let val = reg.read_volatile();
+        reg.write_volatile(val & !0x03); // clear MSTP50 (OSTM0) and MSTP51 (OSTM1)
+        let _ = reg.read_volatile(); // mandatory dummy read per HW spec
+    }
 }
 
 #[inline(always)]
@@ -99,22 +101,24 @@ fn base(n: u8) -> usize {
 /// Writes to memory-mapped OSTM registers. Must only be called after
 /// [`enable_clock`].
 pub unsafe fn start_free_running(n: u8) {
-    let b = base(n);
-    // Stop the timer in case it is already running (CTL can only be written
-    // when the timer is stopped — TE must read 0 first).
-    let tt = (b + TT) as *mut u8;
-    let te = (b + TE) as *const u8;
-    tt.write_volatile(1);
-    // Wait for the hardware to confirm the timer has stopped.
-    while te.read_volatile() != 0 {}
+    unsafe {
+        let b = base(n);
+        // Stop the timer in case it is already running (CTL can only be written
+        // when the timer is stopped — TE must read 0 first).
+        let tt = (b + TT) as *mut u8;
+        let te = (b + TE) as *const u8;
+        tt.write_volatile(1);
+        // Wait for the hardware to confirm the timer has stopped.
+        while te.read_volatile() != 0 {}
 
-    // Free-running mode, compare interrupt disabled.
-    let ctl = (b + CTL) as *mut u8;
-    ctl.write_volatile(CTL_FREE_RUN);
+        // Free-running mode, compare interrupt disabled.
+        let ctl = (b + CTL) as *mut u8;
+        ctl.write_volatile(CTL_FREE_RUN);
 
-    // Start.
-    let ts = (b + TS) as *mut u8;
-    ts.write_volatile(1);
+        // Start.
+        let ts = (b + TS) as *mut u8;
+        ts.write_volatile(1);
+    }
 }
 
 /// Read the current counter value of OSTM channel `n` (0 or 1).
@@ -125,8 +129,10 @@ pub unsafe fn start_free_running(n: u8) {
 /// Reads from memory-mapped OSTM registers.
 #[inline]
 pub unsafe fn count(n: u8) -> u32 {
-    let cnt = (base(n) + CNT) as *const u32;
-    cnt.read_volatile()
+    unsafe {
+        let cnt = (base(n) + CNT) as *const u32;
+        cnt.read_volatile()
+    }
 }
 
 /// Busy-wait for approximately `ticks` OSTM counts (~30 ns each at P0).
@@ -136,8 +142,10 @@ pub unsafe fn count(n: u8) -> u32 {
 /// # Safety
 /// Reads from memory-mapped OSTM registers.
 pub unsafe fn delay_ticks(ticks: u32) {
-    let t0 = count(0);
-    while count(0).wrapping_sub(t0) < ticks {}
+    unsafe {
+        let t0 = count(0);
+        while count(0).wrapping_sub(t0) < ticks {}
+    }
 }
 
 /// Busy-wait for approximately `ms` milliseconds using OSTM channel 0.
@@ -145,8 +153,10 @@ pub unsafe fn delay_ticks(ticks: u32) {
 /// # Safety
 /// See [`delay_ticks`].
 pub unsafe fn delay_ms(ms: u32) {
-    // OSTM_HZ / 1000 = 33_333 ticks per millisecond
-    delay_ticks(ms * (OSTM_HZ / 1000));
+    unsafe {
+        // OSTM_HZ / 1000 = 33_333 ticks per millisecond
+        delay_ticks(ms * (OSTM_HZ / 1000));
+    }
 }
 
 /// A `DelayNs` implementation backed by the OSTM0 free-running counter.
@@ -186,8 +196,10 @@ impl embedded_hal::delay::DelayNs for Delay {
 /// Writes to memory-mapped OSTM registers.
 #[inline]
 pub unsafe fn stop(n: u8) {
-    let tt = (base(n) + TT) as *mut u8;
-    tt.write_volatile(1);
+    unsafe {
+        let tt = (base(n) + TT) as *mut u8;
+        tt.write_volatile(1);
+    }
 }
 
 /// Start OSTM channel `n` in free-running mode with a compare-match interrupt.
@@ -201,18 +213,20 @@ pub unsafe fn stop(n: u8) {
 /// Writes to memory-mapped OSTM registers. Must only be called after
 /// [`enable_clock`].
 pub unsafe fn start_free_running_cmp(n: u8, cmp: u32) {
-    let b = base(n);
-    let tt = (b + TT) as *mut u8;
-    tt.write_volatile(1); // stop first so CTL is writeable
+    unsafe {
+        let b = base(n);
+        let tt = (b + TT) as *mut u8;
+        tt.write_volatile(1); // stop first so CTL is writeable
 
-    let cmp_reg = (b + CMP) as *mut u32;
-    cmp_reg.write_volatile(cmp);
+        let cmp_reg = (b + CMP) as *mut u32;
+        cmp_reg.write_volatile(cmp);
 
-    let ctl = (b + CTL) as *mut u8;
-    ctl.write_volatile(CTL_FREE_RUN_INT); // free-running with CMP interrupt
+        let ctl = (b + CTL) as *mut u8;
+        ctl.write_volatile(CTL_FREE_RUN_INT); // free-running with CMP interrupt
 
-    let ts = (b + TS) as *mut u8;
-    ts.write_volatile(1);
+        let ts = (b + TS) as *mut u8;
+        ts.write_volatile(1);
+    }
 }
 
 /// Start OSTM channel `n` in interval mode with a single-shot countdown.
@@ -225,18 +239,20 @@ pub unsafe fn start_free_running_cmp(n: u8, cmp: u32) {
 /// Writes to memory-mapped OSTM registers. Must only be called after
 /// [`enable_clock`].
 pub unsafe fn start_alarm(n: u8, delta_ticks: u32) {
-    let b = base(n);
-    let tt = (b + TT) as *mut u8;
-    tt.write_volatile(1); // stop in case already running
+    unsafe {
+        let b = base(n);
+        let tt = (b + TT) as *mut u8;
+        tt.write_volatile(1); // stop in case already running
 
-    let cmp_reg = (b + CMP) as *mut u32;
-    cmp_reg.write_volatile(delta_ticks);
+        let cmp_reg = (b + CMP) as *mut u32;
+        cmp_reg.write_volatile(delta_ticks);
 
-    let ctl = (b + CTL) as *mut u8;
-    ctl.write_volatile(CTL_INTERVAL); // interval mode; interrupt fires at end of count (CNT=0), not at start
+        let ctl = (b + CTL) as *mut u8;
+        ctl.write_volatile(CTL_INTERVAL); // interval mode; interrupt fires at end of count (CNT=0), not at start
 
-    let ts = (b + TS) as *mut u8;
-    ts.write_volatile(1);
+        let ts = (b + TS) as *mut u8;
+        ts.write_volatile(1);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +281,7 @@ impl<const N: u8> Ostm<N> {
     /// # Safety
     /// Reads a memory-mapped register.
     pub unsafe fn count(&self) -> u32 {
-        count(N)
+        unsafe { count(N) }
     }
 
     /// Configure channel `N` for free-running mode and start it.
@@ -273,7 +289,7 @@ impl<const N: u8> Ostm<N> {
     /// # Safety
     /// Writes memory-mapped registers.
     pub unsafe fn start_free_running(&self) {
-        start_free_running(N)
+        unsafe { start_free_running(N) }
     }
 
     /// Configure channel `N` for free-running mode with a compare interrupt.
@@ -281,7 +297,7 @@ impl<const N: u8> Ostm<N> {
     /// # Safety
     /// Writes memory-mapped registers.
     pub unsafe fn start_free_running_cmp(&self, cmp: u32) {
-        start_free_running_cmp(N, cmp)
+        unsafe { start_free_running_cmp(N, cmp) }
     }
 
     /// Configure channel `N` for single-shot interval mode.
@@ -289,7 +305,7 @@ impl<const N: u8> Ostm<N> {
     /// # Safety
     /// Writes memory-mapped registers.
     pub unsafe fn start_alarm(&self, delta_ticks: u32) {
-        start_alarm(N, delta_ticks)
+        unsafe { start_alarm(N, delta_ticks) }
     }
 
     /// Stop channel `N`.
@@ -297,7 +313,7 @@ impl<const N: u8> Ostm<N> {
     /// # Safety
     /// Writes memory-mapped registers.
     pub unsafe fn stop(&self) {
-        stop(N)
+        unsafe { stop(N) }
     }
 
     /// Return a [`Delay`] backed by this channel.
