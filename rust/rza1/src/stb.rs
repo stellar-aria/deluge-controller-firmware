@@ -70,8 +70,10 @@ const STBCR6_INIT: u8 = 0b01111111;
 /// `[DVDEC0][DVDEC1][1][ETHER][FLCTL][1][USB0][USB1]`
 const STBCR7_INIT: u8 = 0b00111101;
 
-/// STBCR8: all stopped (IMR-LS2x, MMCIF, MOST50, SCUX unused).
-const STBCR8_INIT: u8 = 0b11111111;
+/// STBCR8: SCUX clock enabled; IMR-LS2x, MMCIF, MOST50 stopped.
+/// `[IMR-LS20][IMR-LS21][IMR-LSD][MMCIF][MOST50][1][SCUX][1]`
+/// Bit 1 (SCUX) cleared → clock running.
+const STBCR8_INIT: u8 = 0b11111101;
 
 /// STBCR9: VDC50 enabled; I2Cx, SPIBSCx, VDC51 stopped.
 /// `[I2C0][I2C1][I2C2][I2C3][SPIBSC0][SPIBSC1][VDC50][VDC51]`
@@ -124,7 +126,7 @@ pub unsafe fn init() {
         wr8(STBCR7, STBCR7_INIT);
         let _: u8 = rd8(STBCR7);
 
-        // IMR-LS20, IMR-LS21, IMR-LSD, MMCIF, MOST50, [1], SCUX, [1]
+        // IMR-LS20, IMR-LS21, IMR-LSD, MMCIF, MOST50, [1], SCUX(enabled), [1]
         wr8(STBCR8, STBCR8_INIT);
         let _: u8 = rd8(STBCR8);
 

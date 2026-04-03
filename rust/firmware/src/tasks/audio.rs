@@ -2,6 +2,7 @@ use core::sync::atomic::Ordering;
 use embassy_usb::driver::{Endpoint as _, EndpointIn as _, EndpointOut as _};
 use log::info;
 use rza1::ssi;
+use deluge_bsp::scux_dvu_path;
 
 use deluge_bsp::usb::classes::audio::{USB_BITS_PER_SAMPLE, USB_CAPTURE_BITS_PER_SAMPLE};
 
@@ -27,8 +28,8 @@ fn dither_sample(lfsr: &mut u32) -> i32 {
 /// Called once at startup and after the USB stream ends to ensure the codec
 /// never sees a burst of identical samples.
 pub(crate) fn fill_tx_with_dither() {
-    let buf_start = ssi::tx_buf_start();
-    let buf_end = ssi::tx_buf_end();
+    let buf_start = scux_dvu_path::tx_buf_start();
+    let buf_end = scux_dvu_path::tx_buf_end();
     let mut lfsr: u32 = 0xACE1;
     let mut p = buf_start;
     while p < buf_end {
@@ -53,8 +54,9 @@ pub(crate) fn fill_tx_with_dither() {
 #[embassy_executor::task]
 pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
     /// How far ahead of the DMA read head to keep the write pointer (mono i32 slots).
-    /// 1024 slots = 512 stereo frames ≈ 11.6 ms at 44.1 kHz — a comfortable margin.
-    const WRITE_AHEAD: usize = 1024;
+    /// 2048 slots = 1024 stereo frames ≈ 23.2 ms at 44.1 kHz.
+    /// Sized to absorb SCUX FFD FIFO burst DMA and USB SOF jitter comfortably.
+    const WRITE_AHEAD: usize = 2048;
     /// After this many consecutive empty/error reads we declare the stream stopped.
     const TIMEOUT_MS: u64 = 200;
 
@@ -62,9 +64,9 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
     ep_out.wait_enabled().await;
     info!("uac2_task: ISO OUT endpoint enabled");
 
-    let buf_start = ssi::tx_buf_start();
-    let buf_end = ssi::tx_buf_end();
-    let buf_len = ssi::TX_BUF_LEN;
+    let buf_start = scux_dvu_path::tx_buf_start();
+    let buf_end = scux_dvu_path::tx_buf_end();
+    let buf_len = scux_dvu_path::DVU_PATH_BUF_LEN;
 
     // Pre-fill with dither so the codec stays alive before streaming begins.
     fill_tx_with_dither();
@@ -136,7 +138,7 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
                     }
                 }
 
-                let dma_ptr = ssi::tx_current_ptr();
+                let dma_ptr = scux_dvu_path::tx_current_ptr();
                 // CRSA can briefly read one-past-the-end during the DMA link-descriptor
                 // reload at the buffer wrap boundary.  Wrap into [0, buf_len) so the
                 // ahead calculation below doesn't see a spuriously small value.

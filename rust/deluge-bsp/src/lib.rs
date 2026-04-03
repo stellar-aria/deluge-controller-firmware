@@ -6,6 +6,8 @@
 
 pub mod audio;
 pub mod cv_gate;
+pub mod scux_dvu_path;
+pub mod scux_src_path;
 pub mod fat;
 pub mod midi_gate;
 pub mod oled;

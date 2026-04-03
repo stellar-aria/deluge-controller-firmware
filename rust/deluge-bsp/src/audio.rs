@@ -14,8 +14,14 @@
 //! `CODEC_POWER` (P6.12) is driven low during SSI initialisation and raised
 //! high after the codec's required 5 ms clock-stable delay, following the
 //! sequence used by the original C firmware.
+//!
+//! The SCUX DVU block sits between the CPU audio buffer and the SSIF0
+//! transmitter, providing hardware volume control and click-free fades.
+//! SSI0 TX DMA (ch 6) is intentionally **not** started; SCUX drives SSIF0 TX
+//! directly via `SSICTRL.SSI012TEN`.  SSI0 RX DMA (ch 7) is started as usual.
 
-use rza1::{gpio, ostm, ssi};
+use rza1::{gpio, ostm};
+use crate::scux_dvu_path;
 
 /// Port and pin of the codec hardware-enable line.
 const CODEC_PORT: u8 = 6;
@@ -50,8 +56,8 @@ pub unsafe fn init() {
         gpio::set_as_output(CODEC_PORT, CODEC_PIN);
         gpio::write(CODEC_PORT, CODEC_PIN, false);
 
-        // ── Initialise SSI0 and start DMA streaming ───────────────────────────────
-        ssi::init();
+        // ── Initialise SCUX DVU path: SSI RX DMA + SCUX → SSIF0 TX ──────────────
+        scux_dvu_path::init();
 
         // ── 5 ms clock-stable delay before enabling the codec ────────────────────
         // OSTM0 must already be running in free-running mode.

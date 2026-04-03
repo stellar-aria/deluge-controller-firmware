@@ -63,20 +63,43 @@ const SSIFTDR_OFF: usize = 0x18; // TX FIFO data register
 const SSIFRDR_OFF: usize = 0x1C; // RX FIFO data register
 const SSITDMR_OFF: usize = 0x20; // TDM mode register
 
-/// SSICR initialisation value (copied verbatim from `drv_ssif_user.h`):
-///   - CKS=0 : AUDIO_X1 clock source
-///   - CHNL=00: 1 channel pair (stereo)
-///   - DWL=101: 24-bit data word
-///   - SWL=011: 32-bit system word
-///   - SCKD=1 : RZ/A1L generates BCLK (master)
-///   - SWSD=1 : RZ/A1L generates LRCK (master)
+/// SSICR initialisation value — from `src/RZA1/ssi/drv_ssif_user.h`
+/// `SSI_SSICR0_USER_INIT_VALUE`:
+///   - CKS=0  (bit 30)   : AUDIO_X1 clock source
+///   - CHNL=00 (23:22)  : 1 channel pair (stereo)
+///   - DWL=101 (21:19)  : 24-bit data word  [SSI_SSICR0_DWL_VALUE = 0x00280000]
+///   - SWL=011 (18:16)  : 32-bit system word [SSI_SSICR0_SWL_VALUE = 0x00030000]
+///   - SCKD=1  (bit 15) : RZ/A1L generates BCLK (master)
+///   - SWSD=1  (bit 14) : RZ/A1L generates LRCK (master)
 ///   - SCKP=SWSP=SPDP=SDTA=PDTA=DEL=0 (all defaults)
-///   - CKDV=0010: AUDIO_X1 ÷ 4
-const SSICR_INIT: u32 = 0x003B_C020;
+///   - CKDV=0010 (7:4)  : AUDIO_X1 ÷ 4 = 5.6448 MHz BCLK
+///
+/// NOTE: the previous value 0x003B_C020 had DWL=7 (prohibited). Correct
+/// value is 0x002B_C020: DWL bits [21:19] = 5 = 0b101 = 24-bit.
+const SSICR_INIT: u32 = 0x002B_C020;
+
+/// SSIFCR bit positions (verified against vendor/rbsp ssif.h SSIF_FCR_SHIFT_*).
+const SSIFCR_RFRST: u32 = 1 << 0; // RX FIFO reset (active high)
+const SSIFCR_TFRST: u32 = 1 << 1; // TX FIFO reset (active high)
+const SSIFCR_RIE:   u32 = 1 << 2; // RX interrupt enable (→ RXI DMA trigger)
+const SSIFCR_TIE:   u32 = 1 << 3; // TX interrupt enable (→ TXI DMA trigger)
+// RTRG[1:0] = bits 5:4 — RX trigger level
+// TTRG[1:0] = bits 7:6 — TX trigger level
+
+/// SSICR bit positions (verified against vendor/rbsp ssif.h SSIF_CR_SHIFT_*).
+const SSICR_REN: u32 = 1 << 0; // Receive enable
+const SSICR_TEN: u32 = 1 << 1; // Transmit enable
+
+/// SSITDMR bit 8: WS continue mode.
+/// BSP (scux_dev.c): set for master mode — keeps WS clock running between frames.
+/// Without this the WS line idles low between frames and the codec loses sync.
+/// BSP: SCUX_SSITDMR_CONT_SET = (1U << 8)  (ssif.h: SSIF_TDMR_BIT_CONT)
+const SSITDMR_CONT: u32 = 1 << 8;
 
 /// SSIFCR initialisation value:
 ///   - TFRST=1, RFRST=1: both FIFOs held in reset until `ssiStart`
-///   - TTRG=101: TX-empty trigger level
+///   - TTRG=10b (bits 7:6): TX trigger = 4 empty stages
+///   - RTRG=10b (bits 5:4): RX trigger = 4 received bytes
 ///   - TIE=0, RIE=0: interrupts disabled until FIFOs are released
 const SSIFCR_INIT: u32 = 0x0000_00A3;
 
@@ -236,7 +259,10 @@ pub unsafe fn init() {
         let _ = swrstcr.read_volatile(); // mandatory dummy read
 
         // 3. Configure SSI registers.
-        ssi_reg(SSITDMR_OFF).write_volatile(0); // no TDM
+        // SSITDMR: CONT=1 (WS continue mode, required for master mode);
+        //   TDM=0 (normal stereo, not TDM).
+        //   BSP sets SCUX_SSITDMR_CONT_SET when mode_master=true.
+        ssi_reg(SSITDMR_OFF).write_volatile(SSITDMR_CONT);
         ssi_reg(SSICR_OFF).write_volatile(SSICR_INIT); // master, 24-bit/32-bit, ÷4
         ssi_reg(SSIFCR_OFF).write_volatile(SSIFCR_INIT); // FIFOs in reset
 
@@ -258,19 +284,98 @@ pub unsafe fn init() {
         //    This mirrors `ssiStart()` from the C firmware exactly.
         let fcr = ssi_reg(SSIFCR_OFF);
 
-        // Release TX FIFO from reset (clear TFRST, bit 1)
-        fcr.write_volatile(fcr.read_volatile() & !(1 << 1));
-        // Enable TX-empty DMA trigger (set TIE, bit 3)
-        fcr.write_volatile(fcr.read_volatile() | (1 << 3));
-        // Release RX FIFO from reset (clear RFRST, bit 0)
-        fcr.write_volatile(fcr.read_volatile() & !(1 << 0));
-        // Enable RX-full DMA trigger (set RIE, bit 2)
-        fcr.write_volatile(fcr.read_volatile() | (1 << 2));
+        // Release TX FIFO from reset, enable TX DMA trigger
+        fcr.write_volatile(fcr.read_volatile() & !SSIFCR_TFRST);
+        fcr.write_volatile(fcr.read_volatile() | SSIFCR_TIE);
+        // Release RX FIFO from reset, enable RX DMA trigger
+        fcr.write_volatile(fcr.read_volatile() & !SSIFCR_RFRST);
+        fcr.write_volatile(fcr.read_volatile() | SSIFCR_RIE);
 
-        // Enable transmit and receive (TEN = bit 1, REN = bit 0 of SSICR)
+        // Enable transmit and receive
         let cr = ssi_reg(SSICR_OFF);
-        cr.write_volatile(cr.read_volatile() | 0b11);
+        cr.write_volatile(cr.read_volatile() | SSICR_TEN | SSICR_REN);
         log::debug!("ssi: TX+RX enabled, streaming");
+    }
+}
+
+/// Initialise SSI0 **receive only** — used when the SCUX DVU path owns the
+/// SSIF0 transmitter.
+///
+/// Performs the same SSI hardware reset and register setup as [`init`], then
+/// starts **only** the RX DMA (ch 7) and enables only the RX FIFO and REN.
+/// The TX DMA (ch 6), TX FIFO, and TEN bit are left untouched so that the
+/// SCUX can drive SSIF0 TX via its own direct-drive path without conflict.
+///
+/// # Safety
+/// Same requirements as [`init`].  Do not call both [`init`] and this
+/// function — call exactly one of the two.
+pub unsafe fn init_rx_only() {
+    unsafe {
+        log::debug!(
+            "ssi: init SSI0 RX-only (44.1 kHz I\u{00B2}S, DMA ch{} RX, TX owned by SCUX)",
+            RX_DMA_CH
+        );
+
+        // 1. Patch RX link descriptor only.
+        let rx_desc_u =
+            (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *mut u32;
+        rx_desc_u
+            .add(2)
+            .write_volatile(core::ptr::addr_of!(RX_BUF.0[0]) as u32);
+        rx_desc_u.add(7).write_volatile(rx_desc_u as u32);
+
+        // 2. SSI0 software reset.
+        let swrstcr = SWRSTCR1 as *mut u8;
+        let reset_bit = 1u8 << (6 - SSI_CH);
+        swrstcr.write_volatile(swrstcr.read_volatile() | reset_bit);
+        let _ = swrstcr.read_volatile();
+        swrstcr.write_volatile(swrstcr.read_volatile() & !reset_bit);
+        let _ = swrstcr.read_volatile();
+
+        // 3. Configure SSI registers (same as full init).
+        ssi_reg(SSITDMR_OFF).write_volatile(SSITDMR_CONT); // WS continue mode (master)
+        ssi_reg(SSICR_OFF).write_volatile(SSICR_INIT);
+        ssi_reg(SSIFCR_OFF).write_volatile(SSIFCR_INIT); // both FIFOs held in reset
+
+        // 4. Initialise and start RX DMA only.
+        let rx_desc_u =
+            (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
+        dmac::init_with_link_descriptor(RX_DMA_CH, rx_desc_u, DMARS_SSI0_RX);
+        dmac::channel_start(RX_DMA_CH);
+        log::debug!("ssi: DMA RX ch{} started (TX skipped — SCUX owns TX)", RX_DMA_CH);
+
+        // 5. Release RX FIFO only; leave TX FIFO in reset (TFRST stays set).
+        let fcr = ssi_reg(SSIFCR_OFF);
+        fcr.write_volatile(fcr.read_volatile() & !SSIFCR_RFRST);
+        fcr.write_volatile(fcr.read_volatile() | SSIFCR_RIE);
+
+        // 6. Enable receive only (TEN stays 0 — SCUX owns TX).
+        let cr = ssi_reg(SSICR_OFF);
+        cr.write_volatile(cr.read_volatile() | SSICR_REN);
+        log::debug!("ssi: RX-only enabled, streaming");
+    }
+}
+
+/// Enable SSI0 transmitter (TEN = bit 1 of SSICR).
+///
+/// Must be called AFTER [`init_rx_only`] when the SCUX owns the SSI0 TX path.
+/// The TRM requires `SSICRn.TEN = 1` when SCUX direct-drive (`SSICTRL.SSI0TX`)
+/// is used (SSI012TEN at bit 1 of SSICTRL is for 6-channel mode only and must
+/// remain 0 for direct drive).
+///
+/// Also releases the TX FIFO from reset (clears SSIFCR.TFRST) so that
+/// SCUX writes to SSIFTDR can actually propagate into the TX serializer.
+/// We clear only TFRST so the existing SSIFCR_RIE (RX DMA trigger) bit is preserved.
+///
+/// # Safety
+/// Read-modify-writes SSI0 SSICR and SSIFCR.
+pub unsafe fn enable_tx() {
+    unsafe {
+        let fcr = ssi_reg(SSIFCR_OFF);
+        fcr.write_volatile(fcr.read_volatile() & !SSIFCR_TFRST);
+        let cr = ssi_reg(SSICR_OFF);
+        cr.write_volatile(cr.read_volatile() | SSICR_TEN);
+        log::debug!("ssi: TX enabled (SCUX direct-drive mode), TX FIFO released");
     }
 }
 

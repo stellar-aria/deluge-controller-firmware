@@ -3,7 +3,7 @@ use embassy_sync::waitqueue::AtomicWaker;
 use log::info;
 
 use crate::events::{EVENT_CHANNEL, HardwareEvent};
-use deluge_bsp::pic;
+use deluge_bsp::{pic, scux_dvu_path};
 
 /// Per-encoder signed delta accumulators, written by IRQ/TINT ISRs.
 #[allow(clippy::declare_interior_mutable_const)]
@@ -38,6 +38,25 @@ fn knob_brightnesses(level: i32) -> [u8; 4] {
     b
 }
 
+/// Map a gold-knob level (0–32) to a DVU VOLxR value.
+///
+/// | Level | Volume |
+/// |-------|--------|
+/// | 0     | 0x0000_0000 (−∞ dB, mute) |
+/// | 16    | 0x0010_0000 (0 dB, unity) |
+/// | 32    | 0x007F_FFFF (+18 dB, max boost) |
+fn dvu_vol_from_knob(level: i32) -> u32 {
+    if level <= 0 {
+        0
+    } else if level <= 16 {
+        // Attenuation zone: 0 → 0x0010_0000 linearly.
+        (level as u32) * 0x0010_0000 / 16
+    } else {
+        // Boost zone: 0x0010_0000 → 0x007F_FFFF linearly.
+        0x0010_0000 + (level as u32 - 16) * (0x007F_FFFF - 0x0010_0000) / 16
+    }
+}
+
 /// Called from each encoder's IRQ handler.
 ///
 /// Reads the IRQ pin's new level and the companion pin's current level, derives
@@ -50,8 +69,11 @@ fn knob_brightnesses(level: i32) -> [u8; 4] {
 /// function).  This flips the direction formula to match the B-first convention
 /// used by the original polling decoder.
 fn enc_irq_handler(enc_idx: usize, irq_pin: u8, companion: u8, irq_num: u8, invert: bool) {
-    let irq_new = unsafe { rza1::gpio::read_pin(1, irq_pin) };
-    let comp = unsafe { rza1::gpio::read_pin(1, companion) };
+    // Read the whole port in one instruction so irq_pin and companion are
+    // sampled at the same instant, eliminating the direction-decode race.
+    let pins = unsafe { rza1::gpio::read_port(1) };
+    let irq_new = (pins >> irq_pin) & 1 != 0;
+    let comp    = (pins >> companion) & 1 != 0;
     // A-first (IRQ on A): CW when irq_new == comp  → matches old code's A-branch formula.
     // B-first (IRQ on B, invert=true): CW when irq_new != comp.
     let cw = if invert {
@@ -75,7 +97,7 @@ fn enc_irq_handler(enc_idx: usize, irq_pin: u8, companion: u8, irq_num: u8, inve
 /// |-----|---------|------|--------|---------------|
 /// |  0 SCROLL_X  | P1.11 | IRQ3 | 35 | P1.12 (GPIO) |
 /// |  1 TEMPO     | P1.6  | IRQ2 | 34 | P1.7  (GPIO) | ← IRQ on electrical B
-/// |  2 MOD_0     | P1.0  | IRQ4 | 36 | P1.15 (IRQ7/GIC39) | ← both pins interrupt
+/// |  2 MOD_0     | P1.0  | IRQ4 | 36 | P1.15 (GPIO) |
 /// |  3 MOD_1     | P1.5  | IRQ1 | 33 | P1.4  (GPIO) |
 /// |  4 SCROLL_Y  | P1.8  | IRQ0 | 32 | P1.10 (GPIO) |
 /// |  5 SELECT    | P1.2  | IRQ6 | 38 | P1.3  (GPIO) |
@@ -98,24 +120,17 @@ pub(crate) unsafe fn encoder_irq_init() {
             // Mux IRQ pin to IRQ function (2nd alt); enable PIBC so PPR is readable.
             rza1::gpio::set_pin_mux(1, irq_pin, 2);
             rza1::gpio::enable_input_buffer(1, irq_pin);
-            // Companion stays plain GPIO input (except P1.15 — overridden below).
+            // Companion stays plain GPIO input.
             rza1::gpio::set_as_input(1, comp_pin);
         }
-        // MOD_0 companion P1.15 can also be IRQ7 (mux=2 same as all other IRQ pins).
-        // Overwrite the set_as_input above with peripheral-mode mux.
-        rza1::gpio::set_pin_mux(1, 15, 2);
-        rza1::gpio::enable_input_buffer(1, 15);
 
         for &(_, _, _, irq_num, _) in &SETUP {
             rza1::gic::set_irq_both_edges(irq_num);
         }
-        // IRQ7 for P1.15 (MOD_0 B pin).
-        rza1::gic::set_irq_both_edges(7);
 
         rza1::gic::register(35, || enc_irq_handler(0, 11, 12, 3, false));
         rza1::gic::register(34, || enc_irq_handler(1, 6, 7, 2, true));
         rza1::gic::register(36, || enc_irq_handler(2, 0, 15, 4, false));
-        rza1::gic::register(39, || enc_irq_handler(2, 15, 0, 7, false)); // MOD_0 B
         rza1::gic::register(33, || enc_irq_handler(3, 5, 4, 1, false));
         rza1::gic::register(32, || enc_irq_handler(4, 8, 10, 0, false));
         rza1::gic::register(38, || enc_irq_handler(5, 2, 3, 6, false));
@@ -124,9 +139,6 @@ pub(crate) unsafe fn encoder_irq_init() {
             rza1::gic::set_priority(gic_id, 14);
             rza1::gic::enable(gic_id);
         }
-        // MOD_0 B companion IRQ7 (GIC 39) — same priority as the rest.
-        rza1::gic::set_priority(39, 14);
-        rza1::gic::enable(39);
         info!("encoder: interrupt-driven init complete (IRQ0/1/2/3/4/6/7 → GIC 32–36, 38–39)");
     }
 }
@@ -145,7 +157,9 @@ pub(crate) unsafe fn encoder_irq_init() {
 #[embassy_executor::task]
 pub(crate) async fn encoder_task() {
     let mut enc_pos = [0i8; 6];
-    let mut knob_level = [0i32; 2];
+    // MOD knob levels: 0 = −∞ dB, 16 = 0 dB (unity), 32 = +18 dB.
+    // Init at unity so audio is heard at full level on boot.
+    let mut knob_level = [16i32; 2];
 
     info!("encoder_task: started (interrupt-driven)");
 
@@ -193,6 +207,13 @@ pub(crate) async fn encoder_task() {
                     let brightness = knob_brightnesses(knob_level[k]);
                     pic::set_gold_knob_indicators(k as u8, brightness).await;
                     info!("knob {} level {} → {:?}", k, knob_level[k], brightness);
+                    if k == 0 {
+                        // Knob 0 (MOD_0) controls DVU master volume.
+                        // 0–16: −∞ dB (0x000_0000) to 0 dB (0x0010_0000) linear
+                        // 16–32: 0 dB (0x0010_0000) to +18 dB (0x007F_FFFF) linear
+                        let vol = dvu_vol_from_knob(knob_level[0]);
+                        unsafe { scux_dvu_path::set_volume_stereo(vol) };
+                    }
                 } else {
                     info!("encoder {} Δ{}", i, detents);
                 }

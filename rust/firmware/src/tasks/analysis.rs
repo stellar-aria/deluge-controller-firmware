@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use embassy_futures::yield_now;
 use embassy_time::Timer;
-use rza1::ssi;
+use deluge_bsp::scux_dvu_path;
 
 use deluge_fft::{Complex, RealFft, apply_hann_window_real};
 
@@ -148,15 +148,15 @@ pub(crate) async fn analysis_task() {
     // Give hardware init and other tasks time to settle.
     Timer::after_millis(500).await;
 
-    let base = ssi::tx_buf_start() as *const i32;
-    let buf_len = ssi::TX_BUF_LEN; // interleaved i32 slots (stereo)
+    let base = scux_dvu_path::tx_buf_start() as *const i32;
+    let buf_len = scux_dvu_path::DVU_PATH_BUF_LEN; // interleaved i32 slots (stereo)
 
-    let mut prev_ptr = ssi::tx_current_ptr() as *const i32;
+    let mut prev_ptr = scux_dvu_path::tx_current_ptr() as *const i32;
 
     loop {
         Timer::after_millis(50).await;
 
-        let cur_ptr = ssi::tx_current_ptr() as *const i32;
+        let cur_ptr = scux_dvu_path::tx_current_ptr() as *const i32;
         let streaming = cur_ptr != prev_ptr;
         AUDIO_STREAMING.store(streaming, Ordering::Release);
         prev_ptr = cur_ptr;

@@ -127,6 +127,17 @@ pub unsafe fn read_pin(port: u8, pin: u8) -> bool {
     unsafe { (core::ptr::read_volatile(ppr(port)) >> pin) & 1 != 0 }
 }
 
+/// Read all 16 pins of a port in a single atomic PPR register read.
+///
+/// Returns a bitmask; bit `n` corresponds to pin `n` of `port`.
+/// Both PIBC bits for the pins of interest must be set before calling this.
+///
+/// # Safety
+/// Reads a memory-mapped peripheral register; `port` must be 1-based (1..=11).
+pub unsafe fn read_port(port: u8) -> u16 {
+    unsafe { core::ptr::read_volatile(ppr(port)) }
+}
+
 /// Drive a GPIO output pin high (`true`) or low (`false`).
 ///
 /// # Safety
