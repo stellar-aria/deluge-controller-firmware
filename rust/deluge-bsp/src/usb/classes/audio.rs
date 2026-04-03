@@ -8,12 +8,12 @@
 //! let usb = builder.build();
 //! ```
 
+use core::sync::atomic::{AtomicU8, Ordering};
 use embassy_usb::control::{InResponse, OutResponse, Recipient, Request, RequestType};
 use embassy_usb::descriptor::{SynchronizationType, UsageType};
 use embassy_usb::driver::{Driver, Endpoint};
 use embassy_usb::types::InterfaceNumber;
 use embassy_usb::{Builder, Handler};
-use core::sync::atomic::{AtomicU8, Ordering};
 
 /// Current active bit depth for the speaker stream (16 or 24).
 /// Set by [`AudioClass`] when the host selects an alternate setting.
@@ -40,9 +40,9 @@ const AS_GENERAL: u8 = 0x01;
 const AS_FORMAT_TYPE: u8 = 0x02;
 
 const CLOCK_SOURCE_ID: u8 = 0x10;
-const INPUT_TERM_ID: u8 = 0x11;   // USB streaming → speaker
-const OUTPUT_TERM_ID: u8 = 0x12;  // speaker out
-const MIC_INPUT_TERM_ID: u8 = 0x13;  // physical microphone
+const INPUT_TERM_ID: u8 = 0x11; // USB streaming → speaker
+const OUTPUT_TERM_ID: u8 = 0x12; // speaker out
+const MIC_INPUT_TERM_ID: u8 = 0x13; // physical microphone
 const MIC_OUTPUT_TERM_ID: u8 = 0x14; // USB streaming ← mic
 
 const TERM_MICROPHONE: u16 = 0x0201;
@@ -118,42 +118,74 @@ impl AudioClass {
         ac_alt.descriptor(
             CS_INTERFACE,
             &[
-                AC_INPUT_TERM, INPUT_TERM_ID,
-                (TERM_USB_STREAMING & 0xFF) as u8, (TERM_USB_STREAMING >> 8) as u8,
-                0x00, CLOCK_SOURCE_ID,
-                0x02, 0x03, 0x00, 0x00, 0x00, // 2ch FL+FR
-                0x00, 0x00, 0x00, 0x00,
+                AC_INPUT_TERM,
+                INPUT_TERM_ID,
+                (TERM_USB_STREAMING & 0xFF) as u8,
+                (TERM_USB_STREAMING >> 8) as u8,
+                0x00,
+                CLOCK_SOURCE_ID,
+                0x02,
+                0x03,
+                0x00,
+                0x00,
+                0x00, // 2ch FL+FR
+                0x00,
+                0x00,
+                0x00,
+                0x00,
             ],
         );
         // Output Terminal: speaker (entity 0x12)
         ac_alt.descriptor(
             CS_INTERFACE,
             &[
-                AC_OUTPUT_TERM, OUTPUT_TERM_ID,
-                (TERM_SPEAKER & 0xFF) as u8, (TERM_SPEAKER >> 8) as u8,
-                0x00, INPUT_TERM_ID, CLOCK_SOURCE_ID,
-                0x00, 0x00, 0x00,
+                AC_OUTPUT_TERM,
+                OUTPUT_TERM_ID,
+                (TERM_SPEAKER & 0xFF) as u8,
+                (TERM_SPEAKER >> 8) as u8,
+                0x00,
+                INPUT_TERM_ID,
+                CLOCK_SOURCE_ID,
+                0x00,
+                0x00,
+                0x00,
             ],
         );
         // Input Terminal: physical microphone (entity 0x13)
         ac_alt.descriptor(
             CS_INTERFACE,
             &[
-                AC_INPUT_TERM, MIC_INPUT_TERM_ID,
-                (TERM_MICROPHONE & 0xFF) as u8, (TERM_MICROPHONE >> 8) as u8,
-                0x00, CLOCK_SOURCE_ID,
-                0x02, 0x03, 0x00, 0x00, 0x00, // 2ch FL+FR
-                0x00, 0x00, 0x00, 0x00,
+                AC_INPUT_TERM,
+                MIC_INPUT_TERM_ID,
+                (TERM_MICROPHONE & 0xFF) as u8,
+                (TERM_MICROPHONE >> 8) as u8,
+                0x00,
+                CLOCK_SOURCE_ID,
+                0x02,
+                0x03,
+                0x00,
+                0x00,
+                0x00, // 2ch FL+FR
+                0x00,
+                0x00,
+                0x00,
+                0x00,
             ],
         );
         // Output Terminal: USB streaming ← mic (entity 0x14)
         ac_alt.descriptor(
             CS_INTERFACE,
             &[
-                AC_OUTPUT_TERM, MIC_OUTPUT_TERM_ID,
-                (TERM_USB_STREAMING & 0xFF) as u8, (TERM_USB_STREAMING >> 8) as u8,
-                0x00, MIC_INPUT_TERM_ID, CLOCK_SOURCE_ID,
-                0x00, 0x00, 0x00,
+                AC_OUTPUT_TERM,
+                MIC_OUTPUT_TERM_ID,
+                (TERM_USB_STREAMING & 0xFF) as u8,
+                (TERM_USB_STREAMING >> 8) as u8,
+                0x00,
+                MIC_INPUT_TERM_ID,
+                CLOCK_SOURCE_ID,
+                0x00,
+                0x00,
+                0x00,
             ],
         );
 
@@ -179,9 +211,20 @@ impl AudioClass {
         as_cap_alt1.descriptor(
             CS_INTERFACE,
             &[
-                AS_GENERAL, MIC_OUTPUT_TERM_ID,
-                0x00, 0x01, 0x01, 0x00, 0x00, 0x00, // PCM format
-                0x02, 0x03, 0x00, 0x00, 0x00, 0x00, // 2ch FL+FR
+                AS_GENERAL,
+                MIC_OUTPUT_TERM_ID,
+                0x00,
+                0x01,
+                0x01,
+                0x00,
+                0x00,
+                0x00, // PCM format
+                0x02,
+                0x03,
+                0x00,
+                0x00,
+                0x00,
+                0x00, // 2ch FL+FR
             ],
         );
         as_cap_alt1.descriptor(CS_INTERFACE, &[AS_FORMAT_TYPE, 0x01, 0x02, 0x10]); // subslot=2, 16-bit
@@ -204,9 +247,20 @@ impl AudioClass {
         as_cap_alt2.descriptor(
             CS_INTERFACE,
             &[
-                AS_GENERAL, MIC_OUTPUT_TERM_ID,
-                0x00, 0x01, 0x01, 0x00, 0x00, 0x00, // PCM format
-                0x02, 0x03, 0x00, 0x00, 0x00, 0x00, // 2ch FL+FR
+                AS_GENERAL,
+                MIC_OUTPUT_TERM_ID,
+                0x00,
+                0x01,
+                0x01,
+                0x00,
+                0x00,
+                0x00, // PCM format
+                0x02,
+                0x03,
+                0x00,
+                0x00,
+                0x00,
+                0x00, // 2ch FL+FR
             ],
         );
         as_cap_alt2.descriptor(CS_INTERFACE, &[AS_FORMAT_TYPE, 0x01, 0x03, 0x18]); // subslot=3, 24-bit
@@ -240,15 +294,26 @@ impl AudioClass {
         as_alt1.descriptor(
             CS_INTERFACE,
             &[
-                AS_GENERAL, INPUT_TERM_ID,
-                0x00, 0x01, 0x01, 0x00, 0x00, 0x00, // PCM format
-                0x02, 0x03, 0x00, 0x00, 0x00, 0x00, // 2ch FL+FR
+                AS_GENERAL,
+                INPUT_TERM_ID,
+                0x00,
+                0x01,
+                0x01,
+                0x00,
+                0x00,
+                0x00, // PCM format
+                0x02,
+                0x03,
+                0x00,
+                0x00,
+                0x00,
+                0x00, // 2ch FL+FR
             ],
         );
         as_alt1.descriptor(CS_INTERFACE, &[AS_FORMAT_TYPE, 0x01, 0x02, 0x10]); // subslot=2, 16-bit
         let ep_out = as_alt1.endpoint_isochronous_out(
             Some(ep_in.info().addr), // bSynchAddress = mic IN (implicit feedback)
-            iso_packet_size, // MPS=288 so ep_out.info.max_packet_size covers alt2 too
+            iso_packet_size,         // MPS=288 so ep_out.info.max_packet_size covers alt2 too
             1,
             SynchronizationType::Asynchronous,
             UsageType::DataEndpoint,
@@ -265,9 +330,20 @@ impl AudioClass {
         as_alt2.descriptor(
             CS_INTERFACE,
             &[
-                AS_GENERAL, INPUT_TERM_ID,
-                0x00, 0x01, 0x01, 0x00, 0x00, 0x00, // PCM format
-                0x02, 0x03, 0x00, 0x00, 0x00, 0x00, // 2ch FL+FR
+                AS_GENERAL,
+                INPUT_TERM_ID,
+                0x00,
+                0x01,
+                0x01,
+                0x00,
+                0x00,
+                0x00, // PCM format
+                0x02,
+                0x03,
+                0x00,
+                0x00,
+                0x00,
+                0x00, // 2ch FL+FR
             ],
         );
         as_alt2.descriptor(CS_INTERFACE, &[AS_FORMAT_TYPE, 0x01, 0x03, 0x18]); // subslot=3, 24-bit

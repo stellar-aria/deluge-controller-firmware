@@ -43,7 +43,7 @@ pub mod pipe;
 pub mod regs;
 
 pub use driver::{
-    dcd_int_handler, Rusb1Bus, Rusb1ControlPipe, Rusb1Driver, Rusb1EndpointIn, Rusb1EndpointOut,
+    Rusb1Bus, Rusb1ControlPipe, Rusb1Driver, Rusb1EndpointIn, Rusb1EndpointOut, dcd_int_handler,
 };
 pub use host::Rusb1HostDriver;
 
@@ -172,7 +172,7 @@ pub unsafe fn init_host_mode(port: u8) -> (UsbPort<Host>, Rusb1HostDriver) {
 /// Bring a port to a quiescent state (USBE=0, interrupts off) before a mode
 /// switch.
 unsafe fn quiesce_port(port: u8) {
-    use regs::{wr, Rusb1Regs, SYSCFG_USBE};
+    use regs::{Rusb1Regs, SYSCFG_USBE, wr};
     rusb1::int_disable(port);
     let regs = Rusb1Regs::ptr(port);
     wr(core::ptr::addr_of_mut!((*regs).intenb0), 0);

@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use embassy_time::Timer;
 use rza1::ssi;
 
-use deluge_fft::{apply_hann_window_real, Complex, RealFft};
+use deluge_fft::{Complex, RealFft, apply_hann_window_real};
 
 // ---------------------------------------------------------------------------
 // Shared output buffers

@@ -23,12 +23,18 @@ pub struct FftBuf<const N: usize> {
 
 impl<const N: usize> FftBuf<N> {
     /// All-zeros buffer.
-    pub const ZERO: Self = Self { re: [0.0; N], im: [0.0; N] };
+    pub const ZERO: Self = Self {
+        re: [0.0; N],
+        im: [0.0; N],
+    };
 
     /// Load real samples; imaginary parts are set to zero.
     #[inline]
     pub fn from_real(samples: &[f32; N]) -> Self {
-        Self { re: *samples, im: [0.0; N] }
+        Self {
+            re: *samples,
+            im: [0.0; N],
+        }
     }
 
     /// Convert to the interleaved `[Complex; N]` layout.
@@ -36,7 +42,10 @@ impl<const N: usize> FftBuf<N> {
     pub fn to_complex(&self) -> [Complex; N] {
         let mut out = [Complex::ZERO; N];
         for i in 0..N {
-            out[i] = Complex { re: self.re[i], im: self.im[i] };
+            out[i] = Complex {
+                re: self.re[i],
+                im: self.im[i],
+            };
         }
         out
     }

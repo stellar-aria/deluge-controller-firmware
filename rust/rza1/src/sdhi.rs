@@ -1152,29 +1152,29 @@ mod tests {
     fn register_offsets() {
         // Verify register byte offsets from TRM table 38.2
         // (SDHI0 base = H'E804_E000; offsets are absolute byte distances)
-        assert_eq!(OFF_CMD,         0x00);
-        assert_eq!(OFF_ARG0,        0x04);
-        assert_eq!(OFF_ARG1,        0x06);
-        assert_eq!(OFF_STOP,        0x08);
-        assert_eq!(OFF_SECCNT,      0x0A);
-        assert_eq!(OFF_RESP0,       0x0C);
-        assert_eq!(OFF_RESP1,       0x0E);
-        assert_eq!(OFF_INFO1,       0x1C);
-        assert_eq!(OFF_INFO2,       0x1E);
-        assert_eq!(OFF_INFO1_MASK,  0x20);
-        assert_eq!(OFF_INFO2_MASK,  0x22);
-        assert_eq!(OFF_CLK_CTRL,    0x24);
-        assert_eq!(OFF_SIZE,        0x26);
-        assert_eq!(OFF_OPTION,      0x28);
-        assert_eq!(OFF_ERR_STS1,    0x2C);
-        assert_eq!(OFF_ERR_STS2,    0x2E);
-        assert_eq!(OFF_BUF0,        0x30);
-        assert_eq!(OFF_SDIO_MODE,   0x34);
-        assert_eq!(OFF_SDIO_INFO1,  0x36);
+        assert_eq!(OFF_CMD, 0x00);
+        assert_eq!(OFF_ARG0, 0x04);
+        assert_eq!(OFF_ARG1, 0x06);
+        assert_eq!(OFF_STOP, 0x08);
+        assert_eq!(OFF_SECCNT, 0x0A);
+        assert_eq!(OFF_RESP0, 0x0C);
+        assert_eq!(OFF_RESP1, 0x0E);
+        assert_eq!(OFF_INFO1, 0x1C);
+        assert_eq!(OFF_INFO2, 0x1E);
+        assert_eq!(OFF_INFO1_MASK, 0x20);
+        assert_eq!(OFF_INFO2_MASK, 0x22);
+        assert_eq!(OFF_CLK_CTRL, 0x24);
+        assert_eq!(OFF_SIZE, 0x26);
+        assert_eq!(OFF_OPTION, 0x28);
+        assert_eq!(OFF_ERR_STS1, 0x2C);
+        assert_eq!(OFF_ERR_STS2, 0x2E);
+        assert_eq!(OFF_BUF0, 0x30);
+        assert_eq!(OFF_SDIO_MODE, 0x34);
+        assert_eq!(OFF_SDIO_INFO1, 0x36);
         assert_eq!(OFF_SDIO_INFO1_MASK, 0x38);
         assert_eq!(OFF_CC_EXT_MODE, 0xD8);
-        assert_eq!(OFF_SOFT_RST,    0xE0);
-        assert_eq!(OFF_EXT_SWAP,    0xF0);
+        assert_eq!(OFF_SOFT_RST, 0xE0);
+        assert_eq!(OFF_EXT_SWAP, 0xF0);
     }
 
     #[test]

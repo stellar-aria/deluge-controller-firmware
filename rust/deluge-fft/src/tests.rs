@@ -227,7 +227,13 @@ fn complex_fft_bins<const N: usize>(real_input: &[f32; N]) -> [Complex; { N / 2 
 fn max_error_slice(a: &[Complex], b: &[Complex]) -> f32 {
     a.iter()
         .zip(b.iter())
-        .map(|(x, y)| Complex { re: x.re - y.re, im: x.im - y.im }.abs())
+        .map(|(x, y)| {
+            Complex {
+                re: x.re - y.re,
+                im: x.im - y.im,
+            }
+            .abs()
+        })
         .fold(0.0f32, f32::max)
 }
 
@@ -271,4 +277,3 @@ fn real_fft_sine_peak_512() {
         .unwrap();
     assert_eq!(peak, 13, "peak at {peak}, expected 13");
 }
-

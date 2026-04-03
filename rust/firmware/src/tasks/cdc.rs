@@ -11,15 +11,15 @@
 //!
 //! See [`src/controller/usb_serial.h`] for the full message table.
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, Receiver, Sender};
 use log::{debug, info, warn};
 
-use deluge_bsp::{cv_gate, pic, uart as bsp_uart};
 use deluge_bsp::usb::Rusb1Driver;
+use deluge_bsp::{cv_gate, pic, uart as bsp_uart};
 
 use crate::events::{EVENT_CHANNEL, HardwareEvent};
-use crate::pads::{pad_set_all, pad_id_from_xy, PAD_BITS};
+use crate::pads::{PAD_BITS, pad_id_from_xy, pad_set_all};
 use crate::tasks::oled as oled_task;
 
 // Firmware version coordinates — must match the version advertised by the
@@ -30,29 +30,29 @@ const PATCH: u8 = 0;
 
 // ── Message type constants (matching usb_serial.h) ───────────────────────────
 
-const MSG_FROM_PAD_PRESSED: u8      = 0x01;
-const MSG_FROM_PAD_RELEASED: u8     = 0x02;
-const MSG_FROM_BUTTON_PRESSED: u8   = 0x03;
-const MSG_FROM_BUTTON_RELEASED: u8  = 0x04;
-const MSG_FROM_ENCODER_ROTATED: u8  = 0x05;
-const MSG_FROM_VERSION: u8          = 0x10;
-const MSG_FROM_PONG: u8             = 0x11;
-const MSG_FROM_READY: u8            = 0x12;
+const MSG_FROM_PAD_PRESSED: u8 = 0x01;
+const MSG_FROM_PAD_RELEASED: u8 = 0x02;
+const MSG_FROM_BUTTON_PRESSED: u8 = 0x03;
+const MSG_FROM_BUTTON_RELEASED: u8 = 0x04;
+const MSG_FROM_ENCODER_ROTATED: u8 = 0x05;
+const MSG_FROM_VERSION: u8 = 0x10;
+const MSG_FROM_PONG: u8 = 0x11;
+const MSG_FROM_READY: u8 = 0x12;
 
-const MSG_TO_UPDATE_DISPLAY: u8     = 0x20;
-const MSG_TO_CLEAR_DISPLAY: u8      = 0x21;
-const MSG_TO_SET_PAD_RGB: u8        = 0x22;
-const MSG_TO_CLEAR_ALL_PADS: u8     = 0x23;
-const MSG_TO_SET_LED: u8            = 0x24;
-const MSG_TO_SET_CV: u8             = 0x25;
-const MSG_TO_SET_GATE: u8           = 0x26;
-const MSG_TO_SET_ALL_PADS: u8       = 0x27;
+const MSG_TO_UPDATE_DISPLAY: u8 = 0x20;
+const MSG_TO_CLEAR_DISPLAY: u8 = 0x21;
+const MSG_TO_SET_PAD_RGB: u8 = 0x22;
+const MSG_TO_CLEAR_ALL_PADS: u8 = 0x23;
+const MSG_TO_SET_LED: u8 = 0x24;
+const MSG_TO_SET_CV: u8 = 0x25;
+const MSG_TO_SET_GATE: u8 = 0x26;
+const MSG_TO_SET_ALL_PADS: u8 = 0x27;
 const MSG_TO_SET_KNOB_INDICATOR: u8 = 0x28;
-const MSG_TO_SET_SYNCED_LED: u8     = 0x29;
-const MSG_TO_CLEAR_ALL_LEDS: u8     = 0x2A;
-const MSG_TO_SET_BRIGHTNESS: u8     = 0x2B;
-const MSG_TO_GET_VERSION: u8        = 0x30;
-const MSG_TO_PING: u8               = 0x31;
+const MSG_TO_SET_SYNCED_LED: u8 = 0x29;
+const MSG_TO_CLEAR_ALL_LEDS: u8 = 0x2A;
+const MSG_TO_SET_BRIGHTNESS: u8 = 0x2B;
+const MSG_TO_GET_VERSION: u8 = 0x30;
+const MSG_TO_PING: u8 = 0x31;
 
 // ── RX accumulation buffer ───────────────────────────────────────────────────
 
@@ -65,7 +65,10 @@ struct RxState {
 
 impl RxState {
     const fn new() -> Self {
-        Self { buf: [0; RX_BUF_SIZE], pos: 0 }
+        Self {
+            buf: [0; RX_BUF_SIZE],
+            pos: 0,
+        }
     }
 
     fn reset(&mut self) {
@@ -188,7 +191,9 @@ async fn handle_message(
                 if (ch as usize) < deluge_bsp::cv_gate::NUM_CV_CHANNELS {
                     // Safety: single-threaded; RSPI0_DMA_ACTIVE guard is inside
                     // cv_set_blocking.
-                    unsafe { cv_gate::cv_set_blocking(ch, value); }
+                    unsafe {
+                        cv_gate::cv_set_blocking(ch, value);
+                    }
                 }
             }
         }
@@ -199,7 +204,9 @@ async fn handle_message(
                 let on = data[1] != 0;
                 if (ch as usize) < deluge_bsp::cv_gate::NUM_GATE_CHANNELS {
                     // Safety: GPIO write only.
-                    unsafe { cv_gate::gate_set(ch, on); }
+                    unsafe {
+                        cv_gate::gate_set(ch, on);
+                    }
                 }
             }
         }
@@ -237,7 +244,9 @@ async fn handle_message(
             // toggled by blink_task; the host can override it by calling this.
             if data.len() >= 1 {
                 let on = data[0] != 0;
-                unsafe { rza1::gpio::write(6, 7, on); }
+                unsafe {
+                    rza1::gpio::write(6, 7, on);
+                }
             }
         }
         MSG_TO_CLEAR_ALL_LEDS => {
@@ -248,7 +257,9 @@ async fn handle_message(
             pic::set_gold_knob_indicators(0, [0; 4]).await;
             pic::set_gold_knob_indicators(1, [0; 4]).await;
             // Also clear the synced LED.
-            unsafe { rza1::gpio::write(6, 7, false); }
+            unsafe {
+                rza1::gpio::write(6, 7, false);
+            }
         }
         MSG_TO_SET_BRIGHTNESS => {
             // [level: 0–25]  0=dimmest, 25=brightest.
@@ -256,7 +267,10 @@ async fn handle_message(
             // TODO: expose set_dimmer_interval from deluge-bsp pic module.
             if data.len() >= 1 {
                 let level = data[0].min(25);
-                warn!("SetBrightness level={} (PIC dimmer not yet exposed from BSP)", level);
+                warn!(
+                    "SetBrightness level={} (PIC dimmer not yet exposed from BSP)",
+                    level
+                );
                 let _ = bsp_uart::write_bytes(deluge_bsp::uart::PIC_CH, &[19u8, 25 - level]).await;
             }
         }
@@ -319,9 +333,8 @@ async fn run_session(
                             // We need a copy since we borrow rx_state mutably after.
                             let mut msg_buf = [0u8; RX_BUF_SIZE];
                             let data_len = data_end.saturating_sub(data_start);
-                            msg_buf[..data_len].copy_from_slice(
-                                &rx_state.buf[data_start..data_end],
-                            );
+                            msg_buf[..data_len]
+                                .copy_from_slice(&rx_state.buf[data_start..data_end]);
                             rx_state.consume(end);
                             if handle_message(tx, type_byte, &msg_buf[..data_len])
                                 .await

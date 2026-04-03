@@ -422,8 +422,7 @@ fn decode_csd_capacity(csd: [u32; 4], hc: bool) -> u32 {
         let c_size_mult = (csd[2] >> 15) & 0x7;
         let block_len = 1u32 << read_bl_len; // bytes per block
         let mult = 1u32 << (c_size_mult + 2);
-        let capacity_bytes =
-            (c_size as u64 + 1) * mult as u64 * block_len as u64;
+        let capacity_bytes = (c_size as u64 + 1) * mult as u64 * block_len as u64;
         (capacity_bytes / 512) as u32
     }
 }
@@ -459,17 +458,9 @@ impl embedded_sdmmc::BlockDevice for DelugeBlockDevice {
         let addr = lba_to_addr(lba);
         let hc = CARD_HC.load(Ordering::Relaxed);
         let cmd = if count > 1 {
-            if hc {
-                CMD18_SDHC
-            } else {
-                CMD18
-            }
+            if hc { CMD18_SDHC } else { CMD18 }
         } else {
-            if hc {
-                CMD17_SDHC
-            } else {
-                CMD17
-            }
+            if hc { CMD17_SDHC } else { CMD17 }
         };
 
         unsafe {
@@ -497,17 +488,9 @@ impl embedded_sdmmc::BlockDevice for DelugeBlockDevice {
         let addr = lba_to_addr(lba);
         let hc = CARD_HC.load(Ordering::Relaxed);
         let cmd = if count > 1 {
-            if hc {
-                CMD25_SDHC
-            } else {
-                CMD25
-            }
+            if hc { CMD25_SDHC } else { CMD25 }
         } else {
-            if hc {
-                CMD24_SDHC
-            } else {
-                CMD24
-            }
+            if hc { CMD24_SDHC } else { CMD24 }
         };
 
         unsafe {

@@ -47,7 +47,7 @@ pub unsafe fn init_midi(baud_rate: u32) {
     rza1::uart::init(MIDI_CH, baud_rate);
     rza1::gpio::set_pin_mux(6, 15, 5); // TxD0
     rza1::gpio::set_pin_mux(6, 14, 5); // RxD0
-                                       // TX via TXI interrupt; RX via DMAC channel 13.
+    // TX via TXI interrupt; RX via DMAC channel 13.
     rza1::uart::register_txi_for(MIDI_CH);
     rza1::uart::init_dma_rx(MIDI_CH, 13, 0x62);
 }
@@ -76,7 +76,7 @@ pub unsafe fn init_pic(baud_rate: u32) {
     rza1::uart::init(PIC_CH, baud_rate);
     rza1::gpio::set_pin_mux(3, 15, 5); // TxD1
     rza1::gpio::set_pin_mux(1, 9, 3); // RxD1
-                                      // RX via DMAC channel 12; TX via DMAC channel 10.
+    // RX via DMAC channel 12; TX via DMAC channel 10.
     rza1::uart::register_txi_for(PIC_CH);
     rza1::uart::init_dma_rx(PIC_CH, 12, 0x66);
     rza1::uart::init_dma_tx(PIC_CH, 10, 0x65);

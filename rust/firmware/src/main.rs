@@ -45,7 +45,7 @@ use embassy_executor::{Executor, Spawner};
 
 use deluge_bsp::cv_gate;
 use deluge_bsp::uart as bsp_uart;
-use deluge_bsp::usb::{dcd_int_handler, Rusb1Driver};
+use deluge_bsp::usb::{Rusb1Driver, dcd_int_handler};
 use rza1::{allocator, cache, gic, mmu, ostm, sdram, stb};
 
 unsafe extern "C" {
@@ -107,8 +107,7 @@ pub extern "C" fn main() -> ! {
     // Initialise the SRAM heap before any allocation from internal RAM.
     unsafe {
         let start = core::ptr::addr_of!(__sram_heap_start) as *mut u8;
-        let size = core::ptr::addr_of!(__sram_heap_end) as usize
-            - start as usize;
+        let size = core::ptr::addr_of!(__sram_heap_end) as usize - start as usize;
         allocator::SRAM.init(start, size);
     }
     info!("SRAM heap: initialised ({} KB)", {
@@ -225,7 +224,14 @@ pub extern "C" fn main() -> ! {
         let midi = embassy_usb::class::midi::MidiClass::new(&mut builder, 1, 1, 64);
         let (midi_sender, midi_receiver) = midi.split();
 
-        (builder.build(), ep_out, ep_in, cdc, midi_sender, midi_receiver)
+        (
+            builder.build(),
+            ep_out,
+            ep_in,
+            cdc,
+            midi_sender,
+            midi_receiver,
+        )
     };
     info!("USB: UsbDevice built");
 

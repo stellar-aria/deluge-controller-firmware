@@ -21,8 +21,8 @@
 //! the returned word instead of narrowing.
 
 use super::regs::{
-    rd, wr, wr32, Rusb1Regs, FIFOCTR_BCLR, FIFOCTR_BVAL, FIFOCTR_DTLN_MASK, FIFOCTR_FRDY,
-    FIFOSEL_CURPIPE_MASK, FIFOSEL_MBW_MASK, FIFOSEL_MBW_SHIFT, MBW_16, MBW_8,
+    FIFOCTR_BCLR, FIFOCTR_BVAL, FIFOCTR_DTLN_MASK, FIFOCTR_FRDY, FIFOSEL_CURPIPE_MASK,
+    FIFOSEL_MBW_MASK, FIFOSEL_MBW_SHIFT, MBW_8, MBW_16, Rusb1Regs, rd, wr, wr32,
 };
 
 /// Hardware FIFO port: data register + SEL register + CTR register.

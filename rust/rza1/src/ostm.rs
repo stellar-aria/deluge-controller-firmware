@@ -86,11 +86,7 @@ pub unsafe fn enable_clock() {
 
 #[inline(always)]
 fn base(n: u8) -> usize {
-    if n == 0 {
-        OSTM0_BASE
-    } else {
-        OSTM1_BASE
-    }
+    if n == 0 { OSTM0_BASE } else { OSTM1_BASE }
 }
 
 /// Configure OSTM channel `n` (0 or 1) for free-running mode and start it.
@@ -314,7 +310,7 @@ impl<const N: u8> Ostm<N> {
 
 #[cfg(all(test, not(target_os = "none")))]
 mod tests {
-    use super::{base, OSTM0_BASE, OSTM1_BASE, OSTM_HZ};
+    use super::{OSTM_HZ, OSTM0_BASE, OSTM1_BASE, base};
 
     #[test]
     fn ostm_hz_is_p0_frequency() {

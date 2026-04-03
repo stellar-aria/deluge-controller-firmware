@@ -36,8 +36,8 @@ pub use fft::Fft;
 pub use radix4::{process_r4_simd, process_r4_simd_soa};
 pub use real_fft::RealFft;
 pub use spectrum::{
-    apply_hann_window, apply_hann_window_real, apply_hann_window_soa,
-    magnitude_spectrum, magnitude_spectrum_soa,
+    apply_hann_window, apply_hann_window_real, apply_hann_window_soa, magnitude_spectrum,
+    magnitude_spectrum_soa,
 };
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -45,4 +45,3 @@ pub mod test_utils;
 
 #[cfg(test)]
 mod tests;
-

@@ -1,11 +1,11 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use log::info;
 
-use deluge_bsp::oled;
-use deluge_bsp::pic;
 use crate::pads::pad_get;
 use crate::pads::pad_id_from_xy;
 use crate::tasks::analysis::{AUDIO_STREAMING, WAVEFORM};
+use deluge_bsp::oled;
+use deluge_bsp::pic;
 
 // ---------------------------------------------------------------------------
 // OLED layout constants
@@ -42,7 +42,9 @@ static CDC_FRAME_VALID: AtomicBool = AtomicBool::new(false);
 pub(crate) fn set_cdc_display(data: &[u8]) {
     let n = data.len().min(oled::FRAME_BYTES);
     // Safety: single-threaded cooperative executor; no concurrent writer.
-    unsafe { CDC_FRAME[..n].copy_from_slice(&data[..n]); }
+    unsafe {
+        CDC_FRAME[..n].copy_from_slice(&data[..n]);
+    }
     CDC_FRAME_VALID.store(true, Ordering::Release);
     oled::notify_redraw();
 }
@@ -137,7 +139,11 @@ pub(crate) async fn oled_task() {
             // Safety: CDC_FRAME is only mutated by set_cdc_display() which
             // runs from the CDC task; since the executor is single-threaded,
             // there is no concurrent access here.
-            unsafe { fb.pages.as_flattened_mut().copy_from_slice(&*core::ptr::addr_of!(CDC_FRAME)); }
+            unsafe {
+                fb.pages
+                    .as_flattened_mut()
+                    .copy_from_slice(&*core::ptr::addr_of!(CDC_FRAME));
+            }
         } else if AUDIO_STREAMING.load(Ordering::Acquire) {
             render_waveform(&mut fb);
         } else {

@@ -2,14 +2,18 @@ use core::sync::atomic::{AtomicI8, Ordering};
 use embassy_sync::waitqueue::AtomicWaker;
 use log::info;
 
-use deluge_bsp::pic;
 use crate::events::{EVENT_CHANNEL, HardwareEvent};
+use deluge_bsp::pic;
 
 /// Per-encoder signed delta accumulators, written by IRQ/TINT ISRs.
 #[allow(clippy::declare_interior_mutable_const)]
 pub(crate) static ENCODER_DELTAS: [AtomicI8; 6] = [
-    AtomicI8::new(0), AtomicI8::new(0), AtomicI8::new(0),
-    AtomicI8::new(0), AtomicI8::new(0), AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
+    AtomicI8::new(0),
 ];
 
 /// Wakes `encoder_task` whenever any encoder delta becomes non-zero.
@@ -50,7 +54,11 @@ fn enc_irq_handler(enc_idx: usize, irq_pin: u8, companion: u8, irq_num: u8, inve
     let comp = unsafe { rza1::gpio::read_pin(1, companion) };
     // A-first (IRQ on A): CW when irq_new == comp  → matches old code's A-branch formula.
     // B-first (IRQ on B, invert=true): CW when irq_new != comp.
-    let cw = if invert { irq_new != comp } else { irq_new == comp };
+    let cw = if invert {
+        irq_new != comp
+    } else {
+        irq_new == comp
+    };
     ENCODER_DELTAS[enc_idx].fetch_add(if cw { 1 } else { -1 }, Ordering::Relaxed);
     unsafe { rza1::gic::clear_irq_pending(irq_num) };
     ENCODER_WAKER.wake();
@@ -78,11 +86,11 @@ pub(crate) unsafe fn encoder_irq_init() {
     // (irq_pin, companion_pin, gic_id, irq_num, invert)
     const SETUP: [(u8, u8, u16, u8, bool); 6] = [
         (11, 12, 35, 3, false), // 0 SCROLL_X
-        ( 6,  7, 34, 2, true),  // 1 TEMPO  (IRQ on electrical B / pin_b)
-        ( 0, 15, 36, 4, false), // 2 MOD_0
-        ( 5,  4, 33, 1, false), // 3 MOD_1
-        ( 8, 10, 32, 0, false), // 4 SCROLL_Y
-        ( 2,  3, 38, 6, false), // 5 SELECT
+        (6, 7, 34, 2, true),    // 1 TEMPO  (IRQ on electrical B / pin_b)
+        (0, 15, 36, 4, false),  // 2 MOD_0
+        (5, 4, 33, 1, false),   // 3 MOD_1
+        (8, 10, 32, 0, false),  // 4 SCROLL_Y
+        (2, 3, 38, 6, false),   // 5 SELECT
     ];
 
     for &(irq_pin, comp_pin, _, _, _) in &SETUP {
@@ -104,12 +112,12 @@ pub(crate) unsafe fn encoder_irq_init() {
     rza1::gic::set_irq_both_edges(7);
 
     rza1::gic::register(35, || enc_irq_handler(0, 11, 12, 3, false));
-    rza1::gic::register(34, || enc_irq_handler(1,  6,  7, 2, true));
-    rza1::gic::register(36, || enc_irq_handler(2,  0, 15, 4, false));
-    rza1::gic::register(39, || enc_irq_handler(2, 15,  0, 7, false)); // MOD_0 B
-    rza1::gic::register(33, || enc_irq_handler(3,  5,  4, 1, false));
-    rza1::gic::register(32, || enc_irq_handler(4,  8, 10, 0, false));
-    rza1::gic::register(38, || enc_irq_handler(5,  2,  3, 6, false));
+    rza1::gic::register(34, || enc_irq_handler(1, 6, 7, 2, true));
+    rza1::gic::register(36, || enc_irq_handler(2, 0, 15, 4, false));
+    rza1::gic::register(39, || enc_irq_handler(2, 15, 0, 7, false)); // MOD_0 B
+    rza1::gic::register(33, || enc_irq_handler(3, 5, 4, 1, false));
+    rza1::gic::register(32, || enc_irq_handler(4, 8, 10, 0, false));
+    rza1::gic::register(38, || enc_irq_handler(5, 2, 3, 6, false));
     for &(_, _, gic_id, _, _) in &SETUP {
         // Priority must be < 31; GICC_PMR is set to 31 so priority=31 is blocked.
         rza1::gic::set_priority(gic_id, 14);
@@ -144,7 +152,10 @@ pub(crate) async fn encoder_task() {
         core::future::poll_fn(|cx| {
             ENCODER_WAKER.register(cx.waker());
             // Check AFTER registering to guarantee no lost wakeup.
-            if ENCODER_DELTAS.iter().any(|d| d.load(Ordering::Relaxed) != 0) {
+            if ENCODER_DELTAS
+                .iter()
+                .any(|d| d.load(Ordering::Relaxed) != 0)
+            {
                 core::task::Poll::Ready(())
             } else {
                 core::task::Poll::Pending

@@ -36,7 +36,7 @@
 //! This driver enables them inside `Rusb1Bus::enable()` which is called after
 //! `Driver::start()` once embassy-usb has confirmed VBUS.
 
-use core::sync::atomic::{AtomicU16, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
 use core::task::Poll;
 
 use embassy_sync::waitqueue::AtomicWaker;
@@ -47,24 +47,23 @@ use embassy_usb_driver::{
 };
 
 use super::fifo::{
-    fifo_bclr, fifo_bval, fifo_dtln, fifo_is_ready, fifo_select_pipe, hw_to_sw_fifo,
-    sw_to_hw_fifo, FifoPort,
+    FifoPort, fifo_bclr, fifo_bval, fifo_dtln, fifo_is_ready, fifo_select_pipe, hw_to_sw_fifo,
+    sw_to_hw_fifo,
 };
 use super::pipe::{
+    BufAllocator, PIPE_COUNT, PIPE_DONE, PIPE_NRDY, PIPE_WAKERS, PIPE_XFER, PipeConfig, XferType,
     pipe_bemp_disable, pipe_bemp_enable, pipe_brdy_disable, pipe_brdy_enable, pipe_configure,
     pipe_disable, pipe_enable, pipe_reset, pipe_stall, pipe_xfer_in_bemp, pipe_xfer_in_start,
-    pipe_xfer_out_brdy, BufAllocator, PipeConfig, XferType, PIPE_COUNT, PIPE_DONE,
-    PIPE_NRDY, PIPE_WAKERS, PIPE_XFER,
+    pipe_xfer_out_brdy,
 };
 use super::regs::{
-    pipectr_ptr, rd, rmw, wr, Rusb1Regs, BUSWAIT_VALUE, DCPMAXP_MXPS_MASK, DVSQ_DEFAULT,
-    DVSQ_SUSP0, DVSTCTR0_RHST, DVSTCTR0_RHST_FS, DVSTCTR0_RHST_HS, FIFOCTR_BCLR, INTENB0_BEMPE,
-    INTENB0_BRDYE, INTENB0_CTRE, INTENB0_DVSE,
+    BUSWAIT_VALUE, DCPMAXP_MXPS_MASK, DVSQ_DEFAULT, DVSQ_SUSP0, DVSTCTR0_RHST, DVSTCTR0_RHST_FS,
+    DVSTCTR0_RHST_HS, FIFOCTR_BCLR, INTENB0_BEMPE, INTENB0_BRDYE, INTENB0_CTRE, INTENB0_DVSE,
     INTENB0_VBSE, INTSTS0_BEMP, INTSTS0_BRDY, INTSTS0_CTRT, INTSTS0_CTSQ_MASK, INTSTS0_DVSQ_MASK,
     INTSTS0_DVSQ_SHIFT, INTSTS0_DVST, INTSTS0_VALID, INTSTS0_VBINT, INTSTS0_VBSTS, PIPECTR_ACLRM,
-    PIPECTR_CCPL, PIPECTR_PID_BUF, PIPECTR_PID_MASK, PIPECTR_PID_STALL,
-    PIPECTR_SQCLR, PKT_BUF_BLOCK_SIZE, SUSPMODE_SUSPM, SYSCFG_DCFM, SYSCFG_DPRPU,
-    SYSCFG_DRPD, SYSCFG_HSE, SYSCFG_UPLLE, SYSCFG_USBE,
+    PIPECTR_CCPL, PIPECTR_PID_BUF, PIPECTR_PID_MASK, PIPECTR_PID_STALL, PIPECTR_SQCLR,
+    PKT_BUF_BLOCK_SIZE, Rusb1Regs, SUSPMODE_SUSPM, SYSCFG_DCFM, SYSCFG_DPRPU, SYSCFG_DRPD,
+    SYSCFG_HSE, SYSCFG_UPLLE, SYSCFG_USBE, pipectr_ptr, rd, rmw, wr,
 };
 
 // ---------------------------------------------------------------------------
@@ -354,7 +353,11 @@ impl<'d> Driver<'d> for Rusb1Driver {
     }
 
     fn start(self, control_max_packet_size: u16) -> (Self::Bus, Self::ControlPipe) {
-        log::debug!("usb{}: start (ctrl mps={})", self.port, control_max_packet_size);
+        log::debug!(
+            "usb{}: start (ctrl mps={})",
+            self.port,
+            control_max_packet_size
+        );
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
 
@@ -414,8 +417,11 @@ impl<'d> Driver<'d> for Rusb1Driver {
                 SYSCFG_DPRPU,
                 SYSCFG_DPRPU,
             );
-            log::debug!("usb{}: SYSCFG0={:#06x} (DPRPU set, D+ pull-up active)", self.port,
-                rd(core::ptr::addr_of!((*regs).syscfg0)));
+            log::debug!(
+                "usb{}: SYSCFG0={:#06x} (DPRPU set, D+ pull-up active)",
+                self.port,
+                rd(core::ptr::addr_of!((*regs).syscfg0))
+            );
 
             // DCPMAXP (control endpoint max packet size).
             wr(
@@ -433,10 +439,17 @@ impl<'d> Driver<'d> for Rusb1Driver {
             // the rising-edge VBINT will never fire.  Synthesise the event now
             // so that Bus::poll() doesn't wait forever.
             let intsts = rd(core::ptr::addr_of!((*regs).intsts0));
-            log::debug!("usb{}: post-init INTSTS0={:#06x} VBSTS={}", self.port, intsts,
-                intsts & INTSTS0_VBSTS != 0);
+            log::debug!(
+                "usb{}: post-init INTSTS0={:#06x} VBSTS={}",
+                self.port,
+                intsts,
+                intsts & INTSTS0_VBSTS != 0
+            );
             if intsts & INTSTS0_VBSTS != 0 {
-                log::debug!("usb{}: VBUS already present — synthesising PowerDetected", self.port);
+                log::debug!(
+                    "usb{}: VBUS already present — synthesising PowerDetected",
+                    self.port
+                );
                 BUS_EVENTS[self.port as usize].fetch_or(BUS_EVT_VBUS_ON, Ordering::Release);
                 BUS_WAKERS[self.port as usize].wake();
             }
@@ -497,7 +510,10 @@ impl Bus for Rusb1Bus {
     }
 
     async fn enable(&mut self) {
-        log::debug!("usb{}: Bus::enable — waiting 30 ms for module settle", self.port);
+        log::debug!(
+            "usb{}: Bus::enable — waiting 30 ms for module settle",
+            self.port
+        );
         // RZA1L hardware quirk (confirmed in C firmware): INTENB0, BEMPENB, and
         // BRDYENB are NOT writable immediately after USBE=1 — the write is
         // silently dropped.  Wait for the module to settle before arming IRQs.
@@ -519,12 +535,20 @@ impl Bus for Rusb1Bus {
 
                 let rb = rd(core::ptr::addr_of!((*regs).intenb0));
                 if rb == intenb {
-                    log::debug!("usb{}: INTENB0={:#06x} verified (attempt {})", self.port, rb, attempt);
+                    log::debug!(
+                        "usb{}: INTENB0={:#06x} verified (attempt {})",
+                        self.port,
+                        rb,
+                        attempt
+                    );
                     break;
                 }
                 log::warn!(
                     "usb{}: INTENB0 write failed attempt {} (wrote {:#06x}, read {:#06x}), retrying…",
-                    self.port, attempt + 1, intenb, rb
+                    self.port,
+                    attempt + 1,
+                    intenb,
+                    rb
                 );
                 embassy_time::Timer::after_millis(10).await;
             }
@@ -730,7 +754,12 @@ impl ControlPipe for Rusb1ControlPipe {
                 hw_to_sw_fifo(&fifo, buf.as_mut_ptr(), len);
             }
             fifo_bclr(&fifo);
-            log::trace!("usb{}: data_out read {} bytes (fifo had {})", self.port, len, vld);
+            log::trace!(
+                "usb{}: data_out read {} bytes (fifo had {})",
+                self.port,
+                len,
+                vld
+            );
             Ok(len)
         }
     }
@@ -768,10 +797,17 @@ impl ControlPipe for Rusb1ControlPipe {
                     break;
                 }
             }
-            log::trace!("usb{}: CFIFO ISEL ready={} frdy={}", self.port, ready,
-                fifo_is_ready(&fifo, 0));
+            log::trace!(
+                "usb{}: CFIFO ISEL ready={} frdy={}",
+                self.port,
+                ready,
+                fifo_is_ready(&fifo, 0)
+            );
             if !ready || !fifo_is_ready(&fifo, 0) {
-                log::warn!("usb{}: data_in CFIFO not ready — returning Disabled", self.port);
+                log::warn!(
+                    "usb{}: data_in CFIFO not ready — returning Disabled",
+                    self.port
+                );
                 return Err(EndpointError::Disabled);
             }
 
@@ -1286,11 +1322,7 @@ fn ep_addr_to_pipe(port: u8, ep_addr: EndpointAddress) -> Option<usize> {
     critical_section::with(|cs| {
         let alloc = unsafe { &*PORT_ALLOC[port as usize].borrow(cs).get() };
         let p = alloc.ep_to_pipe[dir_idx][ep_num] as usize;
-        if p == 0 && ep_num != 0 {
-            None
-        } else {
-            Some(p)
-        }
+        if p == 0 && ep_num != 0 { None } else { Some(p) }
     })
 }
 
@@ -1313,7 +1345,12 @@ unsafe fn process_bus_reset(port: u8) {
         r if r == DVSTCTR0_RHST_FS => "FS (12 Mbps)",
         _ => "LS / unknown",
     };
-    log::info!("usb{}: bus reset — negotiated speed: {} (RHST={:#03x})", port, speed_str, rhst);
+    log::info!(
+        "usb{}: bus reset — negotiated speed: {} (RHST={:#03x})",
+        port,
+        speed_str,
+        rhst
+    );
 
     // Only keep pipe 0 BRDY/BEMP enabled — pipes 1-15 will be re-enabled when
     // dcd_edpt_open / iso_activate are called by the host stack.

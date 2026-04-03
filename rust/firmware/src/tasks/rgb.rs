@@ -1,9 +1,9 @@
 use embassy_time::Timer;
 use log::info;
 
-use deluge_bsp::pic;
 use crate::pads::{pad_get, pad_id_from_xy};
 use crate::tasks::analysis::{AUDIO_STREAMING, SPECTRUM};
+use deluge_bsp::pic;
 
 /// Convert HSV to `[r, g, b]` (all 0–255).
 ///

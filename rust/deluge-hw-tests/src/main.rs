@@ -35,7 +35,7 @@ static SGI0_FIRED: AtomicBool = AtomicBool::new(false);
 mod tests {
     use core::sync::atomic::Ordering;
     use deluge_bsp::{pic, sd, uart};
-    use embassy_time::{with_timeout, Duration, Instant, Timer};
+    use embassy_time::{Duration, Instant, Timer, with_timeout};
     use rza1::{cache, gic, gpio, mmu, mtu2, ostm, sdram, ssi, stb, time_driver};
 
     // ── Init (runs once before any test) ────────────────────────────────────

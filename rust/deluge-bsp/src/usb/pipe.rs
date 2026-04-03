@@ -21,11 +21,10 @@ use super::fifo::{
     sw_to_hw_fifo,
 };
 use super::regs::{
-    pipectr_ptr, rd, wr, Rusb1Regs,
     PIPEBUF_BUFSIZE_SHIFT, PIPECFG_DBLB, PIPECFG_DIR, PIPECFG_EPNUM_MASK, PIPECFG_SHTNAK,
     PIPECFG_TYPE_BULK, PIPECFG_TYPE_INTR, PIPECFG_TYPE_ISO, PIPECTR_ACLRM, PIPECTR_PID_BUF,
     PIPECTR_PID_NAK, PIPECTR_PID_STALL, PIPECTR_SQCLR, PIPEMAXP_MXPS_MASK, PIPEPERI_IFIS,
-    PKT_BUF_BLOCKS,
+    PKT_BUF_BLOCKS, Rusb1Regs, pipectr_ptr, rd, wr,
 };
 
 // ---------------------------------------------------------------------------

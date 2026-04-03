@@ -1,5 +1,5 @@
-use log::{error, info};
 use deluge_bsp::sd;
+use log::{error, info};
 
 /// SD card probe task.
 ///

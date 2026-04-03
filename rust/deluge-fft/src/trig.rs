@@ -8,11 +8,7 @@ pub(crate) const TWO_PI: f64 = 2.0 * core::f64::consts::PI;
 #[inline]
 const fn sin_kernel(x: f64) -> f64 {
     let x2 = x * x;
-    x * (1.0
-        - x2 / 6.0
-        + x2 * x2 / 120.0
-        - x2 * x2 * x2 / 5040.0
-        + x2 * x2 * x2 * x2 / 362880.0
+    x * (1.0 - x2 / 6.0 + x2 * x2 / 120.0 - x2 * x2 * x2 / 5040.0 + x2 * x2 * x2 * x2 / 362880.0
         - x2 * x2 * x2 * x2 * x2 / 39916800.0
         + x2 * x2 * x2 * x2 * x2 * x2 / 6227020800.0)
 }

@@ -30,9 +30,9 @@
 use core::future::poll_fn;
 use core::task::Poll;
 
-use embassy_sync::waitqueue::AtomicWaker;
-use embassy_sync::mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::mutex::Mutex;
+use embassy_sync::waitqueue::AtomicWaker;
 
 use crate::gic;
 
@@ -326,7 +326,7 @@ pub unsafe fn set_baud(ch: usize, baud_rate: u32) {
     wr16(b + SCFSR, scfsr & 0xFF6E); // clear ER/BRK/DR/RDF
     let sclsr = rr16(b + SCLSR);
     wr16(b + SCLSR, sclsr & !1u16); // clear ORER
-                                    // Re-enable: DMA-RX channels need TIE|RIE set as DMA triggers; others just TE|RE.
+    // Re-enable: DMA-RX channels need TIE|RIE set as DMA triggers; others just TE|RE.
     let scscr = if DMA_RX_ACTIVE[ch] {
         TIE | RIE | RE | TE
     } else {
@@ -665,7 +665,12 @@ async fn read_byte_dma(ch: usize) -> u8 {
         let scscr = unsafe { rr16(b + SCSCR) };
         log::info!(
             "uart: ch{} dma_rx first call: dma_ch={} crda={:#010x} read_ptr={:#010x} buf_base={:#010x} SCSCR={:#06x}",
-            ch, dma_ch, crda, read_ptr, buf_base, scscr
+            ch,
+            dma_ch,
+            crda,
+            read_ptr,
+            buf_base,
+            scscr
         );
     }
     let mut spin: u32 = 0;
@@ -867,7 +872,7 @@ impl<const CH: usize> embedded_io_async::Write for ScifUart<CH> {
 
 #[cfg(all(test, not(target_os = "none")))]
 mod tests {
-    use super::{base, scbrr, NUM_CHANNELS, P_CLK, RXI_BASE, TXI_BASE};
+    use super::{NUM_CHANNELS, P_CLK, RXI_BASE, TXI_BASE, base, scbrr};
 
     // SCIF0 base = 0xE800_7000, stride 0x800 per channel.
     #[test]

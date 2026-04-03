@@ -1,12 +1,12 @@
-pub(crate) mod blink;
 pub(crate) mod analysis;
 pub(crate) mod audio;
-pub(crate) mod usb;
+pub(crate) mod blink;
+pub(crate) mod cdc;
 pub(crate) mod encoder;
 pub(crate) mod jack_detect;
-pub(crate) mod rgb;
+pub(crate) mod midi;
 pub(crate) mod oled;
 pub(crate) mod pic;
+pub(crate) mod rgb;
 pub(crate) mod sd;
-pub(crate) mod cdc;
-pub(crate) mod midi;
+pub(crate) mod usb;

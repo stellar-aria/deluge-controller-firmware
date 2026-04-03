@@ -118,11 +118,18 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
 
                 // Packet size diagnostics — log once per ~8000 packets (≈1 s).
                 if bytes_read > 0 {
-                    if bytes_read < diag_min { diag_min = bytes_read; }
-                    if bytes_read > diag_max { diag_max = bytes_read; }
+                    if bytes_read < diag_min {
+                        diag_min = bytes_read;
+                    }
+                    if bytes_read > diag_max {
+                        diag_max = bytes_read;
+                    }
                     diag_count += 1;
                     if diag_count >= 8_000 {
-                        info!("uac2_task: pkt size min={} max={} (last 8k pkts)", diag_min, diag_max);
+                        info!(
+                            "uac2_task: pkt size min={} max={} (last 8k pkts)",
+                            diag_min, diag_max
+                        );
                         diag_count = 0;
                         diag_min = 288;
                         diag_max = 0;
@@ -152,13 +159,17 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
                     info!("uac2_task: streaming started");
                 }
 
-        // ── Underrun guard ──────────────────────────────────────────────────
+                // ── Underrun guard ──────────────────────────────────────────────────
                 // If the DMA has caught up to the write pointer, re-anchor.
                 {
                     let wr_off = unsafe { write_ptr.offset_from(buf_start) } as usize;
                     let ahead = (wr_off + buf_len - dma_off) % buf_len;
                     if ahead < WRITE_AHEAD / 2 {
-                        info!("uac2_task: underrun (ahead={} < {}), re-anchoring", ahead, WRITE_AHEAD / 2);
+                        info!(
+                            "uac2_task: underrun (ahead={} < {}), re-anchoring",
+                            ahead,
+                            WRITE_AHEAD / 2
+                        );
                         let mut off = (dma_off + WRITE_AHEAD) % buf_len;
                         off &= !1;
                         write_ptr = unsafe { buf_start.add(off) };
@@ -226,9 +237,7 @@ pub(crate) async fn uac2_mic_task(mut ep_in: deluge_bsp::usb::Rusb1EndpointIn) {
         // OUT, eliminating the systematic rate mismatch that caused underruns.
         let bytes_per_sample = (USB_CAPTURE_BITS_PER_SAMPLE.load(Ordering::Relaxed) / 8) as usize;
         let max_frames = pkt.len() / (2 * bytes_per_sample);
-        let rx_hw_off = unsafe {
-            (ssi::rx_current_ptr().offset_from(rx_start) as usize) % rx_len
-        };
+        let rx_hw_off = unsafe { (ssi::rx_current_ptr().offset_from(rx_start) as usize) % rx_len };
         let read_off = unsafe { read_ptr.offset_from(rx_start) as usize };
         let captured_mono = (rx_hw_off + rx_len - read_off) % rx_len;
         // Integer divide by 2 for stereo frames; capped so we never exceed the
@@ -246,13 +255,13 @@ pub(crate) async fn uac2_mic_task(mut ep_in: deluge_bsp::usb::Rusb1EndpointIn) {
             let off = i * bytes_per_sample;
             if bytes_per_sample == 3 {
                 let val = (sample >> 8) as u32;
-                pkt[off]     = (val & 0xFF) as u8;
+                pkt[off] = (val & 0xFF) as u8;
                 pkt[off + 1] = ((val >> 8) & 0xFF) as u8;
                 pkt[off + 2] = ((val >> 16) & 0xFF) as u8;
             } else {
                 // 16-bit: keep the top 16 bits of the MSB-aligned sample
                 let val = (sample >> 16) as u16;
-                pkt[off]     = (val & 0xFF) as u8;
+                pkt[off] = (val & 0xFF) as u8;
                 pkt[off + 1] = ((val >> 8) & 0xFF) as u8;
             }
             unsafe {

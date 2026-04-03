@@ -158,7 +158,7 @@ unsafe fn rd8(addr: usize) -> u8 {
 #[cfg(all(test, not(target_os = "none")))]
 mod tests {
     use super::{
-        STBCR10, STBCR11, STBCR12, STBCR2, STBCR3, STBCR4, STBCR5, STBCR6, STBCR7, STBCR8, STBCR9,
+        STBCR2, STBCR3, STBCR4, STBCR5, STBCR6, STBCR7, STBCR8, STBCR9, STBCR10, STBCR11, STBCR12,
     };
 
     /// Verify every STBCRn address against the RZ/A1L HW Manual §10 table.

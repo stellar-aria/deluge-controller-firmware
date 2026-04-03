@@ -64,10 +64,15 @@ where
     ///
     /// `out` must have length ≥ `N/2 + 1`.
     pub fn process(input: &[f32; N], out: &mut [crate::complex::Complex; { N / 2 + 1 }]) {
-        assert!(N >= 8 && N.is_power_of_two(), "RealFft N must be a power of two >= 8");
+        assert!(
+            N >= 8 && N.is_power_of_two(),
+            "RealFft N must be a power of two >= 8"
+        );
 
         // Half-size = N/2.
-        const fn half<const N: usize>() -> usize { N / 2 }
+        const fn half<const N: usize>() -> usize {
+            N / 2
+        }
         let hn = half::<N>();
 
         // 1. Pack real samples into a half-size SoA buffer.
@@ -87,8 +92,14 @@ where
         // X[N/2]  = Z[0].re - Z[0].im
         let z0r = zbuf.re[0];
         let z0i = zbuf.im[0];
-        out[0]  = crate::complex::Complex { re: z0r + z0i, im: 0.0 };
-        out[hn] = crate::complex::Complex { re: z0r - z0i, im: 0.0 };
+        out[0] = crate::complex::Complex {
+            re: z0r + z0i,
+            im: 0.0,
+        };
+        out[hn] = crate::complex::Complex {
+            re: z0r - z0i,
+            im: 0.0,
+        };
 
         // 4. General bins k = 1 .. N/2-1.
         //    The twiddle table TwiddleTableSoa::<N> holds W_N^k.
@@ -131,7 +142,10 @@ where
             let td_r = wr * di + wi * dr;
             let td_i = wi * di - wr * dr;
 
-            out[k]  = crate::complex::Complex { re: ar + td_r, im: ai + td_i };
+            out[k] = crate::complex::Complex {
+                re: ar + td_r,
+                im: ai + td_i,
+            };
             // X[N-k] = conj(X[k]), but since we only output 0..N/2+1 that's
             // the same as X[N/2-(k-(N/2))] = conj(X[k]); we don't store it.
         }

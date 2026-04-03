@@ -1,9 +1,9 @@
 use log::{debug, info};
 
+use crate::events::{EVENT_CHANNEL, HardwareEvent};
+use crate::pads::{pad_invert_all, pad_set_all, pad_toggle};
 use deluge_bsp::oled;
 use deluge_bsp::pic;
-use crate::events::{EVENT_CHANNEL, HardwareEvent};
-use crate::pads::{pad_toggle, pad_set_all, pad_invert_all};
 
 /// PIC32 event dispatcher — input handling and LED feedback.
 ///

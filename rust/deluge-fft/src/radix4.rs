@@ -150,8 +150,14 @@ where
             let v = buf[k + j + half_m];
             let tr = wr * v.re - wi * v.im;
             let ti = wr * v.im + wi * v.re;
-            buf[k + j] = Complex { re: u.re + tr, im: u.im + ti };
-            buf[k + j + half_m] = Complex { re: u.re - tr, im: u.im - ti };
+            buf[k + j] = Complex {
+                re: u.re + tr,
+                im: u.im + ti,
+            };
+            buf[k + j + half_m] = Complex {
+                re: u.re - tr,
+                im: u.im - ti,
+            };
         }
         k += half_m * 2;
     }
@@ -210,9 +216,9 @@ where
         + Copy,
 {
     // SoA table offsets.
-    let tw2_off = qm - 1;      // W_{2qm}^j: stage A (half_m = qm)
-    let tw1_off = 2 * qm - 1;  // W_{4qm}^j: stage B (half_m = 2qm)
-    let m4 = 4 * qm;           // group span
+    let tw2_off = qm - 1; // W_{2qm}^j: stage A (half_m = qm)
+    let tw1_off = 2 * qm - 1; // W_{4qm}^j: stage B (half_m = 2qm)
+    let m4 = 4 * qm; // group span
 
     let mut k = 0usize;
     while k < N {
@@ -228,25 +234,37 @@ where
 
             // Load x0..x3 (AoS: extract re/im from interleaved Complex).
             let (x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i) = {
-                let mut x0r = [0f32; LANES]; let mut x0i = [0f32; LANES];
-                let mut x1r = [0f32; LANES]; let mut x1i = [0f32; LANES];
-                let mut x2r = [0f32; LANES]; let mut x2i = [0f32; LANES];
-                let mut x3r = [0f32; LANES]; let mut x3i = [0f32; LANES];
+                let mut x0r = [0f32; LANES];
+                let mut x0i = [0f32; LANES];
+                let mut x1r = [0f32; LANES];
+                let mut x1i = [0f32; LANES];
+                let mut x2r = [0f32; LANES];
+                let mut x2i = [0f32; LANES];
+                let mut x3r = [0f32; LANES];
+                let mut x3i = [0f32; LANES];
                 for l in 0..LANES {
                     let c0 = buf[k + j + l];
                     let c1 = buf[k + j + l + qm];
                     let c2 = buf[k + j + l + 2 * qm];
                     let c3 = buf[k + j + l + 3 * qm];
-                    x0r[l] = c0.re; x0i[l] = c0.im;
-                    x1r[l] = c1.re; x1i[l] = c1.im;
-                    x2r[l] = c2.re; x2i[l] = c2.im;
-                    x3r[l] = c3.re; x3i[l] = c3.im;
+                    x0r[l] = c0.re;
+                    x0i[l] = c0.im;
+                    x1r[l] = c1.re;
+                    x1i[l] = c1.im;
+                    x2r[l] = c2.re;
+                    x2i[l] = c2.im;
+                    x3r[l] = c3.re;
+                    x3i[l] = c3.im;
                 }
                 (
-                    Simd::from_array(x0r), Simd::from_array(x0i),
-                    Simd::from_array(x1r), Simd::from_array(x1i),
-                    Simd::from_array(x2r), Simd::from_array(x2i),
-                    Simd::from_array(x3r), Simd::from_array(x3i),
+                    Simd::from_array(x0r),
+                    Simd::from_array(x0i),
+                    Simd::from_array(x1r),
+                    Simd::from_array(x1i),
+                    Simd::from_array(x2r),
+                    Simd::from_array(x2i),
+                    Simd::from_array(x3r),
+                    Simd::from_array(x3i),
                 )
             };
 
@@ -258,10 +276,14 @@ where
             let t3r = w2r * x3r - w2i * x3i;
             let t3i = w2r * x3i + w2i * x3r;
 
-            let ar = x0r + t1r; let ai = x0i + t1i; // a = x0 + w2*x1
-            let br = x0r - t1r; let bi = x0i - t1i; // b = x0 - w2*x1
-            let cr = x2r + t3r; let ci = x2i + t3i; // c = x2 + w2*x3
-            let dr = x2r - t3r; let di = x2i - t3i; // d = x2 - w2*x3
+            let ar = x0r + t1r;
+            let ai = x0i + t1i; // a = x0 + w2*x1
+            let br = x0r - t1r;
+            let bi = x0i - t1i; // b = x0 - w2*x1
+            let cr = x2r + t3r;
+            let ci = x2i + t3i; // c = x2 + w2*x3
+            let dr = x2r - t3r;
+            let di = x2i - t3i; // d = x2 - w2*x3
 
             // Stage B: butterfly across pairs {a,c} and {b,d}.
             // e = w1 * c
@@ -274,16 +296,32 @@ where
             // y0 = a + e, y2 = a - e
             // y1 = b - j*f = (br + fi, bi - fr)   [since -j*(fr,fi) = (fi,-fr)]
             // y3 = b + j*f = (br - fi, bi + fr)
-            let y0r = (ar + er).to_array(); let y0i = (ai + ei).to_array();
-            let y2r = (ar - er).to_array(); let y2i = (ai - ei).to_array();
-            let y1r = (br + fi).to_array(); let y1i = (bi - fr).to_array();
-            let y3r = (br - fi).to_array(); let y3i = (bi + fr).to_array();
+            let y0r = (ar + er).to_array();
+            let y0i = (ai + ei).to_array();
+            let y2r = (ar - er).to_array();
+            let y2i = (ai - ei).to_array();
+            let y1r = (br + fi).to_array();
+            let y1i = (bi - fr).to_array();
+            let y3r = (br - fi).to_array();
+            let y3i = (bi + fr).to_array();
 
             for l in 0..LANES {
-                buf[k + j + l]           = Complex { re: y0r[l], im: y0i[l] };
-                buf[k + j + l + qm]      = Complex { re: y1r[l], im: y1i[l] };
-                buf[k + j + l + 2 * qm] = Complex { re: y2r[l], im: y2i[l] };
-                buf[k + j + l + 3 * qm] = Complex { re: y3r[l], im: y3i[l] };
+                buf[k + j + l] = Complex {
+                    re: y0r[l],
+                    im: y0i[l],
+                };
+                buf[k + j + l + qm] = Complex {
+                    re: y1r[l],
+                    im: y1i[l],
+                };
+                buf[k + j + l + 2 * qm] = Complex {
+                    re: y2r[l],
+                    im: y2i[l],
+                };
+                buf[k + j + l + 3 * qm] = Complex {
+                    re: y3r[l],
+                    im: y3i[l],
+                };
             }
 
             j += LANES;
@@ -306,20 +344,36 @@ where
             let t3r = w2r * x3.re - w2i * x3.im;
             let t3i = w2r * x3.im + w2i * x3.re;
 
-            let ar = x0.re + t1r; let ai = x0.im + t1i;
-            let br = x0.re - t1r; let bi = x0.im - t1i;
-            let cr = x2.re + t3r; let ci = x2.im + t3i;
-            let dr = x2.re - t3r; let di = x2.im - t3i;
+            let ar = x0.re + t1r;
+            let ai = x0.im + t1i;
+            let br = x0.re - t1r;
+            let bi = x0.im - t1i;
+            let cr = x2.re + t3r;
+            let ci = x2.im + t3i;
+            let dr = x2.re - t3r;
+            let di = x2.im - t3i;
 
             let er = w1r * cr - w1i * ci;
             let ei = w1r * ci + w1i * cr;
             let fr = w1r * dr - w1i * di;
             let fi = w1r * di + w1i * dr;
 
-            buf[k + j]           = Complex { re: ar + er, im: ai + ei };
-            buf[k + j + qm]      = Complex { re: br + fi, im: bi - fr };
-            buf[k + j + 2 * qm] = Complex { re: ar - er, im: ai - ei };
-            buf[k + j + 3 * qm] = Complex { re: br - fi, im: bi + fr };
+            buf[k + j] = Complex {
+                re: ar + er,
+                im: ai + ei,
+            };
+            buf[k + j + qm] = Complex {
+                re: br + fi,
+                im: bi - fr,
+            };
+            buf[k + j + 2 * qm] = Complex {
+                re: ar - er,
+                im: ai - ei,
+            };
+            buf[k + j + 3 * qm] = Complex {
+                re: br - fi,
+                im: bi + fr,
+            };
 
             j += 1;
         }
@@ -368,10 +422,14 @@ where
             let t3r = w2r * x3r - w2i * x3i;
             let t3i = w2r * x3i + w2i * x3r;
 
-            let ar = x0r + t1r; let ai = x0i + t1i;
-            let br = x0r - t1r; let bi = x0i - t1i;
-            let cr = x2r + t3r; let ci = x2i + t3i;
-            let dr = x2r - t3r; let di = x2i - t3i;
+            let ar = x0r + t1r;
+            let ai = x0i + t1i;
+            let br = x0r - t1r;
+            let bi = x0i - t1i;
+            let cr = x2r + t3r;
+            let ci = x2i + t3i;
+            let dr = x2r - t3r;
+            let di = x2i - t3i;
 
             let er = w1r * cr - w1i * ci;
             let ei = w1r * ci + w1i * cr;
@@ -398,30 +456,38 @@ where
             let w1r = TwiddleTableSoa::<N>::RE[tw1_off + j];
             let w1i = TwiddleTableSoa::<N>::IM[tw1_off + j];
 
-            let x0r = buf.re[k + j];        let x0i = buf.im[k + j];
-            let x1r = buf.re[k + j + qm];   let x1i = buf.im[k + j + qm];
-            let x2r = buf.re[k + j + 2*qm]; let x2i = buf.im[k + j + 2*qm];
-            let x3r = buf.re[k + j + 3*qm]; let x3i = buf.im[k + j + 3*qm];
+            let x0r = buf.re[k + j];
+            let x0i = buf.im[k + j];
+            let x1r = buf.re[k + j + qm];
+            let x1i = buf.im[k + j + qm];
+            let x2r = buf.re[k + j + 2 * qm];
+            let x2i = buf.im[k + j + 2 * qm];
+            let x3r = buf.re[k + j + 3 * qm];
+            let x3i = buf.im[k + j + 3 * qm];
 
             let t1r = w2r * x1r - w2i * x1i;
             let t1i = w2r * x1i + w2i * x1r;
             let t3r = w2r * x3r - w2i * x3i;
             let t3i = w2r * x3i + w2i * x3r;
 
-            let ar = x0r + t1r; let ai = x0i + t1i;
-            let br = x0r - t1r; let bi = x0i - t1i;
-            let cr = x2r + t3r; let ci = x2i + t3i;
-            let dr = x2r - t3r; let di = x2i - t3i;
+            let ar = x0r + t1r;
+            let ai = x0i + t1i;
+            let br = x0r - t1r;
+            let bi = x0i - t1i;
+            let cr = x2r + t3r;
+            let ci = x2i + t3i;
+            let dr = x2r - t3r;
+            let di = x2i - t3i;
 
             let er = w1r * cr - w1i * ci;
             let ei = w1r * ci + w1i * cr;
             let fr = w1r * dr - w1i * di;
             let fi = w1r * di + w1i * dr;
 
-            buf.re[k + j]           = ar + er;
-            buf.im[k + j]           = ai + ei;
-            buf.re[k + j + qm]      = br + fi;
-            buf.im[k + j + qm]      = bi - fr;
+            buf.re[k + j] = ar + er;
+            buf.im[k + j] = ai + ei;
+            buf.re[k + j + qm] = br + fi;
+            buf.im[k + j + qm] = bi - fr;
             buf.re[k + j + 2 * qm] = ar - er;
             buf.im[k + j + 2 * qm] = ai - ei;
             buf.re[k + j + 3 * qm] = br - fi;
@@ -433,4 +499,3 @@ where
         k += m4;
     }
 }
-

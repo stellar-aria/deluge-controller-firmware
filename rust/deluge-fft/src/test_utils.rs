@@ -13,7 +13,10 @@ pub fn dft<const N: usize>(buf: &[Complex; N]) -> [Complex; N] {
             // Modulo keeps the angle in (-2π, 0], equivalent by periodicity.
             let idx = (k * n) % N;
             let angle = -TWO_PI * idx as f64 / N as f64;
-            let w = Complex { re: cos_f32(angle), im: sin_f32(angle) };
+            let w = Complex {
+                re: cos_f32(angle),
+                im: sin_f32(angle),
+            };
             sum = sum + buf[n] * w;
         }
         out[k] = sum;
@@ -25,6 +28,12 @@ pub fn dft<const N: usize>(buf: &[Complex; N]) -> [Complex; N] {
 pub fn max_error<const N: usize>(a: &[Complex; N], b: &[Complex; N]) -> f32 {
     a.iter()
         .zip(b.iter())
-        .map(|(x, y)| (Complex { re: x.re - y.re, im: x.im - y.im }).abs())
+        .map(|(x, y)| {
+            (Complex {
+                re: x.re - y.re,
+                im: x.im - y.im,
+            })
+            .abs()
+        })
         .fold(0.0f32, f32::max)
 }

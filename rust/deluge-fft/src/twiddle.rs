@@ -11,7 +11,10 @@ const fn make_twiddles_aos<const N: usize>() -> [Complex; N] {
     let mut k = 0usize;
     while k < N {
         let angle = -TWO_PI * k as f64 / N as f64;
-        table[k] = Complex { re: cos_f32(angle), im: sin_f32(angle) };
+        table[k] = Complex {
+            re: cos_f32(angle),
+            im: sin_f32(angle),
+        };
         k += 1;
     }
     table

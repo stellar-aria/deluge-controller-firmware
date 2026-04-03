@@ -10,11 +10,17 @@ use crate::twiddle::TwiddleTableSoa;
 // ---------------------------------------------------------------------------
 
 const fn assert_valid_size<const N: usize>() {
-    assert!(N >= 2 && N.is_power_of_two(), "FFT size N must be a power of two >= 2");
+    assert!(
+        N >= 2 && N.is_power_of_two(),
+        "FFT size N must be a power of two >= 2"
+    );
 }
 
 pub(crate) const fn assert_valid_size_r4<const N: usize>() {
-    assert!(N >= 4 && N.is_power_of_two(), "Radix-4 FFT size N must be a power of two >= 4");
+    assert!(
+        N >= 4 && N.is_power_of_two(),
+        "Radix-4 FFT size N must be a power of two >= 4"
+    );
 }
 
 const fn bit_rev(mut i: usize, mut bits: u32) -> usize {
@@ -106,8 +112,14 @@ where
                     let v = buf[k + j + half_m];
                     let tr = wr * v.re - wi * v.im;
                     let ti = wr * v.im + wi * v.re;
-                    buf[k + j] = Complex { re: u.re + tr, im: u.im + ti };
-                    buf[k + j + half_m] = Complex { re: u.re - tr, im: u.im - ti };
+                    buf[k + j] = Complex {
+                        re: u.re + tr,
+                        im: u.im + ti,
+                    };
+                    buf[k + j + half_m] = Complex {
+                        re: u.re - tr,
+                        im: u.im - ti,
+                    };
                 }
                 k += half_m * 2;
             }
@@ -143,8 +155,14 @@ where
                     let v = buf[k + j + half_m];
                     let tr = wr * v.re - wi * v.im;
                     let ti = wr * v.im + wi * v.re;
-                    buf[k + j] = Complex { re: u.re + tr, im: u.im + ti };
-                    buf[k + j + half_m] = Complex { re: u.re - tr, im: u.im - ti };
+                    buf[k + j] = Complex {
+                        re: u.re + tr,
+                        im: u.im + ti,
+                    };
+                    buf[k + j + half_m] = Complex {
+                        re: u.re - tr,
+                        im: u.im - ti,
+                    };
                 }
                 k += half_m * 2;
             }
@@ -157,12 +175,8 @@ where
 
             while j + LANES <= half_m {
                 // Sequential loads — no stride, no deinterleave needed.
-                let wr = Simd::<f32, LANES>::from_slice(
-                    &TwiddleTableSoa::<N>::RE[tw_off + j..],
-                );
-                let wi = Simd::<f32, LANES>::from_slice(
-                    &TwiddleTableSoa::<N>::IM[tw_off + j..],
-                );
+                let wr = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::RE[tw_off + j..]);
+                let wi = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::IM[tw_off + j..]);
 
                 // AoS buf: extract re/im the old way (elements are interleaved).
                 let mut ur_arr = [0f32; LANES];
@@ -190,8 +204,14 @@ where
                 let obr = (ur - tr).to_array();
                 let obi = (ui - ti).to_array();
                 for l in 0..LANES {
-                    buf[k + j + l] = Complex { re: oar[l], im: oai[l] };
-                    buf[k + j + half_m + l] = Complex { re: obr[l], im: obi[l] };
+                    buf[k + j + l] = Complex {
+                        re: oar[l],
+                        im: oai[l],
+                    };
+                    buf[k + j + half_m + l] = Complex {
+                        re: obr[l],
+                        im: obi[l],
+                    };
                 }
 
                 j += LANES;
@@ -205,8 +225,14 @@ where
                 let v = buf[k + j + half_m];
                 let tr = wr * v.re - wi * v.im;
                 let ti = wr * v.im + wi * v.re;
-                buf[k + j] = Complex { re: u.re + tr, im: u.im + ti };
-                buf[k + j + half_m] = Complex { re: u.re - tr, im: u.im - ti };
+                buf[k + j] = Complex {
+                    re: u.re + tr,
+                    im: u.im + ti,
+                };
+                buf[k + j + half_m] = Complex {
+                    re: u.re - tr,
+                    im: u.im - ti,
+                };
                 j += 1;
             }
 
@@ -293,12 +319,8 @@ where
 
             while j + LANES <= half_m {
                 // All 8 loads are sequential, aligned, contiguous.
-                let wr = Simd::<f32, LANES>::from_slice(
-                    &TwiddleTableSoa::<N>::RE[tw_off + j..],
-                );
-                let wi = Simd::<f32, LANES>::from_slice(
-                    &TwiddleTableSoa::<N>::IM[tw_off + j..],
-                );
+                let wr = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::RE[tw_off + j..]);
+                let wi = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::IM[tw_off + j..]);
                 let ur = Simd::<f32, LANES>::from_slice(&buf.re[k + j..]);
                 let ui = Simd::<f32, LANES>::from_slice(&buf.im[k + j..]);
                 let vr = Simd::<f32, LANES>::from_slice(&buf.re[k + j + half_m..]);

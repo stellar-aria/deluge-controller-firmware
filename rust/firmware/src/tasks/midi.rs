@@ -62,7 +62,7 @@ pub(crate) async fn midi_usb_rx_task(mut receiver: Receiver<'static, Rusb1Driver
                         bsp_uart::write_midi(&pkt[1..1 + count]).await;
                     }
                 }
-                Ok(_) => {} // short/empty packet — ignore
+                Ok(_) => {}      // short/empty packet — ignore
                 Err(_) => break, // endpoint disabled
             }
         }
@@ -105,7 +105,12 @@ impl MidiParser {
                 self.sysex_buf[self.sysex_pos] = byte;
                 self.sysex_pos += 1;
                 if self.sysex_pos == 3 {
-                    let pkt = [0x04, self.sysex_buf[0], self.sysex_buf[1], self.sysex_buf[2]];
+                    let pkt = [
+                        0x04,
+                        self.sysex_buf[0],
+                        self.sysex_buf[1],
+                        self.sysex_buf[2],
+                    ];
                     self.sysex_pos = 0;
                     return Some(pkt);
                 }

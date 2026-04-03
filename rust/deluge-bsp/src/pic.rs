@@ -663,7 +663,7 @@ mod tests {
         // OFF prefix affects only the NEXT 0–179 byte
         p.push(RESP_NEXT_PAD_OFF);
         p.push(10); // release
-                    // No prefix now — next should be a press
+        // No prefix now — next should be a press
         assert_eq!(p.push(10), Some(Event::PadPress { id: 10 }));
     }
 
