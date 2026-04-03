@@ -297,7 +297,7 @@ pub unsafe fn clear_irq_pending(irq_num: u8) {
 /// Must only be called from the IRQ handler assembly, with the CPU in
 /// SYS mode (as set up by the IRQ handler prologue).
 #[cfg(target_os = "none")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
     let int_id = (icciar & 0x3FF) as u16;
 

@@ -23,7 +23,7 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { core::arch::asm!("udf #1", options(nostack, nomem, noreturn)) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn main() -> ! {
     unsafe {
         rtt_init_print!();

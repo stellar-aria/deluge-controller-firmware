@@ -1,7 +1,7 @@
 [package]
 name = "deluge-firmware"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [[bin]]
 name = "deluge-firmware"
@@ -18,3 +18,4 @@ embassy-usb = "0.6"
 rtt-target = { version = "0.6", features = ["log"] }
 log = "0.4.29"
 embassy-futures = "0.1"
+deluge-fft = { path = "../deluge-fft" }

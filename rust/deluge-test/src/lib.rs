@@ -291,7 +291,7 @@ pub fn tests(attr: TokenStream, item: TokenStream) -> TokenStream {
                 //   _SEGGER_RTT + 36 = up[0].WrOff  (written by device)
                 //   _SEGGER_RTT + 40 = up[0].RdOff  (advanced by JLink)
                 unsafe {
-                    extern "C" { static _SEGGER_RTT: u8; }
+                    unsafe extern "C" { static _SEGGER_RTT: u8; }
                     let base = &_SEGGER_RTT as *const u8 as usize;
                     let wr = (base + 36) as *const u32;
                     let rd = (base + 40) as *const u32;
@@ -327,7 +327,7 @@ pub fn tests(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
         // Drain the RTT up-channel before self-jumping (see sync path comment).
         unsafe {
-            extern "C" { static _SEGGER_RTT: u8; }
+            unsafe extern "C" { static _SEGGER_RTT: u8; }
             let base = &_SEGGER_RTT as *const u8 as usize;
             let wr = (base + 36) as *const u32;
             let rd = (base + 40) as *const u32;
@@ -353,7 +353,7 @@ pub fn tests(attr: TokenStream, item: TokenStream) -> TokenStream {
                 #read_dispatch_async
             }
 
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn main() -> ! {
                 // MaybeUninit avoids requiring Executor::new() to be const.
                 static mut _EXECUTOR_STORAGE:
@@ -369,7 +369,7 @@ pub fn tests(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         // Sync path: everything runs directly in main().
         quote! {
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn main() -> ! {
                 #rtt_init_announce
                 #read_dispatch_sync
@@ -457,7 +457,7 @@ pub fn tests(attr: TokenStream, item: TokenStream) -> TokenStream {
             rtt_target::rprintln!("DONE");
             // Drain RTT then self-jump (see dispatch code for explanation).
             unsafe {
-                extern "C" { static _SEGGER_RTT: u8; }
+                unsafe extern "C" { static _SEGGER_RTT: u8; }
                 let base = &_SEGGER_RTT as *const u8 as usize;
                 let wr = (base + 36) as *const u32;
                 let rd = (base + 40) as *const u32;

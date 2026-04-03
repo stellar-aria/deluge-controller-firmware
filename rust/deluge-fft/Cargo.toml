@@ -1,0 +1,13 @@
+[package]
+name = "deluge-fft"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+# Expose the test-only reference DFT and round-trip helpers.
+test-utils = []
+
+[dev-dependencies]
+# For host-side unit tests only — not pulled in for no-std targets.
+approx = "0.5"

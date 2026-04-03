@@ -48,7 +48,7 @@ use deluge_bsp::uart as bsp_uart;
 use deluge_bsp::usb::{dcd_int_handler, Rusb1Driver};
 use rza1::{allocator, cache, gic, mmu, ostm, sdram, stb};
 
-extern "C" {
+unsafe extern "C" {
     /// Start of the free SRAM heap region (set by the linker script).
     static __sram_heap_start: u8;
     /// End of the free SRAM heap region (start of RTT/stack reservation).
@@ -87,7 +87,7 @@ static mut CDC_ACM_STATE: embassy_usb::class::cdc_acm::State<'static> =
 
 static mut EXECUTOR: MaybeUninit<Executor> = MaybeUninit::uninit();
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn main() -> ! {
     let channels = rtt_target::rtt_init! {
         up: {

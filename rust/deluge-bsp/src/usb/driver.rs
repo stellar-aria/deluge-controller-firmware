@@ -1377,7 +1377,7 @@ unsafe fn configure_all_pipes(port: u8) {
             if n == 0 {
                 continue;
             } // DCP configured via DCPMAXP/DCPCFG
-            if let Some(ref cfg) = cfg_opt {
+            if let Some(cfg) = cfg_opt {
                 pipe_configure(regs, n, cfg);
             }
         }
