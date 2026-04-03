@@ -243,6 +243,7 @@ dependencies = [
  "cortex-ar",
  "deluge-bsp",
  "embassy-executor",
+ "embassy-futures",
  "embassy-sync",
  "embassy-time",
  "embassy-usb",

@@ -22,3 +22,7 @@ rustflags = [
 build-fw      = "build -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
 test-fw       = "test  -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
 run-hw-tests  = "run   -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem -p deluge-hw-tests"
+
+[env]
+# UAC2 (3 ifaces) + CDC-ACM (2 ifaces) + USB-MIDI (2 ifaces) = 7 total.
+EMBASSY_USB_MAX_INTERFACE_COUNT = "8"

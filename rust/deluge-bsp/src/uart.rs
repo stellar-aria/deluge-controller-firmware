@@ -16,6 +16,18 @@ pub const PIC_CH: usize = 1;
 
 pub use rza1::uart::{read_byte, write_bytes};
 
+/// Write bytes to the MIDI DIN UART (SCIF0 @ 31 250 bps).
+#[inline]
+pub async fn write_midi(data: &[u8]) {
+    rza1::uart::write_bytes(MIDI_CH, data).await;
+}
+
+/// Read one byte from the MIDI DIN UART (SCIF0 DMA RX ring).
+#[inline]
+pub async fn read_midi_byte() -> u8 {
+    rza1::uart::read_byte(MIDI_CH).await
+}
+
 /// Initialise the MIDI DIN UART (SCIF0) with DMA-backed RX.
 ///
 /// MIDI TX uses TXI GIC interrupts; SCIF0 RX uses DMAC channel 13 so that

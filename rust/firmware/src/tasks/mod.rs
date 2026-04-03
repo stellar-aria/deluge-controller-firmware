@@ -7,3 +7,5 @@ pub(crate) mod rgb;
 pub(crate) mod oled;
 pub(crate) mod pic;
 pub(crate) mod sd;
+pub(crate) mod cdc;
+pub(crate) mod midi;

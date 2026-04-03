@@ -13,3 +13,14 @@ pub mod pic;
 pub mod sd;
 pub mod uart;
 pub mod usb;
+
+/// Guards concurrent RSPI0 access between the OLED DMA path and `cv_gate`.
+///
+/// The OLED and CV DAC share RSPI0 (channel 0). The OLED driver uses DMAC
+/// channel 4 for frame transfers (8-bit mode); the CV DAC uses
+/// `rspi::send32_blocking` (32-bit mode). This flag is set to `true` for the
+/// duration of an OLED DMA transfer. `cv_set_blocking` spins on it before
+/// reconfiguring RSPI0.
+#[cfg(target_os = "none")]
+pub static RSPI0_DMA_ACTIVE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);

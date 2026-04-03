@@ -17,3 +17,4 @@ embassy-sync = "0.8"
 embassy-usb = "0.6"
 rtt-target = { version = "0.6", features = ["log"] }
 log = "0.4.29"
+embassy-futures = "0.1"

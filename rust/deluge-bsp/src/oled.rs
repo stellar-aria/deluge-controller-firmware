@@ -342,6 +342,9 @@ pub async fn send_frame(fb: &FrameBuffer) {
         // Configure RSPI0 for 8-bit transfers.
         rspi::configure_8bit(SPI_CH);
 
+        // Signal that RSPI0 is now driven by DMAC — cv_gate must not touch it.
+        crate::RSPI0_DMA_ACTIVE.store(true, core::sync::atomic::Ordering::Release);
+
         // Arm DMA: source must be the uncached alias address because N0SA is the
         // bus address the DMAC will read from — same physical RAM as the cached
         // alias but coherent since we wrote through the uncached window above.
@@ -351,6 +354,9 @@ pub async fn send_frame(fb: &FrameBuffer) {
 
     // Await DMA completion interrupt.
     dmac::wait_transfer_complete(OLED_DMA_CH).await;
+
+    // RSPI0 DMA transfer complete — cv_gate may proceed.
+    crate::RSPI0_DMA_ACTIVE.store(false, core::sync::atomic::Ordering::Release);
 
     pic::oled_deselect().await;
     Timer::after_millis(1).await;

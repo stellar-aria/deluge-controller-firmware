@@ -31,6 +31,8 @@ use core::future::poll_fn;
 use core::task::Poll;
 
 use embassy_sync::waitqueue::AtomicWaker;
+use embassy_sync::mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
 use crate::gic;
 
@@ -145,6 +147,19 @@ static mut DMA_TX_BUF: [DmaTxBuf; NUM_CHANNELS] = [
 ];
 static mut DMA_TX_DMACH: [u8; NUM_CHANNELS] = [0; NUM_CHANNELS];
 static mut DMA_TX_ACTIVE: [bool; NUM_CHANNELS] = [false; NUM_CHANNELS];
+
+/// Per-channel async mutex that serialises DMA TX transfers.
+///
+/// `write_bytes` holds this for the entire duration of the DMAC transfer so
+/// that a second caller on the same channel cannot clobber `DMA_TX_BUF` or
+/// re-arm the DMAC channel while a transfer is in progress.
+static DMA_TX_LOCK: [Mutex<CriticalSectionRawMutex, ()>; NUM_CHANNELS] = [
+    Mutex::new(()),
+    Mutex::new(()),
+    Mutex::new(()),
+    Mutex::new(()),
+    Mutex::new(()),
+];
 
 // ---------------------------------------------------------------------------
 // Per-channel async state
@@ -711,6 +726,11 @@ pub async fn write_bytes(ch: usize, buf: &[u8]) {
     // (AM=2, level-sensitive), so the hardware never overflows the TX FIFO.
     if unsafe { DMA_TX_ACTIVE[ch] } {
         let dma_ch = unsafe { DMA_TX_DMACH[ch] };
+        // Hold the per-channel lock for the entire multi-chunk transfer.
+        // This prevents a second caller (e.g. oled_task vs rgb_task both using
+        // PIC UART ch1) from clobbering DMA_TX_BUF or re-arming the DMAC
+        // channel while we are yielded inside wait_transfer_complete.
+        let _guard = DMA_TX_LOCK[ch].lock().await;
         let mut pos = 0;
         while pos < buf.len() {
             let chunk_len = (buf.len() - pos).min(DMA_TX_BUF_SIZE);

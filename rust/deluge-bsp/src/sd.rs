@@ -422,8 +422,9 @@ fn decode_csd_capacity(csd: [u32; 4], hc: bool) -> u32 {
         let c_size_mult = (csd[2] >> 15) & 0x7;
         let block_len = 1u32 << read_bl_len; // bytes per block
         let mult = 1u32 << (c_size_mult + 2);
-        let capacity_bytes = (c_size + 1) * mult * block_len;
-        capacity_bytes / 512
+        let capacity_bytes =
+            (c_size as u64 + 1) * mult as u64 * block_len as u64;
+        (capacity_bytes / 512) as u32
     }
 }
 

@@ -151,8 +151,15 @@ pub unsafe fn init() {
 ///
 /// # Safety
 /// Writes RSPI0 and CS GPIO registers.  Must not be called concurrently with
-/// any other RSPI0 transfer.
+/// any other RSPI0 transfer.  Spins briefly if an OLED DMA transfer is in
+/// progress (typically < 1 ms).
 pub unsafe fn cv_set_blocking(ch: u8, value: u16) {
+    // Wait for any in-progress OLED DMA transfer to complete before
+    // reconfiguring RSPI0 for 32-bit mode.  The OLED task sets this flag
+    // around `dmac::start_transfer` … `dmac::wait_transfer_complete`.
+    while crate::RSPI0_DMA_ACTIVE.load(core::sync::atomic::Ordering::Acquire) {
+        core::hint::spin_loop();
+    }
     let word = dac_word(ch, value);
     gpio::write(CS_PORT, CS_PIN, false);
     rspi::send32_blocking(SPI_CH, word);

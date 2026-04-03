@@ -33,6 +33,7 @@
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
 
+mod events;
 mod pads;
 mod tasks;
 
@@ -69,13 +70,16 @@ fn panic(info: &PanicInfo) -> ! {
 // Must live here (in the root crate) so the `'static` lifetimes required by
 // `embassy_usb::Builder` and `builder.handler()` are satisfied.
 
-static mut USB_CONFIG_DESC: [u8; 512] = [0; 512];
+static mut USB_CONFIG_DESC: [u8; 768] = [0; 768];
 static mut USB_BOS_DESC: [u8; 64] = [0; 64];
 static mut USB_MSOS_DESC: [u8; 0] = [];
 static mut USB_CONTROL_BUF: [u8; 64] = [0; 64];
 /// Backing storage for the UAC2 `AudioClass` handler (must be `'static`).
 static mut AUDIO_CLASS_BUF: core::mem::MaybeUninit<deluge_bsp::usb::classes::audio::AudioClass> =
     core::mem::MaybeUninit::uninit();
+/// Backing storage for the CDC-ACM class state (line-coding, control signals).
+static mut CDC_ACM_STATE: embassy_usb::class::cdc_acm::State<'static> =
+    embassy_usb::class::cdc_acm::State::new();
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -185,7 +189,7 @@ pub extern "C" fn main() -> ! {
 
     // Build the UsbDevice using `'static` buffers so the device can be moved
     // into `usb_task` which requires `'static` arguments.
-    let (usb_device, ep_out, ep_in) = unsafe {
+    let (usb_device, ep_out, ep_in, cdc, midi_sender, midi_receiver) = unsafe {
         let driver = Rusb1Driver::new(0);
         let mut config = embassy_usb::Config::new(0x16D0, 0x0EDA);
         config.manufacturer = Some("Synthstrom Audible");
@@ -210,7 +214,18 @@ pub extern "C" fn main() -> ! {
         let audio_ref = (&mut *core::ptr::addr_of_mut!(AUDIO_CLASS_BUF)).write(audio_instance);
         builder.handler(audio_ref);
 
-        (builder.build(), ep_out, ep_in)
+        // CDC-ACM serial class (Deluge host protocol).
+        let cdc = embassy_usb::class::cdc_acm::CdcAcmClass::new(
+            &mut builder,
+            &mut *core::ptr::addr_of_mut!(CDC_ACM_STATE),
+            64,
+        );
+
+        // USB MIDI 1.0 class — 1 in-jack (DIN→USB), 1 out-jack (USB→DIN).
+        let midi = embassy_usb::class::midi::MidiClass::new(&mut builder, 1, 1, 64);
+        let (midi_sender, midi_receiver) = midi.split();
+
+        (builder.build(), ep_out, ep_in, cdc, midi_sender, midi_receiver)
     };
     info!("USB: UsbDevice built");
 
@@ -240,5 +255,8 @@ pub extern "C" fn main() -> ! {
         spawner.spawn(tasks::rgb::rgb_task().unwrap());
         spawner.spawn(tasks::oled::oled_task().unwrap());
         spawner.spawn(tasks::sd::sd_task().unwrap());
+        spawner.spawn(tasks::cdc::cdc_task(cdc).unwrap());
+        spawner.spawn(tasks::midi::midi_usb_rx_task(midi_receiver).unwrap());
+        spawner.spawn(tasks::midi::midi_din_tx_task(midi_sender).unwrap());
     });
 }

@@ -2,6 +2,7 @@ use log::{debug, info};
 
 use deluge_bsp::oled;
 use deluge_bsp::pic;
+use crate::events::{EVENT_CHANNEL, HardwareEvent};
 use crate::pads::{pad_toggle, pad_set_all, pad_invert_all};
 
 /// PIC32 event dispatcher — input handling and LED feedback.
@@ -37,21 +38,26 @@ pub(crate) async fn pic_task() {
             // ---- Pad toggle ------------------------------------------------
             pic::Event::PadPress { id } => {
                 let lit = pad_toggle(id);
-                let (x, y) = pic::pad_coords(id);
+                let (col, row) = pic::pad_coords(id);
                 info!(
                     "pad {} ({},{}) → {}",
                     id,
-                    x,
-                    y,
+                    col,
+                    row,
                     if lit { "on" } else { "off" }
                 );
                 oled::notify_redraw();
+                let _ = EVENT_CHANNEL.try_send(HardwareEvent::PadPressed { col, row });
             }
-            pic::Event::PadRelease { .. } => {}
+            pic::Event::PadRelease { id } => {
+                let (col, row) = pic::pad_coords(id);
+                let _ = EVENT_CHANNEL.try_send(HardwareEvent::PadReleased { col, row });
+            }
 
             // ---- Buttons ---------------------------------------------------
             pic::Event::ButtonPress { id } => {
                 info!("button {} press", id);
+                let _ = EVENT_CHANNEL.try_send(HardwareEvent::ButtonPressed { id: id + 144 });
                 pic::led_on(id).await;
                 match id {
                     pic::button::BACK => {
@@ -76,6 +82,7 @@ pub(crate) async fn pic_task() {
                 }
             }
             pic::Event::ButtonRelease { id } => {
+                let _ = EVENT_CHANNEL.try_send(HardwareEvent::ButtonReleased { id: id + 144 });
                 pic::led_off(id).await;
             }
 

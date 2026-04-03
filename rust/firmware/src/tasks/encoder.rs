@@ -3,6 +3,7 @@ use embassy_sync::waitqueue::AtomicWaker;
 use log::info;
 
 use deluge_bsp::pic;
+use crate::events::{EVENT_CHANNEL, HardwareEvent};
 
 /// Per-encoder signed delta accumulators, written by IRQ/TINT ISRs.
 #[allow(clippy::declare_interior_mutable_const)]
@@ -169,6 +170,10 @@ pub(crate) async fn encoder_task() {
             }
 
             if detents != 0 {
+                let _ = EVENT_CHANNEL.try_send(HardwareEvent::EncoderRotated {
+                    id: i as u8,
+                    delta: detents,
+                });
                 if i == 2 || i == 3 {
                     let k = i - 2;
                     knob_level[k] = (knob_level[k] + detents as i32).clamp(0, 32);
