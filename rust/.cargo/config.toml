@@ -8,6 +8,7 @@ target = "armv7a-none-eabihf"
 runner = "/home/kate/GitHub/deluge-embassy/rust/deluge-test-runner/target/x86_64-unknown-linux-gnu/release/deluge-test-runner --jlink-script /home/kate/GitHub/deluge-embassy/rust/rza1_debug.JLinkScript"
 rustflags = [
   "-C", "target-cpu=cortex-a9",
+  "-C", "target-feature=+neon",
   # -Tlinker.ld is NOT here: firmware/build.rs emits it for the firmware
   # binary, and deluge-bsp/build.rs emits -Ttest.ld for test binaries.
   # Keeping it here would apply it to *all* armv7a builds and override the
@@ -20,6 +21,7 @@ rustflags = [
 # build-std cannot live in [unstable] because it applies to all targets,
 # breaking host-native `cargo test` for the rza1/deluge-bsp crates.
 build-fw      = "build -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
+build-fw-rel  = "build -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem --release --no-default-features"
 test-fw       = "test  -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
 run-hw-tests  = "run   -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem -p deluge-hw-tests"
 

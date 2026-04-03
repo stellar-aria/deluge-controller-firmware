@@ -1,3 +1,4 @@
+use embassy_futures::yield_now;
 use embassy_time::Timer;
 use log::info;
 
@@ -6,11 +7,11 @@ use crate::tasks::analysis::{AUDIO_STREAMING, SPECTRUM};
 use deluge_bsp::pic;
 
 #[inline(always)]
-fn sqrtf(x: f32) -> f32 {
+fn log10f(x: f32) -> f32 {
     unsafe extern "C" {
-        fn sqrtf(x: f32) -> f32;
+        fn log10f(x: f32) -> f32;
     }
-    unsafe { sqrtf(x) }
+    unsafe { log10f(x) }
 }
 
 /// Convert HSV to `[r, g, b]` (all 0–255).
@@ -37,13 +38,24 @@ fn hsv_to_rgb(h: u8, s: u8, v: u8) -> [u8; 3] {
 
 /// Build the 9-pair colour array for the spectrum visualisation.
 ///
-/// Maps 256 FFT magnitude bins (1 … 256, skipping DC) onto 18 frequency-band
-/// columns.  Each column lights 0 – 8 rows from the bottom, VU-meter style.
-/// The hue follows the column index so the grid shades from red (bass) to
-/// violet (treble).
+/// Maps FFT magnitude bins onto 18 frequency-band columns using logarithmic
+/// (musical) spacing.  Each column covers roughly a minor-third (~1.35×)
+/// wider frequency range than the previous, matching human pitch perception.
+///
+/// Bin boundaries (each bin ≈ 86 Hz wide at 44.1 kHz / 512 pt FFT):
+///   col  0:  bins   1–  1  (~  86 Hz — sub-bass)
+///   col  4:  bins   5–  6  (~ 430 Hz — bass)
+///   col  8:  bins  16– 21  (~1.4 kHz — mid)
+///   col 12:  bins  54– 72  (~4.7 kHz — presence)
+///   col 17:  bins 245–256  (~21 kHz  — brilliance)
 fn spectrum_colours() -> [[[u8; 3]; 16]; 9] {
     const N_COLS: usize = 18;
-    const USABLE_BINS: usize = 256; // bins 1..256 (skip DC bin 0)
+
+    // 19 boundaries define 18 half-open bin ranges [BIN_LO[c], BIN_LO[c+1]).
+    // Spaced ~1.35× per step (≈ minor third) from bin 1 to bin 257.
+    const BIN_LO: [usize; 19] = [
+        1, 2, 3, 4, 5, 7, 9, 12, 16, 22, 29, 40, 54, 73, 99, 134, 181, 245, 257,
+    ];
 
     // SAFETY: written only by analysis_task; no concurrent writer in a
     //         single-threaded cooperative executor.
@@ -52,21 +64,25 @@ fn spectrum_colours() -> [[[u8; 3]; 16]; 9] {
     let mut pairs: [[[u8; 3]; 16]; 9] = [[[0u8; 3]; 16]; 9];
 
     for col in 0..N_COLS {
-        // Linear bin mapping: divide the 256 usable bins evenly across 18 cols.
-        let bin_lo = col * USABLE_BINS / N_COLS + 1; // +1 to skip DC
-        let bin_hi = (col + 1) * USABLE_BINS / N_COLS + 1;
+        let bin_lo = BIN_LO[col];
+        let bin_hi = BIN_LO[col + 1]; // exclusive; always ≥ bin_lo + 1
 
-        // Average squared magnitude across this column's bin group, then
-        // take one sqrt to recover linear magnitude (RMS-like response).
+        // Average squared magnitude (power) across this column's bins.
         let mut avg_sq = 0.0f32;
         for &val in &spectrum[bin_lo..bin_hi] {
             avg_sq += val;
         }
         avg_sq /= (bin_hi - bin_lo) as f32;
-        let avg = sqrtf(avg_sq);
 
-        // Map [0, 1] → 0..8 lit rows (bottom-up, VU-meter style).
-        let filled = (avg * 8.0).min(8.0) as usize;
+        // Map power to rows using dB scaling.
+        // SPECTRUM stores norm_sq so avg_sq is already power in [0, 1].
+        // Range: -50 dBFS (dark) → -5 dBFS (full 8 rows).
+        let filled = if avg_sq > 1e-10 {
+            let db = 10.0 * log10f(avg_sq); // e.g. avg_sq=1.0 → 0 dBFS
+            ((db + 50.0) * (8.0 / 45.0)).max(0.0).min(8.0) as usize
+        } else {
+            0
+        };
 
         // Hue: bass columns are red (hue=0), treble columns are violet (hue≈200).
         let hue = (col as u16 * 200 / (N_COLS as u16 - 1)) as u8;
@@ -120,7 +136,7 @@ pub(crate) async fn rgb_task() {
                     pic::set_column_pair_rgb(pair, &colours).await;
                     last_sent[pair as usize] = colours;
                 }
-                Timer::after_micros(0).await;
+                yield_now().await;
             }
         } else {
             // ── Pad glow view ─────────────────────────────────────────────
@@ -151,9 +167,8 @@ pub(crate) async fn rgb_task() {
                 }
 
                 // Explicit yield between pairs so uac2_task can service any
-                // USB packets that arrived while we were busy.  This is the
-                // primary coop point when skipping the DMA await above.
-                Timer::after_micros(0).await;
+                // USB packets that arrived while we were busy.
+                yield_now().await;
             }
         }
         pic::done_sending_rows().await;

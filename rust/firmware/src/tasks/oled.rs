@@ -57,30 +57,38 @@ pub(crate) fn clear_cdc_display() {
 
 /// Render the latest waveform snapshot from `analysis_task` as a dot-scope.
 ///
-/// Each of the 128 OLED columns gets one pixel whose row is proportional to
-/// the sample amplitude.  Positive amplitude → above centre; negative → below.
-/// A faint centre line is also drawn.
+/// Render the latest waveform snapshot from `analysis_task` as an oscilloscope trace.
+///
+/// Consecutive columns are joined by a vertical line segment so the trace is
+/// continuous even when the signal changes by more than one pixel per step.
 fn render_waveform(fb: &mut oled::FrameBuffer) {
     fb.fill(0x00);
 
     // TOPMOST = 5 (first on-screen row); usable rows: [5, 47] = 43 rows.
     const CENTER: i32 = TOPMOST as i32 + (oled::HEIGHT as i32 - TOPMOST as i32) / 2; // ≈ 26
     const HALF_SCALE: f32 = 20.0; // ± pixels for a ±1 signal
-
-    // Draw a faint centre line.
-    for x in 0..oled::WIDTH {
-        fb.set_pixel(x, CENTER as usize, true);
-    }
+    const Y_MIN: i32 = TOPMOST as i32;
+    const Y_MAX: i32 = oled::HEIGHT as i32 - 1;
 
     // SAFETY: written only by analysis_task; no concurrent writer in a
     //         single-threaded cooperative executor.
     let waveform = unsafe { &*core::ptr::addr_of!(WAVEFORM) };
 
-    for (x, &sample) in waveform.iter().enumerate().take(oled::WIDTH) {
-        // Positive amplitude → move upward (smaller row index).
-        let y = (CENTER - (sample * HALF_SCALE) as i32)
-            .clamp(TOPMOST as i32, oled::HEIGHT as i32 - 1) as usize;
-        fb.set_pixel(x, y, true);
+    let sample_to_y = |s: f32| -> usize {
+        (CENTER - (s * HALF_SCALE) as i32).clamp(Y_MIN, Y_MAX) as usize
+    };
+
+    let mut prev_y = sample_to_y(waveform[0]);
+    fb.set_pixel(0, prev_y, true);
+
+    for (x, &sample) in waveform.iter().enumerate().skip(1).take(oled::WIDTH - 1) {
+        let y = sample_to_y(sample);
+        // Draw a vertical segment from prev_y to y so there are no gaps.
+        let (y0, y1) = if prev_y <= y { (prev_y, y) } else { (y, prev_y) };
+        for row in y0..=y1 {
+            fb.set_pixel(x, row, true);
+        }
+        prev_y = y;
     }
 }
 

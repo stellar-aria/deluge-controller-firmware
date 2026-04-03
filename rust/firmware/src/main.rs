@@ -32,6 +32,8 @@
 #![no_std]
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
+#![feature(stdarch_arm_neon_intrinsics)]
+#![feature(arm_target_feature)]
 
 mod events;
 mod pads;
@@ -89,18 +91,26 @@ static mut EXECUTOR: MaybeUninit<Executor> = MaybeUninit::uninit();
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main() -> ! {
-    let channels = rtt_target::rtt_init! {
-        up: {
-            0: {
-                size: 16384,
-                name: "Terminal",
-                section: ".rtt_buffer"   // ring buffer bytes in uncached RAM
+    // rtt_init! must always run to define the _SEGGER_RTT control-block symbol
+    // that rtt-target references at link time (also used by rza1 and deluge-bsp).
+    // The 16 KB ring buffer lives in .rtt_buffer (uncached RAM).
+    // In release builds the logger is never registered and all log!() call sites
+    // compile to nothing (release_max_level_off feature on the log crate).
+    #[cfg(feature = "rtt")]
+    {
+        let channels = rtt_target::rtt_init! {
+            up: {
+                0: {
+                    size: 16384,
+                    name: "Terminal",
+                    section: ".rtt_buffer"   // ring buffer bytes in uncached RAM
+                }
             }
-        }
-        section_cb: ".rtt_buffer"        // _SEGGER_RTT control block in uncached RAM
-    };
-    rtt_target::set_print_channel(channels.up.0);
-    rtt_target::init_logger();
+            section_cb: ".rtt_buffer"        // _SEGGER_RTT control block in uncached RAM
+        };
+        rtt_target::set_print_channel(channels.up.0);
+        rtt_target::init_logger_with_level(log::LevelFilter::Debug);
+    }
     info!("Deluge demo firmware starting");
     info!("Pad paint demo: press pads to toggle, buttons 0/1/2 to clear/fill/invert");
 

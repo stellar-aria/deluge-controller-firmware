@@ -15,7 +15,14 @@ embassy-executor = { version = "0.10", features = ["nightly", "platform-cortex-a
 embassy-time = { version = "0.5", features = ["tick-hz-1_000_000"] }
 embassy-sync = "0.8"
 embassy-usb = "0.6"
-rtt-target = { version = "0.6", features = ["log"] }
-log = "0.4.29"
+rtt-target = { version = "0.6", features = ["log"], optional = true }
+log = { version = "0.4.29", features = ["release_max_level_off"] }
 embassy-futures = "0.1"
 deluge-fft = { path = "../deluge-fft" }
+
+[features]
+## Enable RTT (SEGGER Real-Time Transfer) debug logging.
+## Activates rtt-target, defines _SEGGER_RTT, and registers the logger.
+## Disable for release builds: cargo build-fw --release --no-default-features
+default = ["rtt"]
+rtt = ["dep:rtt-target", "rza1/rtt"]
