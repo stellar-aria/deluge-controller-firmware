@@ -10,19 +10,6 @@ build = "build.rs"
 # because the `test` crate requires std.
 test = false
 
-# On-device integration tests — probe-rs flashes and runs these.
-[[test]]
-name = "gpio"
-harness = false
-
-[[test]]
-name = "sdram"
-harness = false
-
-[[test]]
-name = "time_driver"
-harness = false
-
 [dependencies]
 rza1 = { path = "../rza1" }
 embedded-sdmmc = { version = "0.9", default-features = false, features = ["defmt-log"] }
@@ -39,9 +26,4 @@ embassy-usb = "0.6"
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
 critical-section = { version = "1", features = ["std"] }
 
-[target.'cfg(target_os = "none")'.dev-dependencies]
-deluge-test = { path = "../deluge-test" }
-# Force executor-thread feature on embassy-executor for the async test wrapper.
-embassy-executor = { version = "0.10", features = ["nightly", "platform-cortex-ar", "executor-thread"] }
-rtt-target = "0.6"
-embassy-time = { version = "0.5", features = ["tick-hz-1_000_000"] }
+

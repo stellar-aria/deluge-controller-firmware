@@ -57,8 +57,11 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
     /// 2048 slots = 1024 stereo frames ≈ 23.2 ms at 44.1 kHz.
     /// Sized to absorb SCUX FFD FIFO burst DMA and USB SOF jitter comfortably.
     const WRITE_AHEAD: usize = 2048;
-    /// After this many consecutive empty/error reads we declare the stream stopped.
-    const TIMEOUT_MS: u64 = 200;
+    /// If no ISO packet arrives within this window the stream is considered stopped.
+    /// ISO packets arrive once per SOF (every 1 ms at full-speed); 50 ms is well
+    /// beyond any expected jitter but short enough that silence follows disconnect
+    /// almost immediately.
+    const READ_TIMEOUT_MS: u64 = 50;
 
     info!("uac2_task: waiting for USB enumeration");
     ep_out.wait_enabled().await;
@@ -73,7 +76,6 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
 
     let mut write_ptr: *mut i32 = buf_start;
     let mut streaming = false;
-    let mut last_rx = embassy_time::Instant::now();
 
     // 288 bytes: max ISO packet for stereo 24-bit at 48 kHz (48 frames × 6 B).
     let mut pkt: [u8; 288] = [0; 288];
@@ -85,38 +87,42 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
     let mut diag_max: usize = 0;
 
     loop {
-        // Try to read one isochronous packet (non-blocking in the sense that
-        // if the host sends nothing we get EndpointError::Disabled or a 0-byte
-        // packet per the USB spec's zero-length handling).
-        match ep_out.read(&mut pkt).await {
-            Err(_) => {
+        // Wrap the ISO read with a timeout so that a physical disconnect (where
+        // BRDYENB stays asserted and NRDY may never fire) is still detected.
+        match embassy_time::with_timeout(
+            embassy_time::Duration::from_millis(READ_TIMEOUT_MS),
+            ep_out.read(&mut pkt),
+        )
+        .await
+        {
+            Err(_timeout) => {
+                // No packet for READ_TIMEOUT_MS — stream stalled or disconnected.
+                if streaming {
+                    info!("uac2_task: stream stopped (read timeout)");
+                    streaming = false;
+                    unsafe { rza1::gpio::write(4, 1, false) }; // SPEAKER_ENABLE off
+                    fill_tx_with_dither();
+                }
+                continue;
+            }
+            Ok(Err(_)) => {
                 // Endpoint disabled — host stopped streaming or disconnected.
                 if streaming {
                     info!("uac2_task: stream stopped (endpoint disabled)");
                     streaming = false;
-                    unsafe { rza1::gpio::write(4, 1, false) }; // SPEAKER_ENABLE off
+                    unsafe { rza1::gpio::write(4, 1, false) };
                     fill_tx_with_dither();
                 }
                 // Wait for the endpoint to become active again.
                 ep_out.wait_enabled().await;
                 info!("uac2_task: ISO OUT endpoint re-enabled");
-                last_rx = embassy_time::Instant::now();
                 continue;
             }
-            Ok(0) => {
+            Ok(Ok(0)) => {
                 // Zero-length packet — host is pacing but sending no audio.
-                // Check stream timeout.
-                if streaming && last_rx.elapsed() > embassy_time::Duration::from_millis(TIMEOUT_MS)
-                {
-                    info!("uac2_task: stream timed out");
-                    streaming = false;
-                    unsafe { rza1::gpio::write(4, 1, false) };
-                    fill_tx_with_dither();
-                }
                 continue;
             }
-            Ok(bytes_read) => {
-                last_rx = embassy_time::Instant::now();
+            Ok(Ok(bytes_read)) => {
 
                 // Packet size diagnostics — log once per ~8000 packets (≈1 s).
                 if bytes_read > 0 {

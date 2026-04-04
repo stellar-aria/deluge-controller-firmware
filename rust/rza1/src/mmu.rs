@@ -29,11 +29,11 @@ use core::arch::asm;
 // ---------------------------------------------------------------------------
 
 /// Strongly-ordered memory (device I/O). B=00, C=00, TEX=000.
-const PARA_STRONGLY_ORDERED: u32 = 0x0DE2;
+pub const PARA_STRONGLY_ORDERED: u32 = 0x0DE2;
 /// Normal non-cached.  B=10, C=00, TEX=001.
-const PARA_NORMAL_NOT_CACHE: u32 = 0x1DE2;
+pub const PARA_NORMAL_NOT_CACHE: u32 = 0x1DE2;
 /// Normal write-back, write-allocate (fully cached). B=11, C=10, TEX=001.
-const PARA_NORMAL_CACHE: u32 = 0x1DEE;
+pub const PARA_NORMAL_CACHE: u32 = 0x1DEE;
 
 // ---------------------------------------------------------------------------
 // Area table — (size_in_mb, attribute) pairs, low address → high address.
@@ -143,5 +143,64 @@ unsafe fn isb() {
 unsafe fn dsb() {
     unsafe {
         asm!("dsb", options(nomem, nostack));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Runtime MMU operations
+// ---------------------------------------------------------------------------
+
+/// Invalidate the entire TLB (TLBIALL + DSB + ISB).
+///
+/// Call after modifying any entry in the Translation Table, or after
+/// [`update_section`], if you need to flush more than one VA at once.
+///
+/// # Safety
+/// Must be called with IRQ and FIQ disabled to avoid a TLB miss on a
+/// half-invalidated table.
+pub unsafe fn invalidate_tlb_all() {
+    unsafe {
+        asm!("mcr p15, 0, {0}, c8, c7, 0", in(reg) 0u32, options(nomem, nostack)); // TLBIALL
+        dsb();
+        isb();
+    }
+}
+
+/// Update the 1 MB section descriptor for the region containing physical
+/// address `pa` and flush the corresponding TLB entry.
+///
+/// `attr` uses the same bit encoding as the `PARA_*` constants in this
+/// module; bits `[19:0]` carry the attribute flags and bits `[31:20]` are
+/// replaced with the aligned section base address derived from `pa`.
+///
+/// After this call, the new attributes are immediately visible to the CPU.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Remap the internal SRAM region as strongly-ordered (e.g. for DMA setup):
+/// unsafe { rza1::mmu::update_section(0x2000_0000, rza1::mmu::PARA_STRONGLY_ORDERED) };
+/// ```
+///
+/// # Safety
+/// * [`init_and_enable`] must have been called first.
+/// * Changing the cacheability of a region while the cache holds dirty lines
+///   from it is **undefined behaviour** — flush the relevant lines with
+///   [`crate::cache::l1_d_clean_inv_all`] (and disable L1/L2 for the region
+///   if it will become strongly-ordered) before calling this.
+/// * IRQ and FIQ must be disabled across this call.
+pub unsafe fn update_section(pa: u32, attr: u32) {
+    unsafe {
+        let idx = (pa >> 20) as usize;
+        let descriptor = (pa & 0xFFF0_0000) | (attr & 0x000F_FFFF);
+        // SAFETY: TTB is a flat 4096-entry table; idx is always in [0, 4095].
+        let entry_ptr = (core::ptr::addr_of_mut!(TTB) as *mut u32).add(idx);
+        entry_ptr.write_volatile(descriptor);
+        dsb();
+        // TLBIMVA: flush the TLB entry for this VA (= PA in the flat map).
+        // ASID field [7:0] = 0 (we use global mappings, nG=0 in all descriptors).
+        asm!("mcr p15, 0, {0}, c8, c7, 1", in(reg) pa, options(nomem, nostack)); // TLBIMVA
+        dsb();
+        isb();
     }
 }

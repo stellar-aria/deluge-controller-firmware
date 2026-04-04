@@ -239,15 +239,12 @@ version = "0.1.0"
 dependencies = [
  "cortex-ar",
  "critical-section",
- "deluge-test",
- "embassy-executor",
  "embassy-sync",
  "embassy-time",
  "embassy-usb",
  "embassy-usb-driver",
  "embedded-sdmmc",
  "log",
- "rtt-target",
  "rza1",
 ]
 
@@ -273,28 +270,6 @@ dependencies = [
  "log",
  "rtt-target",
  "rza1",
-]
-
-[[package]]
-name = "deluge-hw-tests"
-version = "0.1.0"
-dependencies = [
- "cortex-ar",
- "deluge-bsp",
- "deluge-test",
- "embassy-executor",
- "embassy-time",
- "rtt-target",
- "rza1",
-]
-
-[[package]]
-name = "deluge-test"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -811,7 +786,6 @@ version = "0.1.0"
 dependencies = [
  "cortex-ar",
  "critical-section",
- "deluge-test",
  "embassy-sync",
  "embassy-time",
  "embassy-time-driver",

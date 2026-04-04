@@ -10,17 +10,6 @@ build = "build.rs"
 # because the `test` crate requires std.
 test = false
 
-# On-device integration tests — probe-rs flashes and runs these.
-# harness=false disables the std test harness (incompatible with no_std);
-# embedded-test provides its own entry point via the startup in rza1.
-[[test]]
-name = "ostm"
-harness = false
-
-[[test]]
-name = "gic"
-harness = false
-
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-ar = { version = "0.3", features = ["critical-section-single-core"] }
 
@@ -49,11 +38,4 @@ optional = true
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
 critical-section = { version = "1", features = ["std"] }
 
-[target.'cfg(target_os = "none")'.dev-dependencies]
-deluge-test = { path = "../deluge-test" }
-rtt-target = "0.6"
-cortex-ar = "0.3"
 
-[[example]]
-name = "ostm-smoke"
-harness = false

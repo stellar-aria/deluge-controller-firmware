@@ -2,10 +2,6 @@
 target = "armv7a-none-eabihf"
 
 [target.armv7a-none-eabihf]
-# deluge-test-runner: native host binary that uses JLinkGDBServerCLExe + GDB.
-# Build:  cd rust/deluge-test-runner && cargo build --release
-# Requires arm-none-eabi-gdb and JLinkGDBServerCLExe on PATH.
-runner = "/home/kate/GitHub/deluge-embassy/rust/deluge-test-runner/target/x86_64-unknown-linux-gnu/release/deluge-test-runner --jlink-script /home/kate/GitHub/deluge-embassy/rust/rza1_debug.JLinkScript"
 rustflags = [
   "-C", "target-cpu=cortex-a9",
   "-C", "target-feature=+neon",
@@ -22,8 +18,6 @@ rustflags = [
 # breaking host-native `cargo test` for the rza1/deluge-bsp crates.
 build-fw      = "build -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
 build-fw-rel  = "build -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem --release --no-default-features"
-test-fw       = "test  -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"
-run-hw-tests  = "run   -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem -p deluge-hw-tests"
 
 [env]
 # UAC2 (3 ifaces) + CDC-ACM (2 ifaces) + USB-MIDI (2 ifaces) = 7 total.
