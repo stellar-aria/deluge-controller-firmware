@@ -5,10 +5,6 @@ target = "armv7a-none-eabihf"
 rustflags = [
   "-C", "target-cpu=cortex-a9",
   "-C", "target-feature=+neon",
-  # -Tlinker.ld is NOT here: firmware/build.rs emits it for the firmware
-  # binary, and deluge-bsp/build.rs emits -Ttest.ld for test binaries.
-  # Keeping it here would apply it to *all* armv7a builds and override the
-  # test.ld, breaking embedded-test integration tests.
   "-C", "link-arg=--gc-sections",
 ]
 
