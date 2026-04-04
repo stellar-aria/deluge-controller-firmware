@@ -28,7 +28,7 @@
 //! | 2       | 2    | 9   |
 //! | 3       | 4    | 0   |
 
-use rza1::{gpio, ostm, rspi};
+use rza1l_hal::{gpio, ostm, rspi};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -83,8 +83,8 @@ fn dac_word(ch: u8, value: u16) -> u32 {
 
 /// Initialise RSPI0 and the CV DAC + gate GPIO lines.
 ///
-/// **Must be called after** `rza1::stb::init()` (enables RSPI clocks) and
-/// `rza1::ostm::start_free_running(0)` (required for `delay_ms`).
+/// **Must be called after** `rza1l_hal::stb::init()` (enables RSPI clocks) and
+/// `rza1l_hal::ostm::start_free_running(0)` (required for `delay_ms`).
 ///
 /// After this function returns:
 /// - All gate outputs are de-asserted (gate OFF).

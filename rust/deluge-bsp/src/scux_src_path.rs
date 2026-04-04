@@ -23,8 +23,8 @@
 //!   from the DVU output path (channels 0 and 1) so both can run simultaneously.
 //! - The 2SRC unit 0, pair 1 is used, independent of the DVU path's pair 0.
 
-use rza1::UNCACHED_MIRROR_OFFSET;
-use rza1::scux::{self, AudioInfo, IpcSel, MixConfig, OpcSel, SrcConfig, SrcMode};
+use rza1l_hal::UNCACHED_MIRROR_OFFSET;
+use rza1l_hal::scux::{self, AudioInfo, IpcSel, MixConfig, OpcSel, SrcConfig, SrcMode};
 
 /// Number of stereo frames in the SRC path input (TX) buffer.
 pub const SRC_TX_FRAMES: usize = 1024;
@@ -69,7 +69,7 @@ const SRC_PAIR: u8 = 1;
 /// - DMA ch 5 continuously writes the converted audio into `SRC_RX_BUF`.
 ///
 /// # Safety
-/// Must be called once from a single-threaded boot context after `rza1::stb::init()`.
+/// Must be called once from a single-threaded boot context after `rza1l_hal::stb::init()`.
 pub unsafe fn init(fin_hz: u32, fout_hz: u32) {
     unsafe {
         log::debug!(
@@ -82,7 +82,7 @@ pub unsafe fn init(fin_hz: u32, fout_hz: u32) {
         // alongside scux_dvu_path which owns the reset cycle.  If this path
         // is used standalone, call scux::reset() before this function.
 
-        let intifs = rza1::scux::intifs(fin_hz, fout_hz);
+        let intifs = rza1l_hal::scux::intifs(fin_hz, fout_hz);
 
         // DMA: TX buffer → FFD0_1 (DMA ch 3)
         let tx_ptr = core::ptr::addr_of!(SRC_TX_BUF.0[0]) as *const u32;
@@ -145,7 +145,7 @@ pub unsafe fn init(fin_hz: u32, fout_hz: u32) {
 /// Writes to live 2SRC registers.  The SRC path must be running.
 pub unsafe fn update_input_rate(fin_hz: u32, fout_hz: u32) {
     unsafe {
-        let intifs = rza1::scux::intifs(fin_hz, fout_hz);
+        let intifs = rza1l_hal::scux::intifs(fin_hz, fout_hz);
         scux::src_update_intifs(SRC_UNIT, SRC_PAIR, intifs);
     }
 }

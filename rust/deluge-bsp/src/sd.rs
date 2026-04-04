@@ -31,7 +31,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
-use rza1::sdhi::{self, SdhiError};
+use rza1l_hal::sdhi::{self, SdhiError};
 
 // The Deluge SD card is on SDHI port 1.
 const SD_PORT: u8 = 1;

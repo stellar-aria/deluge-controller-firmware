@@ -46,8 +46,8 @@
 //! oled::send_frame(&fb).await;
 //! ```
 
-use rza1::dmac;
-use rza1::rspi;
+use rza1l_hal::dmac;
+use rza1l_hal::rspi;
 
 #[cfg(target_os = "none")]
 use crate::pic;

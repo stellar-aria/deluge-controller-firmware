@@ -21,7 +21,7 @@
 //! directly via `SSICTRL.SSI012TEN`.  SSI0 RX DMA (ch 7) is started as usual.
 
 use crate::scux_dvu_path;
-use rza1::{gpio, ostm};
+use rza1l_hal::{gpio, ostm};
 
 /// Port and pin of the codec hardware-enable line.
 const CODEC_PORT: u8 = 6;
@@ -33,7 +33,7 @@ const CODEC_POWER_DELAY_MS: u32 = 5;
 /// Configure SSI0 pin-mux, initialise the SSI peripheral with DMA, wait for
 /// the codec power-on delay, then assert `CODEC_POWER`.
 ///
-/// **Call after:** `rza1::stb::init()` and `rza1::ostm::start_free_running(0)`.
+/// **Call after:** `rza1l_hal::stb::init()` and `rza1l_hal::ostm::start_free_running(0)`.
 ///
 /// # Safety
 /// Must be called exactly once from the single-threaded boot context, before

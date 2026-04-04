@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 use deluge_bsp::scux_dvu_path;
 use embassy_usb::driver::{Endpoint as _, EndpointIn as _, EndpointOut as _};
 use log::info;
-use rza1::ssi;
+use rza1l_hal::ssi;
 
 use deluge_bsp::usb::classes::audio::{USB_BITS_PER_SAMPLE, USB_CAPTURE_BITS_PER_SAMPLE};
 
@@ -100,7 +100,7 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
                 if streaming {
                     info!("uac2_task: stream stopped (read timeout)");
                     streaming = false;
-                    unsafe { rza1::gpio::write(4, 1, false) }; // SPEAKER_ENABLE off
+                    unsafe { rza1l_hal::gpio::write(4, 1, false) }; // SPEAKER_ENABLE off
                     fill_tx_with_dither();
                 }
                 continue;
@@ -110,7 +110,7 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
                 if streaming {
                     info!("uac2_task: stream stopped (endpoint disabled)");
                     streaming = false;
-                    unsafe { rza1::gpio::write(4, 1, false) };
+                    unsafe { rza1l_hal::gpio::write(4, 1, false) };
                     fill_tx_with_dither();
                 }
                 // Wait for the endpoint to become active again.
@@ -159,10 +159,10 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
                     streaming = true;
 
                     // Gate speaker: on if no headphone / line-out detected.
-                    let hp = unsafe { rza1::gpio::read_pin(6, 5) };
-                    let lol = unsafe { rza1::gpio::read_pin(6, 3) };
-                    let lor = unsafe { rza1::gpio::read_pin(6, 4) };
-                    unsafe { rza1::gpio::write(4, 1, !hp && !lol && !lor) };
+                    let hp = unsafe { rza1l_hal::gpio::read_pin(6, 5) };
+                    let lol = unsafe { rza1l_hal::gpio::read_pin(6, 3) };
+                    let lor = unsafe { rza1l_hal::gpio::read_pin(6, 4) };
+                    unsafe { rza1l_hal::gpio::write(4, 1, !hp && !lol && !lor) };
                     info!("uac2_task: streaming started");
                 }
 

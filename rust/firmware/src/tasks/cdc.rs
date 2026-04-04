@@ -245,7 +245,7 @@ async fn handle_message(
             if !data.is_empty() {
                 let on = data[0] != 0;
                 unsafe {
-                    rza1::gpio::write(6, 7, on);
+                    rza1l_hal::gpio::write(6, 7, on);
                 }
             }
         }
@@ -258,7 +258,7 @@ async fn handle_message(
             pic::set_gold_knob_indicators(1, [0; 4]).await;
             // Also clear the synced LED.
             unsafe {
-                rza1::gpio::write(6, 7, false);
+                rza1l_hal::gpio::write(6, 7, false);
             }
         }
         MSG_TO_SET_BRIGHTNESS => {

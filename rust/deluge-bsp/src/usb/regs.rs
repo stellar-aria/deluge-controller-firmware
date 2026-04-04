@@ -17,7 +17,7 @@
 //! and snake_case used for the shift variants.
 
 use core::ptr::{read_volatile, write_volatile};
-use rza1::rusb1::{USB0_BASE, USB1_BASE};
+use rza1l_hal::rusb1::{USB0_BASE, USB1_BASE};
 
 // ---------------------------------------------------------------------------
 // SYSCFG0

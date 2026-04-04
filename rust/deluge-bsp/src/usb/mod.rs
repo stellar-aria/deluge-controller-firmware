@@ -9,29 +9,33 @@
 //! // pass `driver` to `embassy_usb::UsbDevice::new(driver, config, ...)`
 //! ```
 //!
-//! ## Quick start — host mode (pending Embassy PR #5633)
+//! ## Quick start — host mode
 //!
 //! ```rust,no_run
 //! use deluge_bsp::usb::init_host_mode;
+//! use embassy_usb_host::UsbHost;
 //!
 //! let (port, host) = unsafe { init_host_mode(0) };
-//! // `host` will implement `UsbHostDriver` once PR #5633 merges
+//! let mut usb_host = UsbHost::new(host);
+//! let speed = usb_host.wait_for_connection().await;
+//! let (dev_desc, addr, _) = usb_host.enumerate(speed, &mut [0u8; 256]).await.unwrap();
 //! ```
 //!
 //! ## ISR wiring
 //!
-//! You must call `dcd_int_handler` from your GIC interrupt dispatcher:
+//! You must call `dcd_int_handler` (device mode) or `hcd_int_handler` (host
+//! mode) from your GIC interrupt dispatcher:
 //!
 //! ```rust,no_run
-//! use deluge_bsp::usb::dcd_int_handler;
+//! use deluge_bsp::usb::{dcd_int_handler, hcd_int_handler};
 //!
 //! #[no_mangle]
-//! extern "C" fn irq73_handler() {  // USB0
+//! extern "C" fn irq73_handler() {  // USB0 — device mode
 //!     unsafe { dcd_int_handler(0); }
 //! }
 //! #[no_mangle]
-//! extern "C" fn irq74_handler() {  // USB1
-//!     unsafe { dcd_int_handler(1); }
+//! extern "C" fn irq73_handler() {  // USB0 — host mode
+//!     unsafe { hcd_int_handler(0); }
 //! }
 //! ```
 
@@ -45,10 +49,10 @@ pub mod regs;
 pub use driver::{
     Rusb1Bus, Rusb1ControlPipe, Rusb1Driver, Rusb1EndpointIn, Rusb1EndpointOut, dcd_int_handler,
 };
-pub use host::Rusb1HostDriver;
+pub use host::{Rusb1Channel, Rusb1HostDriver, hcd_int_handler};
 
 use core::marker::PhantomData;
-use rza1::rusb1;
+use rza1l_hal::rusb1;
 
 // ---------------------------------------------------------------------------
 // Mode markers
@@ -151,11 +155,10 @@ pub unsafe fn init_device_mode(port: u8) -> (UsbPort<Device>, Rusb1Driver) {
 }
 
 /// Enable the USB clock, initialise the RUSB1 hardware in **host** mode, and
-/// return an ownership handle plus the host driver stub.
+/// return an ownership handle plus the [`Rusb1HostDriver`].
 ///
-/// ## Warning — stub implementation
-/// The returned `Rusb1HostDriver` is not yet functional.  See
-/// `deluge-bsp/src/usb/host.rs` for the implementation roadmap.
+/// The driver implements [`embassy_usb_driver::host::UsbHostDriver`] and is
+/// ready to be wrapped in [`embassy_usb_host::UsbHost`] for enumeration.
 ///
 /// # Safety
 /// Must only be called once per port.

@@ -8,7 +8,7 @@ pub(crate) async fn blink_task() {
     let mut on = false;
     loop {
         on = !on;
-        unsafe { rza1::gpio::write(6, 7, on) };
+        unsafe { rza1l_hal::gpio::write(6, 7, on) };
         Timer::after_millis(500).await;
     }
 }

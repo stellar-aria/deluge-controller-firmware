@@ -10,3 +10,4 @@ pub(crate) mod pic;
 pub(crate) mod rgb;
 pub(crate) mod sd;
 pub(crate) mod usb;
+pub(crate) mod usb_host;

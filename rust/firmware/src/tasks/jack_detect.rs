@@ -18,13 +18,13 @@ use log::info;
 #[embassy_executor::task]
 pub(crate) async fn jack_detect_task() {
     unsafe {
-        rza1::gpio::set_as_input(6, 5); // HEADPHONE_DETECT
-        rza1::gpio::set_as_input(6, 6); // LINE_IN_DETECT
-        rza1::gpio::set_as_input(7, 9); // MIC_DETECT
-        rza1::gpio::set_as_input(6, 3); // LINE_OUT_DETECT_L
-        rza1::gpio::set_as_input(6, 4); // LINE_OUT_DETECT_R
-        rza1::gpio::set_as_output(4, 1); // SPEAKER_ENABLE
-        rza1::gpio::write(4, 1, false); // speaker off until we know the jack state
+        rza1l_hal::gpio::set_as_input(6, 5); // HEADPHONE_DETECT
+        rza1l_hal::gpio::set_as_input(6, 6); // LINE_IN_DETECT
+        rza1l_hal::gpio::set_as_input(7, 9); // MIC_DETECT
+        rza1l_hal::gpio::set_as_input(6, 3); // LINE_OUT_DETECT_L
+        rza1l_hal::gpio::set_as_input(6, 4); // LINE_OUT_DETECT_R
+        rza1l_hal::gpio::set_as_output(4, 1); // SPEAKER_ENABLE
+        rza1l_hal::gpio::write(4, 1, false); // speaker off until we know the jack state
     }
 
     let mut prev_hp = false;
@@ -36,11 +36,11 @@ pub(crate) async fn jack_detect_task() {
     info!("jack_detect_task: started");
 
     loop {
-        let hp = unsafe { rza1::gpio::read_pin(6, 5) };
-        let li = unsafe { rza1::gpio::read_pin(6, 6) };
-        let mic = unsafe { rza1::gpio::read_pin(7, 9) };
-        let lol = unsafe { rza1::gpio::read_pin(6, 3) };
-        let lor = unsafe { rza1::gpio::read_pin(6, 4) };
+        let hp = unsafe { rza1l_hal::gpio::read_pin(6, 5) };
+        let li = unsafe { rza1l_hal::gpio::read_pin(6, 6) };
+        let mic = unsafe { rza1l_hal::gpio::read_pin(7, 9) };
+        let lol = unsafe { rza1l_hal::gpio::read_pin(6, 3) };
+        let lor = unsafe { rza1l_hal::gpio::read_pin(6, 4) };
 
         if hp != prev_hp || li != prev_li || mic != prev_mic || lol != prev_lol || lor != prev_lor {
             prev_hp = hp;

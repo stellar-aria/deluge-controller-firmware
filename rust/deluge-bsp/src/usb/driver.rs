@@ -179,7 +179,7 @@ impl Rusb1Driver {
     ///
     /// # Safety
     /// Caller must ensure this is the only active driver for this port, and
-    /// that `rza1::rusb1::module_clock_enable(port)` has already been called.
+    /// that `rza1l_hal::rusb1::module_clock_enable(port)` has already been called.
     pub unsafe fn new(port: u8) -> Self {
         unsafe {
             debug_assert!(port <= 1);
@@ -435,7 +435,7 @@ impl<'d> Driver<'d> for Rusb1Driver {
             wr(core::ptr::addr_of_mut!((*regs).intenb0), INTENB0_VBSE);
 
             // Register the ISR with the GIC.
-            rza1::rusb1::int_enable(self.port);
+            rza1l_hal::rusb1::int_enable(self.port);
 
             // If VBUS is already asserted (cable was plugged in before init),
             // the rising-edge VBINT will never fire.  Synthesise the event now

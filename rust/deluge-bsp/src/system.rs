@@ -2,8 +2,8 @@
 //!
 //! Centralises all board-specific peripheral configuration values and
 //! provides [`init_clocks`] as the single boot-time entry point that
-//! replaces the direct `rza1::stb`, `rza1::mmu`, `rza1::cache`,
-//! `rza1::gic`, `rza1::ostm`, and `rza1::time_driver` calls that would
+//! replaces the direct `rza1l_hal::stb`, `rza1l_hal::mmu`, `rza1l_hal::cache`,
+//! `rza1l_hal::gic`, `rza1l_hal::ostm`, and `rza1l_hal::time_driver` calls that would
 //! otherwise leak chip-level details into the top-level firmware crate.
 //!
 //! ## CPG clock-gate values (`StbConfig`)
@@ -25,8 +25,8 @@
 //! | STBCR11  | 0b11011111 | SSIF0                                        |
 //! | STBCR12  | 0b11111011 | SDHI0 channel 0                              |
 
-use rza1::ssi::SsiConfig;
-use rza1::stb::StbConfig;
+use rza1l_hal::ssi::SsiConfig;
+use rza1l_hal::stb::StbConfig;
 
 // ---------------------------------------------------------------------------
 // Board-specific configuration constants
@@ -96,9 +96,9 @@ pub const SD_OPTION: u16 = 0x00BD;
 // SCUX DMA channel assignments for the Deluge board
 // ---------------------------------------------------------------------------
 //
-// These replace the previously-public rza1::scux::FFD*_DMA_CH constants.
-// Pass them as the `dma_ch` argument to `rza1::scux::init_ffd_dma` and
-// `rza1::scux::init_ffu_dma`.
+// These replace the previously-public rza1l_hal::scux::FFD*_DMA_CH constants.
+// Pass them as the `dma_ch` argument to `rza1l_hal::scux::init_ffd_dma` and
+// `rza1l_hal::scux::init_ffu_dma`.
 
 /// DMA channel for FFD path 0 (CPU → SCUX, 8-ch, main synthesis / DVU path).
 pub const SCUX_FFD0_DMA_CH: u8 = 0;
@@ -151,14 +151,14 @@ pub const SD_DMA_MAX_SECTORS: usize = 128;
 /// the async executor starts.
 ///
 /// Performs, in order:
-/// 1. CPG module clock enable ([`rza1::stb::init`] with [`STB_CONFIG`]).
-/// 2. MMU enable ([`rza1::mmu::init_and_enable`]).
-/// 3. L1 cache enable ([`rza1::cache::l1_enable`]).
-/// 4. L2 cache init ([`rza1::cache::l2_init`]).
+/// 1. CPG module clock enable ([`rza1l_hal::stb::init`] with [`STB_CONFIG`]).
+/// 2. MMU enable ([`rza1l_hal::mmu::init_and_enable`]).
+/// 3. L1 cache enable ([`rza1l_hal::cache::l1_enable`]).
+/// 4. L2 cache init ([`rza1l_hal::cache::l2_init`]).
 /// 5. SDRAM init ([`crate::sdram::init`]).
-/// 6. GIC init ([`rza1::gic::init`]).
-/// 7. OSTM clock enable ([`rza1::ostm::enable_clock`]).
-/// 8. Embassy time-driver init ([`rza1::time_driver::init`]).
+/// 6. GIC init ([`rza1l_hal::gic::init`]).
+/// 7. OSTM clock enable ([`rza1l_hal::ostm::enable_clock`]).
+/// 8. Embassy time-driver init ([`rza1l_hal::time_driver::init`]).
 ///
 /// After this call:
 /// - All module clocks for peripherals used by the Deluge firmware are on.
@@ -179,13 +179,13 @@ pub const SD_DMA_MAX_SECTORS: usize = 128;
 #[cfg(target_os = "none")]
 pub unsafe fn init_clocks() {
     unsafe {
-        rza1::stb::init(&STB_CONFIG);
-        rza1::mmu::init_and_enable();
-        rza1::cache::l1_enable();
-        rza1::cache::l2_init();
+        rza1l_hal::stb::init(&STB_CONFIG);
+        rza1l_hal::mmu::init_and_enable();
+        rza1l_hal::cache::l1_enable();
+        rza1l_hal::cache::l2_init();
         crate::sdram::init();
-        rza1::gic::init();
-        rza1::ostm::enable_clock();
-        rza1::time_driver::init();
+        rza1l_hal::gic::init();
+        rza1l_hal::ostm::enable_clock();
+        rza1l_hal::time_driver::init();
     }
 }

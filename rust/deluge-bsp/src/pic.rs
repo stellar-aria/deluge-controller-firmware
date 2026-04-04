@@ -41,7 +41,7 @@
 //! | 245  | REQUEST_FIRMWARE_VERSION   | —                               |
 //! | 247  | ENABLE_OLED                | —                               |
 
-use rza1::uart;
+use rza1l_hal::uart;
 
 // ── Channel / baud constants ──────────────────────────────────────────────────
 

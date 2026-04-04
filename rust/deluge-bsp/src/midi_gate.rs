@@ -35,7 +35,7 @@
 //! ```
 
 use core::sync::atomic::{AtomicU8, Ordering};
-use rza1::mtu2;
+use rza1l_hal::mtu2;
 
 /// MTU2 channel used for one-shot gate timing.
 const CH: u8 = 2;
@@ -100,8 +100,8 @@ fn handler() {
 /// is left stopped; it is started by [`schedule_gate_off`].
 ///
 /// **Must be called:**
-/// - After [`rza1::gic::init`] (so the GIC is ready for handler registration).
-/// - After [`rza1::mtu2::enable_write`] (so channel registers are writable).
+/// - After [`rza1l_hal::gic::init`] (so the GIC is ready for handler registration).
+/// - After [`rza1l_hal::mtu2::enable_write`] (so channel registers are writable).
 /// - Before [`cortex_ar::interrupt::enable`] (so no IRQ fires before the
 ///   handler is in place).
 ///
@@ -158,4 +158,4 @@ pub unsafe fn cancel() {
 ///
 /// Use this to convert a duration to ticks:
 /// `ticks = duration_us * TICK_HZ / 1_000_000`
-pub const TICK_HZ: u32 = rza1::mtu2::MTU2_P0_HZ / PRESCALER as u32;
+pub const TICK_HZ: u32 = rza1l_hal::mtu2::MTU2_P0_HZ / PRESCALER as u32;

@@ -18,9 +18,10 @@ log = { version = "0.4", default-features = false, features = ["release_max_leve
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-ar = "0.3"
 embassy-sync = "0.8"
-embassy-time = { version = "0.5", features = ["tick-hz-1_000_000"] }
-embassy-usb-driver = "0.2"
-embassy-usb = "0.6"
+embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["tick-hz-1_000_000"] }
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-usb-host = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
 critical-section = { version = "1", features = ["std"] }

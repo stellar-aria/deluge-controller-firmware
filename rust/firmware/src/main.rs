@@ -49,8 +49,9 @@ use embassy_executor::{Executor, Spawner};
 
 use deluge_bsp::cv_gate;
 use deluge_bsp::uart as bsp_uart;
-use deluge_bsp::usb::{Rusb1Driver, dcd_int_handler};
-use rza1::{allocator, gic};
+use deluge_bsp::usb::{Rusb1Driver, dcd_int_handler, hcd_int_handler, init_device_mode, init_host_mode};
+use core::sync::atomic::{AtomicBool, Ordering};
+use rza1l_hal::{allocator, gic};
 
 unsafe extern "C" {
     /// Start of the free SRAM heap region (set by the linker script).
@@ -66,6 +67,17 @@ fn panic(info: &PanicInfo) -> ! {
         core::hint::spin_loop();
     }
 }
+
+// ---------------------------------------------------------------------------
+// USB mode selection
+// ---------------------------------------------------------------------------
+
+/// Set to `true` before calling `main()` (or before the ISR is registered)
+/// to start USB0 in host mode instead of device mode.  Switching at runtime
+/// requires quiescing the port, calling `UsbPort::into_device_mode` /
+/// `UsbPort::into_host_mode`, and updating this flag under an IRQ-disabled
+/// critical section.  The ISR dispatcher reads this on every interrupt.
+static USB0_HOST_MODE: AtomicBool = AtomicBool::new(false);
 
 // ---------------------------------------------------------------------------
 // USB descriptor static buffers
@@ -136,7 +148,7 @@ pub extern "C" fn main() -> ! {
     info!("SDRAM heap: initialised (64 MB)");
 
     info!("GPIO: configuring heartbeat LED...");
-    unsafe { rza1::gpio::set_as_output(6, 7) };
+    unsafe { rza1l_hal::gpio::set_as_output(6, 7) };
     info!("GPIO: heartbeat LED P6_7 configured");
 
     info!("UART: initialising MIDI...");
@@ -161,64 +173,101 @@ pub extern "C" fn main() -> ! {
     unsafe { cv_gate::init() };
     info!("RSPI0: initialised via cv_gate::init");
 
-    // ── USB Audio Class 2.0 device ──────────────────────────────────────────
-    info!("USB: initialising USB0...");
-    unsafe { rza1::rusb1::module_clock_enable(0) };
+    // ── USB0 mode selection (host vs device) ──────────────────────────────
+    // Set USB0_HOST_MODE to true *before* this point to start in host mode.
+    // The ISR registered above dispatches to hcd_int_handler or dcd_int_handler
+    // based on the flag, so no ISR re-registration is needed when switching.
+    info!("USB: initialising USB0 (host_mode={})...",
+        USB0_HOST_MODE.load(Ordering::Relaxed));
 
-    // Register the USB0 ISR *before* IRQ is globally enabled.  The driver's
-    // start() will call int_enable(0) when UsbDevice::run() begins.
+    // Build UsbDevice (device mode) or a Rusb1HostDriver (host mode).  Both
+    // paths call module_clock_enable internally via init_device_mode /
+    // init_host_mode, so the manual call below is no longer needed.
+
+    // Register the USB0 ISR *before* IRQ is globally enabled.  The dispatcher
+    // checks USB0_HOST_MODE on every interrupt to direct the call to either the
+    // device or host interrupt handler without needing to re-register the ISR.
     unsafe {
-        gic::register(rza1::rusb1::USB0_IRQ, || dcd_int_handler(0));
+        gic::register(rza1l_hal::rusb1::USB0_IRQ, || {
+            if USB0_HOST_MODE.load(Ordering::Relaxed) {
+                hcd_int_handler(0);
+            } else {
+                dcd_int_handler(0);
+            }
+        });
     }
 
-    // Build the UsbDevice using `'static` buffers so the device can be moved
-    // into `usb_task` which requires `'static` arguments.
-    let (usb_device, ep_out, ep_in, cdc, midi_sender, midi_receiver) = unsafe {
-        let driver = Rusb1Driver::new(0);
-        let mut config = embassy_usb::Config::new(0x16D0, 0x0EDA);
-        config.manufacturer = Some("Synthstrom Audible");
-        config.product = Some("Deluge");
-        config.self_powered = false;
-        config.max_power = 250; // 500 mA
+    // ── Host mode: just allocate the host driver.  ──────────────────────────
+    // ── Device mode: build the full UsbDevice stack.  ───────────────────────
+    //
+    // `init_device_mode` / `init_host_mode` both call `module_clock_enable`.
+    // UsbDevice buffers must be `'static`; they live in the statics above.
+    let mut usb_host_driver: Option<deluge_bsp::usb::Rusb1HostDriver> = None;
+    let mut usb_device_opt: Option<embassy_usb::UsbDevice<'static, Rusb1Driver>> = None;
+    let mut ep_out_opt: Option<deluge_bsp::usb::Rusb1EndpointOut> = None;
+    let mut ep_in_opt: Option<deluge_bsp::usb::Rusb1EndpointIn> = None;
+    let mut cdc_opt: Option<
+        embassy_usb::class::cdc_acm::CdcAcmClass<'static, Rusb1Driver>,
+    > = None;
+    let mut midi_sender_opt: Option<
+        embassy_usb::class::midi::Sender<'static, Rusb1Driver>,
+    > = None;
+    let mut midi_receiver_opt: Option<
+        embassy_usb::class::midi::Receiver<'static, Rusb1Driver>,
+    > = None;
 
-        let mut builder = embassy_usb::Builder::new(
-            driver,
-            config,
-            &mut *core::ptr::addr_of_mut!(USB_CONFIG_DESC),
-            &mut *core::ptr::addr_of_mut!(USB_BOS_DESC),
-            &mut *core::ptr::addr_of_mut!(USB_MSOS_DESC),
-            &mut *core::ptr::addr_of_mut!(USB_CONTROL_BUF),
-        );
+    if USB0_HOST_MODE.load(Ordering::Relaxed) {
+        let (_port, hd) = unsafe { init_host_mode(0) };
+        usb_host_driver = Some(hd);
+        info!("USB: host driver ready");
+    } else {
+        let (usb_device, ep_out, ep_in, cdc, midi_sender, midi_receiver) = unsafe {
+            let (_port, driver) = init_device_mode(0);
+            let mut config = embassy_usb::Config::new(0x16D0, 0x0EDA);
+            config.manufacturer = Some("Synthstrom Audible");
+            config.product = Some("Deluge");
+            config.self_powered = false;
+            config.max_power = 250; // 500 mA
 
-        // Allocate the UAC2 speaker + mic interfaces (288 B covers stereo 24-bit @ 48 kHz).
-        let (audio_instance, ep_out, ep_in) =
-            deluge_bsp::usb::classes::audio::AudioClass::new(&mut builder, 288);
-        // Store in a `'static` slot so the `&'static mut` reference satisfies
-        // `builder.handler`'s `'d` lifetime (= `'static` here).
-        let audio_ref = (&mut *core::ptr::addr_of_mut!(AUDIO_CLASS_BUF)).write(audio_instance);
-        builder.handler(audio_ref);
+            let mut builder = embassy_usb::Builder::new(
+                driver,
+                config,
+                &mut *core::ptr::addr_of_mut!(USB_CONFIG_DESC),
+                &mut *core::ptr::addr_of_mut!(USB_BOS_DESC),
+                &mut *core::ptr::addr_of_mut!(USB_MSOS_DESC),
+                &mut *core::ptr::addr_of_mut!(USB_CONTROL_BUF),
+            );
 
-        // CDC-ACM serial class (Deluge host protocol).
-        let cdc = embassy_usb::class::cdc_acm::CdcAcmClass::new(
-            &mut builder,
-            &mut *core::ptr::addr_of_mut!(CDC_ACM_STATE),
-            64,
-        );
+            // Allocate the UAC2 speaker + mic interfaces (288 B covers stereo 24-bit @ 48 kHz).
+            let (audio_instance, ep_out, ep_in) =
+                deluge_bsp::usb::classes::audio::AudioClass::new(&mut builder, 288);
+            // Store in a `'static` slot so the `&'static mut` reference satisfies
+            // `builder.handler`'s `'d` lifetime (= `'static` here).
+            let audio_ref =
+                (&mut *core::ptr::addr_of_mut!(AUDIO_CLASS_BUF)).write(audio_instance);
+            builder.handler(audio_ref);
 
-        // USB MIDI 1.0 class — 1 in-jack (DIN→USB), 1 out-jack (USB→DIN).
-        let midi = embassy_usb::class::midi::MidiClass::new(&mut builder, 1, 1, 64);
-        let (midi_sender, midi_receiver) = midi.split();
+            // CDC-ACM serial class (Deluge host protocol).
+            let cdc = embassy_usb::class::cdc_acm::CdcAcmClass::new(
+                &mut builder,
+                &mut *core::ptr::addr_of_mut!(CDC_ACM_STATE),
+                64,
+            );
 
-        (
-            builder.build(),
-            ep_out,
-            ep_in,
-            cdc,
-            midi_sender,
-            midi_receiver,
-        )
-    };
-    info!("USB: UsbDevice built");
+            // USB MIDI 1.0 class — 1 in-jack (DIN→USB), 1 out-jack (USB→DIN).
+            let midi = embassy_usb::class::midi::MidiClass::new(&mut builder, 1, 1, 64);
+            let (midi_sender, midi_receiver) = midi.split();
+
+            (builder.build(), ep_out, ep_in, cdc, midi_sender, midi_receiver)
+        };
+        usb_device_opt = Some(usb_device);
+        ep_out_opt = Some(ep_out);
+        ep_in_opt = Some(ep_in);
+        cdc_opt = Some(cdc);
+        midi_sender_opt = Some(midi_sender);
+        midi_receiver_opt = Some(midi_receiver);
+        info!("USB: UsbDevice built");
+    }
 
     info!("encoder: configuring interrupt-driven inputs...");
     unsafe { tasks::encoder::encoder_irq_init() };
@@ -237,9 +286,34 @@ pub extern "C" fn main() -> ! {
     debug!("executor.run()...");
     executor.run(|spawner: Spawner| {
         spawner.spawn(tasks::blink::blink_task().unwrap());
-        spawner.spawn(tasks::usb::usb_task(usb_device).unwrap());
-        spawner.spawn(tasks::audio::uac2_task(ep_out).unwrap());
-        spawner.spawn(tasks::audio::uac2_mic_task(ep_in).unwrap());
+
+        // USB-mode-specific tasks ─────────────────────────────────────────
+        if let Some(hd) = usb_host_driver {
+            spawner.spawn(tasks::usb_host::usb_host_task(hd).unwrap());
+        } else if let (
+            Some(usb_device),
+            Some(ep_out),
+            Some(ep_in),
+            Some(cdc),
+            Some(midi_sender),
+            Some(midi_receiver),
+        ) = (
+            usb_device_opt,
+            ep_out_opt,
+            ep_in_opt,
+            cdc_opt,
+            midi_sender_opt,
+            midi_receiver_opt,
+        ) {
+            spawner.spawn(tasks::usb::usb_task(usb_device).unwrap());
+            spawner.spawn(tasks::audio::uac2_task(ep_out).unwrap());
+            spawner.spawn(tasks::audio::uac2_mic_task(ep_in).unwrap());
+            spawner.spawn(tasks::cdc::cdc_task(cdc).unwrap());
+            spawner.spawn(tasks::midi::midi_usb_rx_task(midi_receiver).unwrap());
+            spawner.spawn(tasks::midi::midi_din_tx_task(midi_sender).unwrap());
+        }
+
+        // Tasks common to both modes ───────────────────────────────────────
         spawner.spawn(tasks::pic::pic_task().unwrap());
         spawner.spawn(tasks::encoder::encoder_task().unwrap());
         spawner.spawn(tasks::jack_detect::jack_detect_task().unwrap());
@@ -247,8 +321,5 @@ pub extern "C" fn main() -> ! {
         spawner.spawn(tasks::rgb::rgb_task().unwrap());
         spawner.spawn(tasks::oled::oled_task().unwrap());
         spawner.spawn(tasks::sd::sd_task().unwrap());
-        spawner.spawn(tasks::cdc::cdc_task(cdc).unwrap());
-        spawner.spawn(tasks::midi::midi_usb_rx_task(midi_receiver).unwrap());
-        spawner.spawn(tasks::midi::midi_din_tx_task(midi_sender).unwrap());
     });
 }

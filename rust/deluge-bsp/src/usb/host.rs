@@ -4,17 +4,15 @@
 //!
 //! ```text
 //! application
-//!   │  Rusb1HostDriver (async API)
-//!   │    ├─ wait_for_event()      ← DeviceAttached / DeviceDetached
-//!   │    ├─ bus_reset()           ← blocking, drives USBRST for ~20 ms
-//!   │    ├─ port_speed()          ← LS / FS after bus_reset
-//!   │    ├─ device_open()         ← configure DCPMAXP + DEVADD for ep0
-//!   │    ├─ device_close()        ← free all pipes for a device
-//!   │    ├─ setup_send()          ← awaits SACK or SIGN
-//!   │    ├─ control_data_in/out() ← awaits BRDY / BEMP on pipe 0
-//!   │    ├─ edpt_open()           ← allocate & configure a non-control pipe
-//!   │    ├─ xfer_in / xfer_out()  ← awaits BRDY on non-control pipes
-//!   │    └─ clear_stall()         ← reset PID + toggle on an endpoint
+//!   │  Rusb1HostDriver (implements embassy_usb_driver::host::UsbHostDriver)
+//!   │    ├─ wait_for_device_event() ← Connected(Speed) / Disconnected
+//!   │    ├─ bus_reset()             ← async, drives USBRST for ~20 ms
+//!   │    └─ alloc_channel()         ← returns Rusb1Channel<T,D>
+//!   │
+//!   │  Rusb1Channel<T, D> (implements UsbChannel<T, D>)
+//!   │    ├─ control_in / control_out  ← setup + data + status ZLP
+//!   │    ├─ request_in / request_out  ← non-control IN / OUT
+//!   │    └─ retarget_channel()        ← after SET_ADDRESS
 //!   │
 //!   └─ hcd_int_handler(port)   ← GIC IRQ 73/74
 //!         ├─ INTSTS1: ATTCH/DTCH → HCD_EVENTS + waker
@@ -53,6 +51,11 @@
 use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
 use embassy_sync::waitqueue::AtomicWaker;
 use embassy_time::Timer;
+use embassy_usb_driver::host::{
+    ChannelError, DeviceEvent, HostError, SetupPacket, TimeoutConfig, UsbChannel, UsbHostDriver,
+    channel,
+};
+use embassy_usb_driver::{EndpointInfo, EndpointType, Speed};
 
 use super::fifo::{FifoPort, fifo_bval, sw_to_hw_fifo};
 use super::regs::{
@@ -98,45 +101,7 @@ const D0FIFOCTR_DTLN_MASK: u16 = 0x01FF;
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-/// A USB bus-level event returned by [`Rusb1HostDriver::wait_for_event`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HcdEvent {
-    /// A USB device connected.
-    DeviceAttached,
-    /// The USB device was removed.
-    DeviceDetached,
-}
-
-/// USB device speed as measured after bus reset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UsbSpeed {
-    LowSpeed,
-    FullSpeed,
-    HighSpeed,
-    Unknown,
-}
-
-/// USB transfer error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HcdError {
-    /// The endpoint returned STALL.
-    Stalled,
-    /// The transfer failed (NAK timeout, bus error, disconnection).
-    Failed,
-    /// The device sent SIGN (setup packet not accepted).
-    SetupIgnored,
-    /// No pipe available for the requested endpoint type.
-    NoPipe,
-}
-
-/// Endpoint transfer type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HcdEpType {
-    Bulk,
-    Interrupt,
-    Isochronous,
-}
+// (Re-exported from embassy_usb_driver — no custom type duplication needed.)
 
 // ---------------------------------------------------------------------------
 // Per-pipe ISR ↔ task state
@@ -224,11 +189,12 @@ impl HcdAlloc {
 
     /// Allocate a free pipe for `ep_type`.  Searches backward (highest pipe
     /// first) within the type's range, same as the C `find_pipe` function.
-    fn alloc_pipe(&mut self, ep_type: HcdEpType) -> Option<usize> {
+    fn alloc_pipe(&mut self, ep_type: EndpointType) -> Option<usize> {
         let (first, last): (usize, usize) = match ep_type {
-            HcdEpType::Isochronous => (1, 2),
-            HcdEpType::Bulk => (1, 5),
-            HcdEpType::Interrupt => (6, 9),
+            EndpointType::Isochronous => (1, 2),
+            EndpointType::Bulk => (1, 5),
+            EndpointType::Interrupt => (6, 9),
+            EndpointType::Control => return None, // control uses pipe 0 directly
         };
         for p in (first..=last).rev() {
             if self.pipes_used & (1 << p) == 0 {
@@ -260,15 +226,11 @@ static HCD_ALLOC: [critical_section::Mutex<core::cell::UnsafeCell<HcdAlloc>>; 2]
 
 /// USB host-mode driver for one RUSB1 port.
 ///
-/// Provides an async API over the RUSB1 host controller hardware.
-/// Based on the reference TinyUSB `hcd_rusb1.c` for the RZ/A1L peripheral.
+/// Implements [`embassy_usb_driver::host::UsbHostDriver`] so it can be used
+/// directly with the `embassy-usb-host` enumeration stack.
 ///
-/// > **Status — not yet integrated**: The `UsbHostDriver` trait that this type
-/// > is intended to implement is pending [Embassy PR #5633]. Use the raw async
-/// > methods (`wait_for_event`, `setup_send`, `xfer_in`, `xfer_out`, …)
-/// > directly for now.
-///
-/// [Embassy PR #5633]: https://github.com/embassy-rs/embassy/pull/5633
+/// The raw async methods (`wait_for_event`, `setup_send`, `xfer_in`, …) are
+/// also kept for direct use without the Embassy host stack.
 pub struct Rusb1HostDriver {
     port: u8,
 }
@@ -358,7 +320,7 @@ impl Rusb1HostDriver {
             wr(core::ptr::addr_of_mut!((*regs).brdyenb), 1);
 
             // Register the GIC interrupt for this port.
-            rza1::rusb1::int_enable(port);
+            rza1l_hal::rusb1::int_enable(port);
 
             Self { port }
         }
@@ -378,7 +340,7 @@ impl Rusb1HostDriver {
             let e = &mut *regs;
 
             // Disable GIC interrupt so the ISR cannot fire mid-teardown.
-            rza1::rusb1::int_disable(self.port);
+            rza1l_hal::rusb1::int_disable(self.port);
 
             // Disable all interrupt sources.
             wr(core::ptr::addr_of_mut!(e.intenb0), 0);
@@ -403,17 +365,21 @@ impl Rusb1HostDriver {
         }
     }
 
-    /// Wait for the next bus event: device attached or detached.
-    pub async fn wait_for_event(&mut self) -> HcdEvent {
+    /// Wait for the next raw bus event: device attached or detached.
+    ///
+    /// For `Connected`, speed is not yet valid — call [`bus_reset`](Self::bus_reset)
+    /// first, then read [`port_speed`](Self::port_speed).  Consider using
+    /// `UsbHostDriver::wait_for_device_event` which handles this automatically.
+    pub async fn wait_for_event(&self) -> DeviceEvent {
         core::future::poll_fn(|cx| {
             HCD_EVENT_WAKER.register(cx.waker());
             // Consume the event atomically.
             let ev = HCD_EVENTS.fetch_and(!(EVT_ATTACH | EVT_DETACH), Ordering::Acquire);
             if ev & EVT_ATTACH != 0 {
-                return core::task::Poll::Ready(HcdEvent::DeviceAttached);
+                return core::task::Poll::Ready(DeviceEvent::Connected(Speed::Full));
             }
             if ev & EVT_DETACH != 0 {
-                return core::task::Poll::Ready(HcdEvent::DeviceDetached);
+                return core::task::Poll::Ready(DeviceEvent::Disconnected);
             }
             core::task::Poll::Pending
         })
@@ -422,27 +388,25 @@ impl Rusb1HostDriver {
 
     /// Drive a USB bus reset (~20 ms), then re-enable SOF generation.
     ///
-    /// Must be called after every [`HcdEvent::DeviceAttached`] before
-    /// enumeration.  This method busy-loops for the reset duration.
-    pub fn bus_reset(&mut self) {
+    /// Must be called after every [`DeviceEvent::Connected`] before
+    /// enumeration.  Drives USBRST for ~20 ms using the async timer.
+    pub async fn bus_reset(&self) {
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
-            let p = self.port as usize;
 
             // Cancel any in-flight DCP transaction.
             wr(pipectr_ptr(regs, 0), PIPECTR_PID_NAK);
             while rd(pipectr_ptr(regs, 0)) & PIPECTR_PBUSY != 0 {}
 
             // Stop SOF and cancel any pending SETUP.
-            rza1::rusb1::int_disable(self.port);
+            rza1l_hal::rusb1::int_disable(self.port);
             rmw(core::ptr::addr_of_mut!((*regs).dvstctr0), DVSTCTR0_UACT, 0);
             let dcpctr = rd(pipectr_ptr(regs, 0));
             if dcpctr & DCPCTR_SUREQ != 0 {
                 wr(pipectr_ptr(regs, 0), dcpctr | DCPCTR_SUREQCLR);
             }
-            rza1::rusb1::int_enable(self.port);
+            rza1l_hal::rusb1::int_enable(self.port);
 
-            // Assert reset for ~20 ms.
             // Set HSE before asserting USBRST (TRM §28.3 SYSCFG.HSE).
             // LS devices cannot do HS negotiation — skip HSE for them.
             let rhst_now = rd(core::ptr::addr_of!((*regs).dvstctr0)) & DVSTCTR0_RHST;
@@ -460,23 +424,25 @@ impl Rusb1HostDriver {
                 DVSTCTR0_USBRST,
                 DVSTCTR0_USBRST,
             );
-            // At ~400 MHz ≈ 8 M iterations ≈ 20 ms.
-            for _ in 0u32..8_000_000 {
-                core::hint::spin_loop();
-            }
+        }
+
+        // Wait for reset to propagate — async sleep instead of busy-spinning.
+        Timer::after_millis(20).await;
+
+        unsafe {
+            let regs = Rusb1Regs::ptr(self.port);
+            let p = self.port as usize;
             rmw(
                 core::ptr::addr_of_mut!((*regs).dvstctr0),
                 DVSTCTR0_USBRST,
                 0,
             );
-
             // Re-enable SOF generation.
             rmw(
                 core::ptr::addr_of_mut!((*regs).dvstctr0),
                 DVSTCTR0_UACT,
                 DVSTCTR0_UACT,
             );
-
             critical_section::with(|cs| {
                 (&mut *HCD_ALLOC[p].borrow(cs).get()).need_reset = false;
             });
@@ -486,17 +452,17 @@ impl Rusb1HostDriver {
     /// Return the speed of the connected device.
     ///
     /// Only valid after [`bus_reset`](Self::bus_reset) completes.
-    pub fn port_speed(&self) -> UsbSpeed {
+    pub fn port_speed(&self) -> Speed {
         const RHST_LS: u16 = 0x0001;
         const RHST_FS: u16 = 0x0002;
         const RHST_HS: u16 = 0x0003;
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
             match rd(core::ptr::addr_of!((*regs).dvstctr0)) & 0x0007 {
-                RHST_LS => UsbSpeed::LowSpeed,
-                RHST_FS => UsbSpeed::FullSpeed,
-                RHST_HS => UsbSpeed::HighSpeed,
-                _ => UsbSpeed::Unknown,
+                RHST_LS => Speed::Low,
+                RHST_FS => Speed::Full,
+                RHST_HS => Speed::High,
+                _ => Speed::Full, // safe fallback
             }
         }
     }
@@ -516,10 +482,10 @@ impl Rusb1HostDriver {
     /// Must be called (and DEVADDn fully configured) **before** starting
     /// any pipe that targets this device (TRM Note 1 for DEVADDn).
     pub fn device_open(
-        &mut self,
+        &self,
         dev_addr: u8,
         mps: u16,
-        speed: UsbSpeed,
+        speed: Speed,
         hub_addr: u8,
         hub_port: u8,
     ) {
@@ -545,9 +511,9 @@ impl Rusb1HostDriver {
             // Program DEVADDn: UPPHUB | HUBPORT | USBSPD.
             // All three must be written together before communication starts.
             let usbspd = match speed {
-                UsbSpeed::LowSpeed => DEVADD_USBSPD_LS,
-                UsbSpeed::HighSpeed => DEVADD_USBSPD_HS,
-                _ => DEVADD_USBSPD_FS,
+                Speed::Low => DEVADD_USBSPD_LS,
+                Speed::High => DEVADD_USBSPD_HS,
+                Speed::Full => DEVADD_USBSPD_FS,
             };
             let devadd_val = ((hub_addr as u16) << DEVADD_UPPHUB_SHIFT)
                 | ((hub_port as u16) << DEVADD_HUBPORT_SHIFT)
@@ -563,7 +529,7 @@ impl Rusb1HostDriver {
     /// Free all pipes that were allocated for `dev_addr`.
     ///
     /// Call after a device disconnects to reclaim hardware resources.
-    pub fn device_close(&mut self, dev_addr: u8) {
+    pub fn device_close(&self, dev_addr: u8) {
         debug_assert!(dev_addr > 0 && (dev_addr as usize) < HCD_MAX_DEV);
         let p = self.port as usize;
         unsafe {
@@ -608,9 +574,9 @@ impl Rusb1HostDriver {
     /// Send a SETUP packet to `dev_addr`.
     ///
     /// Awaits SACK (returns `Ok(())`) or SIGN (returns
-    /// `Err(HcdError::SetupIgnored)`).  `setup` is the 8-byte packet in
+    /// `Err(ChannelError::Canceled)`).  `setup` is the 8-byte packet in
     /// USB byte order (bmRequestType, bRequest, wValue, wIndex, wLength).
-    pub async fn setup_send(&mut self, dev_addr: u8, setup: &[u8; 8]) -> Result<(), HcdError> {
+    pub async fn setup_send(&self, dev_addr: u8, setup: &[u8; 8]) -> Result<(), ChannelError> {
         debug_assert!((dev_addr as usize) < HCD_MAX_DEV);
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
@@ -674,7 +640,7 @@ impl Rusb1HostDriver {
                 return core::task::Poll::Ready(Ok(()));
             }
             if ev & EVT_SIGN != 0 {
-                return core::task::Poll::Ready(Err(HcdError::SetupIgnored));
+                return core::task::Poll::Ready(Err(ChannelError::Canceled));
             }
             core::task::Poll::Pending
         })
@@ -686,10 +652,10 @@ impl Rusb1HostDriver {
     /// Returns the number of bytes actually received (may be less than
     /// `buf.len()` if the device sends a short packet).
     pub async fn control_data_in(
-        &mut self,
+        &self,
         dev_addr: u8,
         buf: &mut [u8],
-    ) -> Result<usize, HcdError> {
+    ) -> Result<usize, ChannelError> {
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
 
@@ -726,7 +692,7 @@ impl Rusb1HostDriver {
     /// Control OUT data stage: send `buf` to EP0.
     ///
     /// Pass `&[]` to issue a zero-length packet (status stage ZLP).
-    pub async fn control_data_out(&mut self, dev_addr: u8, buf: &[u8]) -> Result<(), HcdError> {
+    pub async fn control_data_out(&self, dev_addr: u8, buf: &[u8]) -> Result<(), ChannelError> {
         unsafe {
             let regs = Rusb1Regs::ptr(self.port);
             let p = self.port as usize;
@@ -796,13 +762,13 @@ impl Rusb1HostDriver {
     /// `binterval` is the USB descriptor bInterval field (in frames for FS interrupt
     /// endpoints; ignored for bulk endpoints).  Pass 0 or 1 for no specific interval.
     pub fn edpt_open(
-        &mut self,
+        &self,
         dev_addr: u8,
         ep_addr: u8,
-        ep_type: HcdEpType,
+        ep_type: EndpointType,
         mps: u16,
         binterval: u8,
-    ) -> Result<(), HcdError> {
+    ) -> Result<(), HostError> {
         debug_assert!(dev_addr > 0 && (dev_addr as usize) < HCD_MAX_DEV);
         let p = self.port as usize;
         let epn = (ep_addr & 0x0F) as usize;
@@ -810,7 +776,7 @@ impl Rusb1HostDriver {
 
         critical_section::with(|cs| {
             let alloc = unsafe { &mut *HCD_ALLOC[p].borrow(cs).get() };
-            let pipe = alloc.alloc_pipe(ep_type).ok_or(HcdError::NoPipe)?;
+            let pipe = alloc.alloc_pipe(ep_type).ok_or(HostError::OutOfChannels)?;
 
             // Record the EP→pipe mapping.
             // dev_addr is 1-based; array index is 0-based.
@@ -838,9 +804,10 @@ impl Rusb1HostDriver {
                 // C: cfg = ((1 ^ dir_in) << 4) | epn
                 let dir_field: u16 = if dir_in { 0x0000 } else { 0x0010 };
                 let type_field: u16 = match ep_type {
-                    HcdEpType::Bulk => PIPECFG_TYPE_BULK | PIPECFG_SHTNAK | PIPECFG_DBLB,
-                    HcdEpType::Interrupt => PIPECFG_TYPE_INTR,
-                    HcdEpType::Isochronous => PIPECFG_TYPE_ISO | PIPECFG_DBLB,
+                    EndpointType::Bulk => PIPECFG_TYPE_BULK | PIPECFG_SHTNAK | PIPECFG_DBLB,
+                    EndpointType::Interrupt => PIPECFG_TYPE_INTR,
+                    EndpointType::Isochronous => PIPECFG_TYPE_ISO | PIPECFG_DBLB,
+                    EndpointType::Control => unreachable!("control EP handled by DCP"),
                 };
                 wr(
                     core::ptr::addr_of_mut!(e.pipecfg),
@@ -850,7 +817,7 @@ impl Rusb1HostDriver {
                 // PIPEPERI: set IITV for interrupt pipes (valid for pipes 6-9).
                 // TRM §28.3.35: IITV = floor(log2(bInterval)).min(7).
                 // Bulk pipes (3-5) and pipes 10-15 must have IITV=0.
-                let iitv: u16 = if ep_type == HcdEpType::Interrupt {
+                let iitv: u16 = if ep_type == EndpointType::Interrupt {
                     let b = binterval.max(1);
                     (u8::BITS - 1 - b.leading_zeros()) as u16
                 } else {
@@ -888,12 +855,12 @@ impl Rusb1HostDriver {
 
     /// IN transfer: receive up to `buf.len()` bytes from `ep_addr` on `dev_addr`.
     pub async fn xfer_in(
-        &mut self,
+        &self,
         dev_addr: u8,
         ep_addr: u8,
         buf: &mut [u8],
-    ) -> Result<usize, HcdError> {
-        let pipe = self.ep_to_pipe(dev_addr, ep_addr).ok_or(HcdError::NoPipe)?;
+    ) -> Result<usize, ChannelError> {
+        let pipe = self.ep_to_pipe(dev_addr, ep_addr).ok_or(ChannelError::Canceled)?;;
 
         critical_section::with(|cs| unsafe {
             let xfer = &mut *HCD_XFER[pipe].borrow(cs).get();
@@ -921,12 +888,12 @@ impl Rusb1HostDriver {
 
     /// OUT transfer: send `buf` to `ep_addr` on `dev_addr`.
     pub async fn xfer_out(
-        &mut self,
+        &self,
         dev_addr: u8,
         ep_addr: u8,
         buf: &[u8],
-    ) -> Result<(), HcdError> {
-        let pipe = self.ep_to_pipe(dev_addr, ep_addr).ok_or(HcdError::NoPipe)?;
+    ) -> Result<(), ChannelError> {
+        let pipe = self.ep_to_pipe(dev_addr, ep_addr).ok_or(ChannelError::Canceled)?;
 
         critical_section::with(|cs| unsafe {
             let xfer = &mut *HCD_XFER[pipe].borrow(cs).get();
@@ -992,7 +959,7 @@ impl Rusb1HostDriver {
     }
 
     /// Clear the STALL condition on an endpoint and re-enable it.
-    pub fn clear_stall(&mut self, dev_addr: u8, ep_addr: u8) {
+    pub fn clear_stall(&self, dev_addr: u8, ep_addr: u8) {
         if let Some(pipe) = self.ep_to_pipe(dev_addr, ep_addr) {
             unsafe {
                 let regs = Rusb1Regs::ptr(self.port);
@@ -1038,8 +1005,8 @@ impl Rusb1HostDriver {
 // ---------------------------------------------------------------------------
 
 /// Future that resolves when pipe `n`'s transfer completes or errors.
-/// Returns `Ok(bytes_transferred)` or the appropriate `HcdError`.
-async fn poll_pipe(n: usize) -> Result<usize, HcdError> {
+/// Returns `Ok(bytes_transferred)` or the appropriate `ChannelError`.
+async fn poll_pipe(n: usize) -> Result<usize, ChannelError> {
     core::future::poll_fn(move |cx| {
         HCD_PIPE_WAKERS[n].register(cx.waker());
         let mask = 1u16 << n;
@@ -1053,11 +1020,11 @@ async fn poll_pipe(n: usize) -> Result<usize, HcdError> {
         }
         if HCD_PIPE_STALL.load(Ordering::Acquire) & mask != 0 {
             HCD_PIPE_STALL.fetch_and(!mask, Ordering::Release);
-            return core::task::Poll::Ready(Err(HcdError::Stalled));
+            return core::task::Poll::Ready(Err(ChannelError::Stall));
         }
         if HCD_PIPE_NRDY.load(Ordering::Acquire) & mask != 0 {
             HCD_PIPE_NRDY.fetch_and(!mask, Ordering::Release);
-            return core::task::Poll::Ready(Err(HcdError::Failed));
+            return core::task::Poll::Ready(Err(ChannelError::BadResponse));
         }
         core::task::Poll::Pending
     })
@@ -1386,4 +1353,259 @@ unsafe fn pipe_nrdy(regs: *mut Rusb1Regs, n: usize) {
         }
         HCD_PIPE_WAKERS[n].wake();
     }
+}
+
+// ---------------------------------------------------------------------------
+// embassy-usb-host: UsbHostDriver + Rusb1Channel
+// ---------------------------------------------------------------------------
+
+/// Convert a `SetupPacket` into the 8-byte array our hardware expects.
+fn setup_to_bytes(sp: &SetupPacket) -> [u8; 8] {
+    let b = sp.as_bytes();
+    [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]
+}
+
+/// An active USB channel allocated by [`Rusb1HostDriver::alloc_channel`].
+///
+/// On drop the hardware pipe is freed and the PIPECFG/PIPEMAXP registers are
+/// cleared (control channels that use pipe 0 are exempt — the DCP is permanent).
+pub struct Rusb1Channel<T: channel::Type, D: channel::Direction> {
+    port: u8,
+    /// Hardware pipe number.  0 = control (DCP).
+    pipe: u8,
+    /// USB device address this channel targets.
+    dev_addr: u8,
+    /// Endpoint info (for retarget and Drop).
+    ep_info: EndpointInfo,
+    _phantom: core::marker::PhantomData<(T, D)>,
+}
+
+impl<T: channel::Type, D: channel::Direction> Drop for Rusb1Channel<T, D> {
+    fn drop(&mut self) {
+        // Pipe 0 (DCP / control) is shared and permanently allocated.
+        if self.pipe == 0 {
+            return;
+        }
+        let pipe = self.pipe as usize;
+        let p = self.port as usize;
+        let ep_addr = u8::from(self.ep_info.addr);
+        let epn = (ep_addr & 0x0F) as usize;
+        let dir_in = ep_addr & 0x80 != 0;
+
+        unsafe {
+            let regs = Rusb1Regs::ptr(self.port);
+            let e = &mut *regs;
+            wr(pipectr_ptr(regs, pipe), 0);
+            rmw(core::ptr::addr_of_mut!(e.nrdyenb), 1 << pipe, 0);
+            rmw(core::ptr::addr_of_mut!(e.brdyenb), 1 << pipe, 0);
+            wr(core::ptr::addr_of_mut!(e.pipesel), pipe as u16);
+            wr(core::ptr::addr_of_mut!(e.pipecfg), 0);
+            wr(core::ptr::addr_of_mut!(e.pipemaxp), 0);
+            wr(core::ptr::addr_of_mut!(e.pipesel), 0);
+        }
+        critical_section::with(|cs| {
+            let alloc = unsafe { &mut *HCD_ALLOC[p].borrow(cs).get() };
+            alloc.free_pipe(pipe);
+            if self.dev_addr > 0
+                && (self.dev_addr as usize) < HCD_MAX_DEV
+                && epn > 0
+                && epn <= 15
+            {
+                alloc.ep_to_pipe[self.dev_addr as usize - 1][dir_in as usize][epn - 1] = 0;
+            }
+        });
+    }
+}
+
+// UsbHostDriver ─────────────────────────────────────────────────────────────
+
+impl UsbHostDriver for Rusb1HostDriver {
+    type Channel<T: channel::Type, D: channel::Direction> = Rusb1Channel<T, D>;
+
+    async fn wait_for_device_event(&self) -> DeviceEvent {
+        loop {
+            // Wait for either attach or detach.
+            let ev = core::future::poll_fn(|cx| {
+                HCD_EVENT_WAKER.register(cx.waker());
+                let ev =
+                    HCD_EVENTS.fetch_and(!(EVT_ATTACH | EVT_DETACH), Ordering::Acquire);
+                if ev & (EVT_ATTACH | EVT_DETACH) != 0 {
+                    return core::task::Poll::Ready(ev);
+                }
+                core::task::Poll::Pending
+            })
+            .await;
+
+            if ev & EVT_DETACH != 0 {
+                return DeviceEvent::Disconnected;
+            }
+
+            if ev & EVT_ATTACH != 0 {
+                // Spec: issue bus reset before reporting speed.
+                self.bus_reset().await;
+                let speed = self.port_speed();
+                return DeviceEvent::Connected(speed);
+            }
+        }
+    }
+
+    async fn bus_reset(&self) {
+        // Delegate to the existing async method.
+        Rusb1HostDriver::bus_reset(self).await;
+    }
+
+    fn alloc_channel<T: channel::Type, D: channel::Direction>(
+        &self,
+        addr: u8,
+        endpoint: &EndpointInfo,
+        _pre: bool,
+    ) -> Result<Self::Channel<T, D>, HostError> {
+        match T::ep_type() {
+            EndpointType::Control => {
+                // Pipe 0 (DCP).  Programme DCPMAXP + DEVADD for this device.
+                self.device_open(
+                    addr,
+                    endpoint.max_packet_size,
+                    self.port_speed(),
+                    0,
+                    0,
+                );
+                Ok(Rusb1Channel {
+                    port: self.port,
+                    pipe: 0,
+                    dev_addr: addr,
+                    ep_info: *endpoint,
+                    _phantom: core::marker::PhantomData,
+                })
+            }
+            other => {
+                let ep_addr = u8::from(endpoint.addr);
+                self.edpt_open(
+                    addr,
+                    ep_addr,
+                    other,
+                    endpoint.max_packet_size,
+                    endpoint.interval_ms,
+                )?;
+                let pipe = self
+                    .ep_to_pipe(addr, ep_addr)
+                    .ok_or(HostError::OutOfChannels)? as u8;
+                Ok(Rusb1Channel {
+                    port: self.port,
+                    pipe,
+                    dev_addr: addr,
+                    ep_info: *endpoint,
+                    _phantom: core::marker::PhantomData,
+                })
+            }
+        }
+    }
+}
+
+// UsbChannel ────────────────────────────────────────────────────────────────
+
+impl<T: channel::Type, D: channel::Direction> UsbChannel<T, D> for Rusb1Channel<T, D> {
+    /// Control IN: SETUP (IN direction) → DATA IN → STATUS (OUT ZLP).
+    async fn control_in(
+        &mut self,
+        setup: &SetupPacket,
+        buf: &mut [u8],
+    ) -> Result<usize, ChannelError>
+    where
+        T: channel::IsControl,
+        D: channel::IsIn,
+    {
+        let drv = Rusb1HostDriver { port: self.port };
+        let bytes = setup_to_bytes(setup);
+        drv.setup_send(self.dev_addr, &bytes)
+            .await?;
+        let n = drv
+            .control_data_in(self.dev_addr, buf)
+            .await?;
+        // Status stage: OUT ZLP.
+        drv.control_data_out(self.dev_addr, &[])
+            .await?;
+        Ok(n)
+    }
+
+    /// Control OUT: SETUP (OUT direction) → [DATA OUT] → STATUS (IN ZLP).
+    async fn control_out(
+        &mut self,
+        setup: &SetupPacket,
+        buf: &[u8],
+    ) -> Result<(), ChannelError>
+    where
+        T: channel::IsControl,
+        D: channel::IsOut,
+    {
+        let drv = Rusb1HostDriver { port: self.port };
+        let bytes = setup_to_bytes(setup);
+        drv.setup_send(self.dev_addr, &bytes)
+            .await?;
+        if !buf.is_empty() {
+            drv.control_data_out(self.dev_addr, buf)
+                .await?;
+        }
+        // Status stage: IN ZLP (receive and discard).
+        let mut dummy = [];
+        drv.control_data_in(self.dev_addr, &mut dummy)
+            .await?;
+        Ok(())
+    }
+
+    /// Retarget the channel to a new device address and/or endpoint.
+    ///
+    /// Called after SET_ADDRESS to migrate the control channel from address 0
+    /// to the newly assigned address.
+    fn retarget_channel(
+        &mut self,
+        addr: u8,
+        endpoint: &EndpointInfo,
+        _pre: bool,
+    ) -> Result<(), HostError> {
+        self.dev_addr = addr;
+        self.ep_info = *endpoint;
+        // Re-programme DCPMAXP/DEVADD for the new address.
+        let drv = Rusb1HostDriver { port: self.port };
+        drv.device_open(
+            addr,
+            endpoint.max_packet_size,
+            drv.port_speed(),
+            0,
+            0,
+        );
+        Ok(())
+    }
+
+    /// Non-control IN transfer on this channel's pipe.
+    async fn request_in(&mut self, buf: &mut [u8]) -> Result<usize, ChannelError>
+    where
+        D: channel::IsIn,
+    {
+        let drv = Rusb1HostDriver { port: self.port };
+        let ep_addr = u8::from(self.ep_info.addr);
+        drv.xfer_in(self.dev_addr, ep_addr, buf)
+            .await
+    }
+
+    /// Non-control OUT transfer on this channel's pipe.
+    async fn request_out(
+        &mut self,
+        buf: &[u8],
+        _ensure_transaction_end: bool,
+    ) -> Result<(), ChannelError>
+    where
+        D: channel::IsOut,
+    {
+        let drv = Rusb1HostDriver { port: self.port };
+        let ep_addr = u8::from(self.ep_info.addr);
+        drv.xfer_out(self.dev_addr, ep_addr, buf)
+            .await
+    }
+
+    /// Configure transfer timeouts for this channel.
+    ///
+    /// The RUSB1 peripheral does not have a hardware timeout counter; this
+    /// configuration is accepted but not acted upon.
+    fn set_timeout(&mut self, _timeout: TimeoutConfig) {}
 }

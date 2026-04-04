@@ -15,7 +15,7 @@
 //!
 //! ## Constraints
 //! - **Disables SSI TX DMA (ch 6).**  Call [`init`] instead of (or instead
-//!   of also calling) `rza1::ssi::init()`.  The SSI RX DMA path (ch 7) is
+//!   of also calling) `rza1l_hal::ssi::init()`.  The SSI RX DMA path (ch 7) is
 //!   not affected.
 //! - Routing works only while SCUX is streaming (i.e. after [`init`]).
 //! - `set_volume` and `fade_to` are safe to call from any context (they write
@@ -30,7 +30,7 @@
 //!
 //! Pass `0x0010_0000` for unity gain after init.
 
-use rza1::{
+use rza1l_hal::{
     UNCACHED_MIRROR_OFFSET,
     scux::{
         self, AudioInfo, DvuConfig, INTIFS_44100_TO_44100, IpcSel, MixConfig, OpcSel, RampConfig,
@@ -62,13 +62,13 @@ const FFD_CH: u8 = 0;
 const SRC_UNIT: u8 = 0;
 const SRC_PAIR: u8 = 0;
 
-// ── SSICTRL / FDTSEL values (using pub constants from rza1::scux) ─────────────────
+// ── SSICTRL / FDTSEL values (using pub constants from rza1l_hal::scux) ─────────────────
 //
 // SSICTRL_SSI0TX (bit 14): SCUX drives SSIF0 transmit directly.
 // BSP: SSICTRL_CIM_SSI0TX_SET = (1U << 14)
 // SSI012TEN (bit 1) is for 6-channel shared mode only — must stay 0 here.
 // With SSI0TX set, the SSI0 TX DMA (ch 6) must NOT be running simultaneously.
-use rza1::scux::{FDTSEL_DIVEN, FDTSEL_SCKSEL_SSIF0_WS, SSICTRL_SSI0TX};
+use rza1l_hal::scux::{FDTSEL_DIVEN, FDTSEL_SCKSEL_SSIF0_WS, SSICTRL_SSI0TX};
 
 // TSEL_SSIF0_WS: DIVEN=1 (bit 8) | SCKSEL=SSIF0_WS (value 8 = 0b1000).
 // BSP: FDTSEL_CIM_DIVEN_SET | FDTSEL_CIM_SCKSEL_SSIF0_WS_SET
@@ -83,14 +83,14 @@ const TSEL_SSIF0_WS: u32 = FDTSEL_DIVEN | FDTSEL_SCKSEL_SSIF0_WS;
 /// Fill `DVU_TX_BUF` via [`tx_buf_start`] and [`tx_buf_end`] before calling
 /// this function to avoid an initial burst of silence.
 ///
-/// This function calls [`rza1::ssi::init_rx_only`] internally to start the
-/// SSI0 receive path (codec → memory DMA).  **Do not** call `rza1::ssi::init()`
+/// This function calls [`rza1l_hal::ssi::init_rx_only`] internally to start the
+/// SSI0 receive path (codec → memory DMA).  **Do not** call `rza1l_hal::ssi::init()`
 /// separately — doing so starts the SSI0 TX DMA on ch 6, which conflicts with
 /// the SCUX direct-drive path on SSIF0.
 ///
 /// # Safety
 /// Must be called once from a single-threaded boot context after
-/// `rza1::stb::init()` and SSI0 pin-mux setup.
+/// `rza1l_hal::stb::init()` and SSI0 pin-mux setup.
 pub unsafe fn init() {
     unsafe {
         log::debug!("scux_dvu_path: init DVU output path (FFD0→IPC0→2SRC0→DVU0→OPC0→SSIF0)");
@@ -252,10 +252,10 @@ pub fn tx_buf_end() -> *mut i32 {
 /// Current DMA read position within the TX buffer (uncached), aligned to one
 /// stereo frame (8 bytes).
 ///
-/// Mirrors `rza1::ssi::tx_current_ptr` in signature and semantics — write
+/// Mirrors `rza1l_hal::ssi::tx_current_ptr` in signature and semantics — write
 /// audio samples *ahead of* this pointer.
 pub fn tx_current_ptr() -> *mut i32 {
-    let crsa = unsafe { rza1::dmac::current_src(crate::system::SCUX_FFD0_DMA_CH) };
+    let crsa = unsafe { rza1l_hal::dmac::current_src(crate::system::SCUX_FFD0_DMA_CH) };
     let aligned = crsa & !7u32;
     (aligned as usize + UNCACHED_MIRROR_OFFSET) as *mut i32
 }
