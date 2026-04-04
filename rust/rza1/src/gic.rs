@@ -136,8 +136,19 @@ static ICDICFR_INIT: [u32; 37] = [
 
 /// Initialize the GIC distributor and CPU interface.
 ///
+/// Initialise the Generic Interrupt Controller (GIC).
+///
 /// Mirrors `R_INTC_Init()` from `intc.c`. Must be called once, with global
 /// IRQ disabled, before any [`register`] / [`enable`] calls.
+///
+/// ## Priority filter (PMR)
+///
+/// This function sets `GICC_PMR = 0xF8` (priority threshold = 31).  The GIC
+/// forwards an interrupt to the CPU **only if its programmed priority is
+/// strictly less than PMR**.  Because the hardware reset priority for every
+/// interrupt is 31, an interrupt whose priority has *not* been explicitly
+/// lowered via [`set_priority`] will **never fire** even after [`enable`] is
+/// called.  Always call `set_priority(id, n)` with `n < 31` before `enable`.
 ///
 /// # Safety
 /// Writes to memory-mapped GIC registers. Must run exactly once before
@@ -216,6 +227,11 @@ pub unsafe fn register(id: u16, handler: Handler) {
 }
 
 /// Enable (unmask) interrupt `id` in the GIC distributor.
+///
+/// **Requires prior `set_priority` call:** `GICC_PMR` is set to priority 31
+/// by [`init`].  An interrupt left at its reset priority of 31 will not
+/// reach the CPU even after being enabled here.  Always call
+/// [`set_priority`]`(id, n)` with `n < 31` before this function.
 ///
 /// # Safety
 /// Writes to memory-mapped peripheral registers.

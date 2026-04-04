@@ -349,8 +349,9 @@ pub unsafe fn clear_flag(ch: u8) {
             return;
         }
         let addr = TSR[ch as usize];
-        // Loop until the flag is clear (may require multiple writes on some hardware).
-        loop {
+        // Loop until the flag is clear (normally 1–2 reads; bounded to 64 iterations
+        // so a continuously re-firing timer cannot trap the CPU here indefinitely).
+        for _ in 0..64u8 {
             let val = rd8(addr);
             if val & 0x01 == 0 {
                 break;

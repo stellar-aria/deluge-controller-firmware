@@ -107,8 +107,11 @@ pub unsafe fn l2_init() {
         wr32(L2C_REG2_INT_CLR, 0x0000_01FF);
 
         // 4. Lock D-cache ways (avoid DMA/cache coherency issues with DMA on L2).
+        //    Only 8 valid way-bits [7:0] on this PL310 configuration; use L2C_8WAY.
+        //    Only one AXI master (the Cortex-A9) is connected on RZ/A1L so only
+        //    D_LOCKDOWN0 needs to be written (masters 1–7 are unused).
         //    Unlock I-cache ways (allow instruction caching).
-        wr32(L2C_REG9_D_LOCK0, 0xFFFF_FFFF);
+        wr32(L2C_REG9_D_LOCK0, L2C_8WAY);
         wr32(L2C_REG9_I_LOCK0, 0x0000_0000);
 
         // 5. Enable L2 cache.

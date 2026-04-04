@@ -94,6 +94,8 @@ pub unsafe fn init() {
         // SDCR: CS2 & CS3 both 13 rows, CS2 = 9 col, CS3 = 10 col (64 MB chip),
         //       auto-refresh on, auto-precharge mode.
         // 0x00110912: CS2 col=9-bit, CS3 col=10-bit.
+        // NOTE: this value is hardcoded for the Deluge's Micron MT48LC16M16A2P-75
+        // (64 MB, 13-row, 10-col).  Adjust SDCR for any other SDRAM density.
         wr32(SDCR, 0x0011_0912);
 
         // RTCOR: refresh timer constant — 7.64 µs / 240 ns ≈ 128 cycles.
@@ -101,6 +103,10 @@ pub unsafe fn init() {
         wr32(RTCOR, 0xA55A_0080);
 
         // RTCSR: initialisation sequence start, clock = B-phy/4, refresh once.
+        // The BSC SDRAM controller automatically issues the required PRECHARGE ALL
+        // and ≥2 AUTO REFRESH cycles before accepting the Mode Register Set (MRS)
+        // command below.  No explicit CPU delay is needed — the BSC hardware manages
+        // the full JEDEC power-up sequence via its state machine.
         wr32(RTCSR, 0xA55A_0008);
 
         // SDRAM mode register: burst-length 1, sequential, CAS-latency 2.

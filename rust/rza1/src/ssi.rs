@@ -114,7 +114,8 @@ const SWRSTCR1: usize = 0xFCFE_0460;
 /// Add this offset to any cached internal-SRAM virtual address to obtain its
 /// uncached alias.  DMA transfers go directly to the physical bus, bypassing
 /// the CPU cache, so the CPU must access DMA buffers through this alias.
-pub const UNCACHED_MIRROR_OFFSET: usize = 0x4000_0000;
+// UNCACHED_MIRROR_OFFSET is defined at crate root (crate::UNCACHED_MIRROR_OFFSET).
+use crate::UNCACHED_MIRROR_OFFSET;
 
 // ── TX / RX sample buffers ───────────────────────────────────────────────────
 

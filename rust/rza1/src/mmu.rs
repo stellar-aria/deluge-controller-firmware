@@ -28,11 +28,12 @@ use core::arch::asm;
 // (bits [1:0] = 0b10 → section entry; AP=b11 full access; Domain=15)
 // ---------------------------------------------------------------------------
 
-/// Strongly-ordered memory (device I/O). B=00, C=00, TEX=000.
+/// Strongly-ordered memory (device I/O). TEX=000, C=0, B=0.
 pub const PARA_STRONGLY_ORDERED: u32 = 0x0DE2;
-/// Normal non-cached.  B=10, C=00, TEX=001.
+/// Normal non-cached.  TEX=001, C=0, B=0 → inner/outer non-cacheable normal memory.
+/// (The bit encoding: AP[2:0]=b011=full access, Domain=15, nG=1, S=1, TEX=001, C=0, B=0.)
 pub const PARA_NORMAL_NOT_CACHE: u32 = 0x1DE2;
-/// Normal write-back, write-allocate (fully cached). B=11, C=10, TEX=001.
+/// Normal write-back, write-allocate (fully cached). TEX=001, C=1, B=1.
 pub const PARA_NORMAL_CACHE: u32 = 0x1DEE;
 
 // ---------------------------------------------------------------------------
@@ -105,8 +106,9 @@ pub unsafe fn init_and_enable() {
         asm!("mcr p15, 0, {0}, c2, c0, 2", in(reg) 0u32, options(nomem, nostack));
         isb();
 
-        // TTBR0: table base + RGN=b01 (outer WB cached) + IRGN=b01 (inner WB WA).
-        // Bit[3] = RGN[0], bit[6] = IRGN[0] (IRGN encoding: bit[0] is in bit[6]).
+        // TTBR0: table base + RGN=0b01 (outer WB cached) + IRGN=0b01 (inner WB WA).
+        // Bits[4:3] = RGN[1:0] = 0b01 (outer write-back, write-allocate).
+        // Bit[6] = IRGN[0] (with IRGN[1] in bit[0] = 0) gives IRGN = 0b01 (inner WB-WA).
         let ttbr0 = (table_ptr as u32) | 0x08 | 0x40;
         asm!("mcr p15, 0, {0}, c2, c0, 0", in(reg) ttbr0, options(nomem, nostack));
         isb();

@@ -58,6 +58,39 @@ pub static PIPE_DONE: AtomicU16 = AtomicU16::new(0);
 pub static PIPE_NRDY: AtomicU16 = AtomicU16::new(0);
 
 // ---------------------------------------------------------------------------
+// ISO OUT packet hook
+// ---------------------------------------------------------------------------
+
+/// Pipe number for which the ISO OUT hook is registered.  [`usize::MAX`] means
+/// no hook is registered.
+static mut ISO_OUT_HOOK_PIPE: usize = usize::MAX;
+
+/// Optional callback invoked by the BRDY ISR immediately after an ISO OUT packet
+/// is fully received, before the task waker is signalled.
+///
+/// `buf` points to the start of the received bytes; `len` is the byte count.
+///
+/// # Safety
+/// Called from IRQ context on single-core ARMv7-A (IRQs already disabled).
+static mut ISO_OUT_HOOK: Option<unsafe fn(*const u8, usize)> = None;
+
+/// Register an ISO OUT packet callback for `pipe`.
+///
+/// The callback is invoked from the BRDY ISR with a pointer to the fully
+/// received packet and its byte count, before the task waker is signalled.
+/// This lets audio conversion run with zero scheduling latency.
+///
+/// # Safety
+/// Must be called before the pipe is armed and before BRDY interrupts are
+/// enabled for it.  Not interrupt-safe — call from task context only.
+pub unsafe fn register_iso_out_hook(pipe: usize, cb: unsafe fn(*const u8, usize)) {
+    unsafe {
+        core::ptr::addr_of_mut!(ISO_OUT_HOOK_PIPE).write(pipe);
+        core::ptr::addr_of_mut!(ISO_OUT_HOOK).write(Some(cb));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Active transfer state (written by task, read by ISR)
 // ---------------------------------------------------------------------------
 
@@ -398,6 +431,15 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
 
         let done = len < mps || state.remaining == 0;
         if done {
+            // Invoke the ISO OUT hook (if registered for this pipe) before
+            // resetting state.  `state.buf` has advanced by `transferred` bytes
+            // since the transfer started; rewind to recover the packet start.
+            if n == core::ptr::addr_of!(ISO_OUT_HOOK_PIPE).read() {
+                if let Some(hook) = core::ptr::addr_of!(ISO_OUT_HOOK).read() {
+                    let start = state.buf.as_ptr().sub(state.transferred as usize);
+                    hook(start, state.transferred as usize);
+                }
+            }
             state.buf = core::ptr::NonNull::dangling();
             // Reset remaining to 0 so the ISO guard at the top of this function
             // fires correctly if BRDY re-enters before the task calls read() again.

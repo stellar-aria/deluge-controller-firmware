@@ -66,15 +66,21 @@ const TDFE: u16 = 1 << 5; // TX FIFO Data Empty  (count ≤ trigger)
 // TX FIFO depth
 const TX_FIFO_SIZE: usize = 16;
 
-// Peripheral clock: XTAL(≈13.2 MHz) × 5 ≈ 66.128 MHz.
+// Peripheral clock: XTAL(13.2256 MHz) × 5 = 66.128 MHz.
+// The Deluge uses a 13.2256 MHz crystal, giving P0 = 66,128,000 Hz exactly.
 // Used for SCBRR calculation with BGDM=1 (double-speed mode):
 //   SCBRR = round(P_CLK / (16 × baud)) − 1
-const P_CLK: u32 = 66_128_125;
+// BGDM=1 (SCEMR bit 7) doubles the effective clock to the BRG, so the
+// oversampling ratio stays at 16× against the nominal SCBRR formula.
+const P_CLK: u32 = 66_128_000;
 
 /// Number of SCIF channels on RZ/A1L.
 pub const NUM_CHANNELS: usize = 5;
 
-// GIC base IDs for SCIF0; pattern: RXI_n = RXI_BASE + n*4, TXI_n = TXI_BASE + n*4
+// GIC base IDs for SCIF0; per RZ/A1L HW Manual §A.2:
+//   SCIFn: BRI = 221+n*4, ERI = 222+n*4, RXI = 223+n*4, TXI = 224+n*4
+const BRI_BASE: u16 = 221;
+const ERI_BASE: u16 = 222;
 const RXI_BASE: u16 = 223;
 const TXI_BASE: u16 = 224;
 
@@ -85,10 +91,8 @@ const UART_IRQ_PRIORITY: u8 = 10;
 // DMA RX constants and static storage
 // ---------------------------------------------------------------------------
 
-/// Offset from a cached SRAM address to its uncached mirror alias.
-/// Virtual address 0x2002_0000 (cached) maps to the same physical page as
-/// 0x6002_0000 (uncached); the difference is exactly 0x4000_0000.
-const UNCACHED_MIRROR_OFFSET: usize = 0x4000_0000;
+// UNCACHED_MIRROR_OFFSET is defined at crate root (crate::UNCACHED_MIRROR_OFFSET).
+use crate::UNCACHED_MIRROR_OFFSET;
 
 /// DMA trigger-mode bits for SCIF: DMA_AM_FOR_SCIF = 0b010 << 8.
 const DMA_AM_FOR_SCIF: u32 = 0x0200;
@@ -343,8 +347,11 @@ pub unsafe fn set_baud(ch: usize, baud_rate: u32) {
     }
 }
 
-/// Register and enable the RXI and TXI GIC interrupt sources for SCIF
+/// Register and enable the RXI, TXI, and ERI GIC interrupt sources for SCIF
 /// channel `ch`.
+///
+/// ERI (Error Interrupt) must be registered to clear SCFSR error flags
+/// (framing errors, overrun) that would otherwise permanently stall reception.
 ///
 /// Must be called after [`init`] and before global IRQ is enabled.
 ///
@@ -354,36 +361,48 @@ pub unsafe fn set_baud(ch: usize, baud_rate: u32) {
 pub unsafe fn register_irqs_for(ch: usize) {
     unsafe {
         debug_assert!(ch < NUM_CHANNELS);
+        let eri = ERI_BASE + (ch as u16) * 4;
         let rxi = RXI_BASE + (ch as u16) * 4;
         let txi = TXI_BASE + (ch as u16) * 4;
-        log::trace!("uart: ch{} registering RXI={} TXI={}", ch, rxi, txi);
+        log::trace!("uart: ch{} registering ERI={} RXI={} TXI={}", ch, eri, rxi, txi);
+        gic::register(eri, ERI_HANDLERS[ch]);
         gic::register(rxi, RXI_HANDLERS[ch]);
         gic::register(txi, TXI_HANDLERS[ch]);
+        gic::set_priority(eri, UART_IRQ_PRIORITY);
         gic::set_priority(rxi, UART_IRQ_PRIORITY);
         gic::set_priority(txi, UART_IRQ_PRIORITY);
+        gic::enable(eri);
         gic::enable(rxi);
         gic::enable(txi);
     }
 }
 
-/// Register and enable only the **TXI** GIC interrupt for SCIF channel `ch`.
+/// Register and enable **TXI** and **ERI** GIC interrupts for SCIF channel `ch`.
 ///
 /// Used when the channel uses DMA for RX (so we must not enable RXI in the
 /// GIC — RIE=1 in SCSCR sends the request to the DMAC, not the GIC).
+/// ERI is still registered because error interrupts (framing errors, overrun)
+/// fire via the GIC independently of the DMA path and must be cleared to
+/// prevent the SCIF from silently discarding all subsequent received bytes.
 ///
 /// # Safety
 /// Writes to memory-mapped GIC registers. Caller must ensure `ch` < [`NUM_CHANNELS`].
 pub unsafe fn register_txi_for(ch: usize) {
     unsafe {
         debug_assert!(ch < NUM_CHANNELS);
+        let eri = ERI_BASE + (ch as u16) * 4;
         let txi = TXI_BASE + (ch as u16) * 4;
         log::trace!(
-            "uart: ch{} registering TXI={} (DMA RX, no RXI GIC)",
+            "uart: ch{} registering ERI={} TXI={} (DMA RX, no RXI GIC)",
             ch,
+            eri,
             txi
         );
+        gic::register(eri, ERI_HANDLERS[ch]);
         gic::register(txi, TXI_HANDLERS[ch]);
+        gic::set_priority(eri, UART_IRQ_PRIORITY);
         gic::set_priority(txi, UART_IRQ_PRIORITY);
+        gic::enable(eri);
         gic::enable(txi);
     }
 }
@@ -518,6 +537,27 @@ pub unsafe fn init_dma_tx(ch: usize, dma_ch: u8, dmars: u32) {
 // Interrupt handlers
 // ---------------------------------------------------------------------------
 
+/// Called from GIC dispatch when ERI fires for SCIF `ch`.
+///
+/// Clears error flags in SCFSR (ER, BRK) and SCLSR (ORER) so the SCIF can
+/// resume forwarding received bytes.  Without this, a single framing error
+/// permanently stalls RX because the SCIF holds RDF=0 until ER is cleared.
+/// Wakes the RX task so it retries after recovery.
+fn on_eri(ch: usize) {
+    let b = base(ch);
+    unsafe {
+        // Clear sticky error bits.  The mask 0xFF6E preserves non-error status
+        // bits while writing 0 to ER(bit3)/BRK(bit6)/DR(bit0) — matching the
+        // pattern used in init() and set_baud().
+        let scfsr = rr16(b + SCFSR);
+        wr16(b + SCFSR, scfsr & 0xFF6E);
+        // Clear overrun error in SCLSR (ORER = bit 0).
+        let sclsr = rr16(b + SCLSR);
+        wr16(b + SCLSR, sclsr & !1u16);
+    }
+    UART_STATE[ch].rx_waker.wake();
+}
+
 /// Called from GIC dispatch when RXI fires for SCIF `ch`.
 /// Disables RIE (stops further RXI) and wakes any pending rx future.
 fn on_rxi(ch: usize) {
@@ -540,6 +580,21 @@ fn on_txi(ch: usize) {
     UART_STATE[ch].tx_waker.wake();
 }
 
+fn eri0_handler() {
+    on_eri(0);
+}
+fn eri1_handler() {
+    on_eri(1);
+}
+fn eri2_handler() {
+    on_eri(2);
+}
+fn eri3_handler() {
+    on_eri(3);
+}
+fn eri4_handler() {
+    on_eri(4);
+}
 fn rxi0_handler() {
     on_rxi(0);
 }
@@ -572,6 +627,13 @@ fn txi4_handler() {
 }
 
 type HandlerFn = fn();
+static ERI_HANDLERS: [HandlerFn; NUM_CHANNELS] = [
+    eri0_handler,
+    eri1_handler,
+    eri2_handler,
+    eri3_handler,
+    eri4_handler,
+];
 static RXI_HANDLERS: [HandlerFn; NUM_CHANNELS] = [
     rxi0_handler,
     rxi1_handler,

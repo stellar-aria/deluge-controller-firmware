@@ -267,12 +267,14 @@ impl<const PORT: u8, const BIT: u8> embedded_hal::digital::ErrorType for Pin<POR
 impl<const PORT: u8, const BIT: u8> embedded_hal::digital::InputPin for Pin<PORT, BIT, Input> {
     #[inline]
     fn is_high(&mut self) -> Result<bool, Infallible> {
-        let val = unsafe { core::ptr::read_volatile(p(PORT)) };
+        // Read PPR (Port Pin Read) — reflects actual pin voltage.
+        // p() is the output-latch register and reads back 0 for input-configured pins.
+        let val = unsafe { core::ptr::read_volatile(ppr(PORT)) };
         Ok(val & (1u16 << BIT) != 0)
     }
     #[inline]
     fn is_low(&mut self) -> Result<bool, Infallible> {
-        let val = unsafe { core::ptr::read_volatile(p(PORT)) };
+        let val = unsafe { core::ptr::read_volatile(ppr(PORT)) };
         Ok(val & (1u16 << BIT) == 0)
     }
 }

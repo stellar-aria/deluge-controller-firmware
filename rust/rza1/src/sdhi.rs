@@ -243,9 +243,15 @@ unsafe fn reg32(base: usize, off: usize) -> *mut u32 {
 /// Writes to memory-mapped peripheral registers.
 pub unsafe fn init(port: u8) {
     unsafe {
-        // ---- enable SDHI module clock (STBCR12: bits 3:0 = SDHI11, 10, 01, 00) ----
+        // ---- enable SDHI module clock (STBCR12) ----
+        // STBCR12 layout (bit 7..0): [1][1][1][1][SDHI00][SDHI01][SDHI10][SDHI11]
+        //   SDHI0 (port 0): bits 3 (SDHI00) + 2 (SDHI01) — mask 0x0C
+        //   SDHI1 (port 1): bits 1 (SDHI10) + 0 (SDHI11) — mask 0x03
+        // Use RMW to enable only the clocks for the requested port; preserve
+        // the other port's stop-bits so unused clocks stay gated.
         let stbcr12 = STBCR12 as *mut u8;
-        stbcr12.write_volatile(0xF0); // enable both SDHI0 and SDHI1
+        let bits: u8 = if port == 0 { 0x0C } else { 0x03 };
+        stbcr12.write_volatile(stbcr12.read_volatile() & !bits);
         let _ = stbcr12.read_volatile(); // dummy read (required per RZ/A1 HW manual)
 
         let base = port_base(port);
@@ -297,17 +303,27 @@ pub unsafe fn init(port: u8) {
 pub unsafe fn set_clock_fast(port: u8) {
     unsafe {
         let base = port_base(port);
-        // Wait for clock divider change to settle
+        // Wait for clock divider change to settle (SCLKDIVEN = 1 means ready).
+        let mut ok = false;
         for _ in 0..10_000u32 {
             if reg16(base, OFF_INFO2).read_volatile() & INFO2_SCLKDIVEN != 0 {
+                ok = true;
                 break;
             }
         }
+        if !ok {
+            log::warn!("sdhi{}: set_clock_fast: SCLKDIVEN pre-change timeout", port);
+        }
         reg16(base, OFF_CLK_CTRL).write_volatile(CLK_DIV_4 | CLK_ENABLE);
+        ok = false;
         for _ in 0..10_000u32 {
             if reg16(base, OFF_INFO2).read_volatile() & INFO2_SCLKDIVEN != 0 {
+                ok = true;
                 break;
             }
+        }
+        if !ok {
+            log::warn!("sdhi{}: set_clock_fast: SCLKDIVEN post-change timeout", port);
         }
     }
 }

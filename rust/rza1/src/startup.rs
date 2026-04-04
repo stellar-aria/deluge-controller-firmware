@@ -172,7 +172,7 @@ _reset_handler:
 
     /* 2. Multi-core guard: put secondary cores to sleep */
     mrc p15, 0, r0, c0, c0, 5    /* Read MPIDR                   */
-    ands r0, r0, #0xF             /* Core ID in bits[3:0]         */
+    ands r0, r0, #0x3             /* Aff0 = CPU ID in bits[1:0] (Cortex-A9 MPCore) */
     wfine                         /* Secondary core: wait for int  */
     bne _reset_handler            /* Loop if still not core 0     */
 

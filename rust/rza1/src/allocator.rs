@@ -128,4 +128,8 @@ pub static SRAM: CsHeap = CsHeap::empty();
 /// ```rust,ignore
 /// unsafe { SDRAM.init(0x0C00_0000 as *mut u8, 64 * 1024 * 1024) }
 /// ```
+///
+/// **Calling `allocate` before `init` will return `AllocError`** (which causes
+/// `Box::new_in` / `Vec::try_reserve` to panic). There is no silent UB, but
+/// any allocation attempt before `init` will fail at runtime.
 pub static SDRAM: CsHeap = CsHeap::empty();

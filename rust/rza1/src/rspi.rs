@@ -97,10 +97,22 @@ const SPBFCR_CV_TRANSFER: u8 = 0b0011_0010;
 const SPBFCR_RX_RESET: u8 = 1 << 6;
 
 // ── SPCMD0 values ─────────────────────────────────────────────────────────────
-/// 8-bit, CPHA=0, CPOL=0, SSL0 — used for OLED SSD1309 commands and pixel data.
-/// SPB field (bits 11:8) = 0b0111 → 8 bits per frame.
+// TRM §16 SPCMD bit fields: bit[1] = CPOL (0 = RSPCK idle low), bit[0] = CPHA
+// (0 = sample on odd/leading edge).  Reset value = H'070D (CPOL=0, CPHA=1).
+//
+// The Deluge peripherals (MAX5136 CV DAC, SSD1309 OLED) both require SPI
+// Mode 0 (CPOL=0, CPHA=0).  The C firmware incorrectly used CPOL=1 (Mode 2)
+// in SPCMD0 = 0x0302/0x0702; this was a latent bug that happened to work on
+// those peripherals because both tolerate mismatched polarity in practice, but
+// the TRM default and the datasheet-specified polarity are both CPOL=0.
+
+/// 8-bit Mode 0 (CPOL=0, CPHA=0), SSL0.
+/// SPB[3:0] (bits 11:8) = 0b0111 → 8 bits per frame.
+/// BRDV[1:0] (bits 3:2) = 0b00  → base bit rate / 1.
 const SPCMD0_8BIT: u16 = 0b0000_0111_0000_0000;
-/// 32-bit, CPHA=0, CPOL=0, SSL0, frame-length field = 32 bits
+/// 32-bit Mode 0 (CPOL=0, CPHA=0), SSL0.
+/// SPB[3:0] (bits 11:8) = 0b0011 → 32 bits per frame.
+/// BRDV[1:0] (bits 3:2) = 0b00  → base bit rate / 1.
 const SPCMD0_32BIT: u16 = 0b0000_0011_0000_0000;
 
 // ── P1 clock frequency ────────────────────────────────────────────────────────
@@ -304,8 +316,18 @@ pub unsafe fn send32_blocking(ch: u8, data: u32) {
             data,
             reg8(ch, OFF_SPSR).read_volatile()
         );
-        // Wait for TX buffer space
-        while reg8(ch, OFF_SPSR).read_volatile() & SPSR_SPTEF == 0 {}
+        // Wait for TX buffer space (bounded to guard against ungated clock).
+        // ~1 M polls ≈ a few ms at 400 MHz; SPTEF should assert in microseconds.
+        let mut ready = false;
+        for _ in 0..1_000_000u32 {
+            if reg8(ch, OFF_SPSR).read_volatile() & SPSR_SPTEF != 0 {
+                ready = true;
+                break;
+            }
+        }
+        if !ready {
+            log::warn!("rspi: ch{} send32_blocking: SPTEF timeout (STBCR10 cleared?)", ch);
+        }
         log::debug!("rspi: ch{} SPTEF ok", ch);
 
         // Reset RX buffer (prevents overflow)
@@ -316,8 +338,18 @@ pub unsafe fn send32_blocking(ch: u8, data: u32) {
         reg32(ch, OFF_SPDR).write_volatile(data);
         log::debug!("rspi: ch{} SPDR written, waiting TEND", ch);
 
-        // Wait for all bits to be shifted out
-        while reg8(ch, OFF_SPSR).read_volatile() & SPSR_TEND == 0 {}
+        // Wait for all bits to be shifted out (bounded; TEND should follow SPTEF
+        // by at most frame_bits / SCK_freq ≈ 32 / 10 MHz = 3.2 µs).
+        let mut done = false;
+        for _ in 0..1_000_000u32 {
+            if reg8(ch, OFF_SPSR).read_volatile() & SPSR_TEND != 0 {
+                done = true;
+                break;
+            }
+        }
+        if !done {
+            log::warn!("rspi: ch{} send32_blocking: TEND timeout", ch);
+        }
         log::debug!("rspi: ch{} TEND ok", ch);
     }
 }

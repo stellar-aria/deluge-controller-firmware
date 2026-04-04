@@ -59,7 +59,8 @@ use crate::dmac;
 // ── Uncached mirror (must match ssi.rs) ──────────────────────────────────────
 
 /// Add to any internal-SRAM cached VA to get its uncached alias.
-pub const UNCACHED_MIRROR_OFFSET: usize = 0x4000_0000;
+// UNCACHED_MIRROR_OFFSET is defined at crate root (crate::UNCACHED_MIRROR_OFFSET).
+use crate::UNCACHED_MIRROR_OFFSET;
 
 // ── SCUX top-level base ───────────────────────────────────────────────────────
 

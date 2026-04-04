@@ -32,6 +32,7 @@ const OFF_CHCTRL: usize = 0x28; // Channel control
 const OFF_CHCFG: usize = 0x2C; // Channel config
 const OFF_CHITVL: usize = 0x30; // Channel interval
 const OFF_CHEXT: usize = 0x34; // Channel extension
+const OFF_CHSTAT: usize = 0x24; // Channel status (TC = bit 6)
 const OFF_NXLA: usize = 0x38; // Next link-descriptor address
 
 // ── CHCTRL bits ──────────────────────────────────────────────────────────────
@@ -133,14 +134,21 @@ pub unsafe fn init_with_link_descriptor(ch: u8, descriptor: *const u32, dmars_va
 ///
 /// Mirrors `dmaChannelStart()` from the C firmware.
 ///
+/// A DSB is inserted between SWRST and SETEN to ensure the peripheral sees
+/// the reset complete before the enable is asserted (ARMv7-A write-buffer
+/// ordering requirement for back-to-back MMIO writes to the same device).
+///
 /// # Safety
 /// The channel must have been initialised with [`init_with_link_descriptor`].
 pub unsafe fn channel_start(ch: u8) {
     unsafe {
         log::trace!("dmac: ch{} start (SWRST + SETEN)", ch);
         let chctrl = ch_reg(ch, OFF_CHCTRL);
-        chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SWRST);
-        chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SETEN);
+        // CHCTRL bits are write-1-to-trigger; write as clean values, not RMW.
+        chctrl.write_volatile(CHCTRL_SWRST);
+        // DSB required: drain write buffer so SWRST reaches the DMAC before SETEN.
+        core::arch::asm!("dsb", options(nostack));
+        chctrl.write_volatile(CHCTRL_SETEN);
     }
 }
 
@@ -178,7 +186,8 @@ use core::future::poll_fn;
 use core::task::Poll;
 use embassy_sync::waitqueue::AtomicWaker;
 
-/// GIC interrupt ID base for DMAC completion interrupts: DMAINT0 = 41.
+/// GIC interrupt ID base for DMAC completion interrupts.
+/// DMAINT0 = GIC ID 41; channels 0–15 map to IDs 41–56 (RZ/A1L TRM §A.2).
 const DMAINT_BASE: u16 = 41;
 
 /// Per-channel waker for DMA completion interrupts.
@@ -239,8 +248,10 @@ pub unsafe fn init_register_mode(ch: u8, chcfg: u32, dst: u32, dmars: u32) {
         ch_reg(ch, OFF_N0DA).write_volatile(dst);
 
         // 4. Software reset + clear TC.
+        // CHCTRL action bits are write-1-to-trigger; write as a clean value
+        // (not RMW) to avoid re-triggering actions from stale status read-back.
         let chctrl = ch_reg(ch, OFF_CHCTRL);
-        chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_SWRST | CHCTRL_CLRTC);
+        chctrl.write_volatile(CHCTRL_SWRST | CHCTRL_CLRTC);
         // Re-write N0DA after reset (matches C firmware's double-write pattern).
         ch_reg(ch, OFF_N0DA).write_volatile(dst);
 
@@ -299,8 +310,9 @@ pub unsafe fn start_transfer(ch: u8, src: u32, count: u32) {
         );
         ch_reg(ch, OFF_N0SA).write_volatile(src);
         ch_reg(ch, OFF_N0TB).write_volatile(count);
+        // CHCTRL action bits are write-1-to-trigger; write as a clean value.
         let chctrl = ch_reg(ch, OFF_CHCTRL);
-        chctrl.write_volatile(chctrl.read_volatile() | CHCTRL_CLRTC | CHCTRL_SETEN);
+        chctrl.write_volatile(CHCTRL_CLRTC | CHCTRL_SETEN);
     }
 }
 
@@ -312,9 +324,9 @@ pub unsafe fn start_transfer(ch: u8, src: u32, count: u32) {
 pub async fn wait_transfer_complete(ch: u8) {
     poll_fn(|cx| {
         DMAC_WAKERS[ch as usize].register(cx.waker());
-        // Check C-flag (CHSTAT.TC) directly to avoid missing a completion
-        // that arrived before we registered the waker.
-        let chstat = unsafe { ch_reg(ch, 0x24).read_volatile() };
+        // Check TC flag (CHSTAT.TC = bit 6) directly to avoid missing a
+        // completion that arrived before we registered the waker.
+        let chstat = unsafe { ch_reg(ch, OFF_CHSTAT).read_volatile() };
         if chstat & (1 << 6) != 0 {
             // TC bit set — transfer complete
             Poll::Ready(())

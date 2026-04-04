@@ -83,8 +83,12 @@ const STBCR9_INIT: u8 = 0b11110111;
 /// `[RSPI0][RSPI1][RSPI2][RSPI3][RSPI4][CD-ROM][RSPDIF][RGPVG]`
 const STBCR10_INIT: u8 = 0b00011111;
 
-/// STBCR11: SSIF0–3 and SSIF5 enabled; SSIF4 stopped.
-/// `[1][1][SSIF0][SSIF1][SSIF2][SSIF3][SSIF4][SSIF5]`
+/// STBCR11: SSIF0 enabled; SSIF1–3 stopped.
+/// The RZ/A1L has 4 SSIF channels (0–3); RZ/A1H has 6. SSIF4/5 do not
+/// exist on this variant — do not reference them here.
+/// `[1][1][SSIF0][SSIF1][SSIF2][SSIF3][reserved][reserved]`
+/// Bit 5 (SSIF0) = 0 → clock running.  Bits 3–2 (SSIF3–SSIF2) kept stopped
+/// until their respective drivers enable them via STBCR11 RMW.
 const STBCR11_INIT: u8 = 0b11011111;
 
 /// STBCR12: SDHI0 channel 0 enabled (port 0, pins 0+1); SDHI1, SDHI0 ch1 stopped.
