@@ -31,12 +31,12 @@
 //! Pass `0x0010_0000` for unity gain after init.
 
 use rza1::{
+    UNCACHED_MIRROR_OFFSET,
     scux::{
         self, AudioInfo, DvuConfig, INTIFS_44100_TO_44100, IpcSel, MixConfig, OpcSel, RampConfig,
         SrcConfig, SrcMode,
     },
     ssi,
-    UNCACHED_MIRROR_OFFSET,
 };
 
 /// Number of stereo frames in the DVU path DMA buffer.

@@ -214,8 +214,15 @@ const STEREO_FRAME_ALIGN_MASK: u32 = !7u32;
 /// Trigger: destination-select (REQD=1) — SSI TX FIFO drives the request.
 #[inline(always)]
 const fn tx_chcfg(dma_ch: u8) -> u32 {
-    CHCFG_DMS | CHCFG_DEM | CHCFG_DAD | CHCFG_DDS_32BIT | CHCFG_SDS_32BIT
-        | CHCFG_AM_BURST | CHCFG_HIEN | CHCFG_REQD | CHCFG_LVL
+    CHCFG_DMS
+        | CHCFG_DEM
+        | CHCFG_DAD
+        | CHCFG_DDS_32BIT
+        | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST
+        | CHCFG_HIEN
+        | CHCFG_REQD
+        | CHCFG_LVL
         | (dma_ch as u32 & 7)
 }
 
@@ -224,8 +231,14 @@ const fn tx_chcfg(dma_ch: u8) -> u32 {
 /// Trigger: source-select (REQD=0) — SSI RX FIFO drives the request.
 #[inline(always)]
 const fn rx_chcfg(dma_ch: u8) -> u32 {
-    CHCFG_DMS | CHCFG_DEM | CHCFG_SAD | CHCFG_DDS_32BIT | CHCFG_SDS_32BIT
-        | CHCFG_AM_BURST | CHCFG_HIEN | CHCFG_LVL
+    CHCFG_DMS
+        | CHCFG_DEM
+        | CHCFG_SAD
+        | CHCFG_DDS_32BIT
+        | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST
+        | CHCFG_HIEN
+        | CHCFG_LVL
         | (dma_ch as u32 & 7)
 }
 
@@ -338,7 +351,11 @@ pub unsafe fn init(cfg: &SsiConfig) {
         // 5. Start both DMA channels (software-reset then enable).
         dmac::channel_start(cfg.tx_dma_ch);
         dmac::channel_start(cfg.rx_dma_ch);
-        log::debug!("ssi: DMA TX ch{} + RX ch{} started", cfg.tx_dma_ch, cfg.rx_dma_ch);
+        log::debug!(
+            "ssi: DMA TX ch{} + RX ch{} started",
+            cfg.tx_dma_ch,
+            cfg.rx_dma_ch
+        );
 
         // 6. Release the FIFOs from reset and enable TX/RX.
         //    This mirrors `ssiStart()` from the C firmware exactly.

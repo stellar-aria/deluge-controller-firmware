@@ -25,8 +25,8 @@
 //! | STBCR11  | 0b11011111 | SSIF0                                        |
 //! | STBCR12  | 0b11111011 | SDHI0 channel 0                              |
 
-use rza1::stb::StbConfig;
 use rza1::ssi::SsiConfig;
+use rza1::stb::StbConfig;
 
 // ---------------------------------------------------------------------------
 // Board-specific configuration constants
@@ -38,38 +38,38 @@ use rza1::ssi::SsiConfig;
 /// All other module clocks are left stopped (gated) to minimise power and
 /// avoid spurious interrupt sources.
 pub const STB_CONFIG: StbConfig = StbConfig {
-    /// CoreSight enabled; port-level standby for unused bits.
-    /// `[1][1][0][1][0][1][CoreSight][_]`
+    // CoreSight enabled; port-level standby for unused bits.
+    // `[1][1][0][1][0][1][CoreSight][_]`
     stbcr2: 0b01101010,
-    /// MTU2 and PWM enabled; IEBus, IrDA, LIN0/1, RSCAN2 stopped.
-    /// `[IEBus][IrDA][LIN0][LIN1][MTU2][RSCAN2][0][PWM]`
+    // MTU2 and PWM enabled; IEBus, IrDA, LIN0/1, RSCAN2 stopped.
+    // `[IEBus][IrDA][LIN0][LIN1][MTU2][RSCAN2][0][PWM]`
     stbcr3: 0b11110101,
-    /// SCIF0–4 enabled; reserved bits [2:0] held at 1.
-    /// `[SCIF0][SCIF1][SCIF2][SCIF3][SCIF4][1][1][1]`
+    // SCIF0–4 enabled; reserved bits [2:0] held at 1.
+    // `[SCIF0][SCIF1][SCIF2][SCIF3][SCIF4][1][1][1]`
     stbcr4: 0b00000111,
-    /// OSTM0 and OSTM1 enabled; SCIM0/1 stopped.
-    /// `[SCIM0][SCIM1][1][1][1][1][OSTM1][OSTM0]`
+    // OSTM0 and OSTM1 enabled; SCIM0/1 stopped.
+    // `[SCIM0][SCIM1][1][1][1][1][OSTM1][OSTM0]`
     stbcr5: 0b11111100,
-    /// RTClock enabled; A/D, CEU, JCU stopped.
-    /// `[A/D][CEU][1][1][1][1][JCU][RTClock]`
+    // RTClock enabled; A/D, CEU, JCU stopped.
+    // `[A/D][CEU][1][1][1][1][JCU][RTClock]`
     stbcr6: 0b01111111,
-    /// DVDEC0/1, ETHER, USB0, USB1 enabled; FLCTL stopped.
-    /// `[DVDEC0][DVDEC1][1][ETHER][FLCTL][1][USB0][USB1]`
+    // DVDEC0/1, ETHER, USB0, USB1 enabled; FLCTL stopped.
+    // `[DVDEC0][DVDEC1][1][ETHER][FLCTL][1][USB0][USB1]`
     stbcr7: 0b00111101,
-    /// SCUX clock enabled; IMR-LS2x, MMCIF, MOST50 stopped.
-    /// `[IMR-LS20][IMR-LS21][IMR-LSD][MMCIF][MOST50][1][SCUX][1]`
+    // SCUX clock enabled; IMR-LS2x, MMCIF, MOST50 stopped.
+    // `[IMR-LS20][IMR-LS21][IMR-LSD][MMCIF][MOST50][1][SCUX][1]`
     stbcr8: 0b11111101,
-    /// VDC50 enabled; I2Cx, SPIBSCx, VDC51 stopped.
-    /// `[I2C0][I2C1][I2C2][I2C3][SPIBSC0][SPIBSC1][VDC50][VDC51]`
+    // VDC50 enabled; I2Cx, SPIBSCx, VDC51 stopped.
+    // `[I2C0][I2C1][I2C2][I2C3][SPIBSC0][SPIBSC1][VDC50][VDC51]`
     stbcr9: 0b11110111,
-    /// RSPI0–4 enabled; CD-ROMDEC, RSPDIF, RGPVG stopped.
-    /// `[RSPI0][RSPI1][RSPI2][RSPI3][RSPI4][CD-ROM][RSPDIF][RGPVG]`
+    // RSPI0–4 enabled; CD-ROMDEC, RSPDIF, RGPVG stopped.
+    // `[RSPI0][RSPI1][RSPI2][RSPI3][RSPI4][CD-ROM][RSPDIF][RGPVG]`
     stbcr10: 0b00011111,
-    /// SSIF0 enabled; SSIF1–3 stopped.
-    /// `[1][1][SSIF0][SSIF1][SSIF2][SSIF3][reserved][reserved]`
+    // SSIF0 enabled; SSIF1–3 stopped.
+    // `[1][1][SSIF0][SSIF1][SSIF2][SSIF3][reserved][reserved]`
     stbcr11: 0b11011111,
-    /// SDHI0 channel 0 enabled (port 0, pins 0+1); SDHI1, SDHI0 ch1 stopped.
-    /// `[1][1][1][1][SDHI00][SDHI01][SDHI10][SDHI11]`
+    // SDHI0 channel 0 enabled (port 0, pins 0+1); SDHI1, SDHI0 ch1 stopped.
+    // `[1][1][1][1][SDHI00][SDHI01][SDHI10][SDHI11]`
     stbcr12: 0b11111011,
 };
 
@@ -116,6 +116,32 @@ pub const SCUX_FFU1_DMA_CH: u8 = 5;
 pub const SCUX_FFU2_DMA_CH: u8 = 8;
 /// DMA channel for FFU path 3 (SCUX → CPU, 2-ch stereo aux path).
 pub const SCUX_FFU3_DMA_CH: u8 = 9;
+
+// ---------------------------------------------------------------------------
+// UART (SCIF) DMA channel assignments
+// ---------------------------------------------------------------------------
+//
+// SCIF0 = MIDI DIN; SCIF1 = PIC32 co-processor.
+// DMARS values are fixed by the RZ/A1L hardware (SCIF0 RX=0x62, TX=0x61;
+// each subsequent SCIF adds 4: SCIF1 RX=0x66, TX=0x65).
+
+/// DMAC channel for SCIF0 (MIDI) receive ring buffer.
+pub const MIDI_DMA_RX_CH: u8 = 13;
+/// DMAC channel for SCIF1 (PIC32) receive ring buffer.
+pub const PIC_DMA_RX_CH: u8 = 12;
+/// DMAC channel for SCIF1 (PIC32) transmit.
+pub const PIC_DMA_TX_CH: u8 = 10;
+
+// ---------------------------------------------------------------------------
+// SD-card DMA channel assignments (SDHI port 1)
+// ---------------------------------------------------------------------------
+
+/// DMAC channel for SDHI1 transmit (memory → SD_BUF0; card writes).
+pub const SD_DMA_TX_CH: u8 = 11;
+/// DMAC channel for SDHI1 receive (SD_BUF0 → memory; card reads).
+pub const SD_DMA_RX_CH: u8 = 14;
+/// Maximum sectors in a single DMA transfer; determines the bounce-buffer size.
+pub const SD_DMA_MAX_SECTORS: usize = 128;
 
 // ---------------------------------------------------------------------------
 // Boot-time system initialisation

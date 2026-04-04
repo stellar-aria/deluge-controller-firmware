@@ -10,7 +10,7 @@ edition = "2024"
 test = false
 
 [dependencies]
-rza1 = { path = "../rza1" }
+rza1l-hal = { path = "../rza1l-hal" }
 embedded-sdmmc = { version = "0.9", default-features = false, features = ["defmt-log"] }
 critical-section = "1"
 log = { version = "0.4", default-features = false, features = ["release_max_level_off"] }

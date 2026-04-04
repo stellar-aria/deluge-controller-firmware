@@ -493,7 +493,7 @@ dependencies = [
  "embassy-usb-driver",
  "embedded-sdmmc",
  "log",
- "rza1",
+ "rza1l-hal",
 ]
 
 [[package]]
@@ -520,7 +520,7 @@ dependencies = [
  "embassy-usb",
  "log",
  "rtt-target",
- "rza1",
+ "rza1l-hal",
 ]
 
 [[package]]
@@ -1349,7 +1349,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
-name = "rza1"
+name = "rza1l-hal"
 version = "0.1.0"
 dependencies = [
  "cortex-ar",

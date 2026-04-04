@@ -434,11 +434,11 @@ pub unsafe fn pipe_xfer_out_brdy(regs: *mut Rusb1Regs, n: usize) -> bool {
             // Invoke the ISO OUT hook (if registered for this pipe) before
             // resetting state.  `state.buf` has advanced by `transferred` bytes
             // since the transfer started; rewind to recover the packet start.
-            if n == core::ptr::addr_of!(ISO_OUT_HOOK_PIPE).read() {
-                if let Some(hook) = core::ptr::addr_of!(ISO_OUT_HOOK).read() {
-                    let start = state.buf.as_ptr().sub(state.transferred as usize);
-                    hook(start, state.transferred as usize);
-                }
+            if n == core::ptr::addr_of!(ISO_OUT_HOOK_PIPE).read()
+                && let Some(hook) = core::ptr::addr_of!(ISO_OUT_HOOK).read()
+            {
+                let start = state.buf.as_ptr().sub(state.transferred as usize);
+                hook(start, state.transferred as usize);
             }
             state.buf = core::ptr::NonNull::dangling();
             // Reset remaining to 0 so the ISO guard at the top of this function

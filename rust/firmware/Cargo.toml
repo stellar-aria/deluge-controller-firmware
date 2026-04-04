@@ -8,7 +8,7 @@ name = "deluge-firmware"
 test = false
 
 [dependencies]
-rza1 = { path = "../rza1" }
+rza1l-hal = { path = "../rza1l-hal" }
 deluge-bsp = { path = "../deluge-bsp" }
 cortex-ar = "0.3"
 embassy-executor = { version = "0.10", features = ["nightly", "platform-cortex-ar", "executor-thread"] }
@@ -25,4 +25,4 @@ deluge-fft = { path = "../deluge-fft" }
 ## Activates rtt-target, defines _SEGGER_RTT, and registers the logger.
 ## Disable for release builds: cargo build-fw --release --no-default-features
 default = ["rtt"]
-rtt = ["dep:rtt-target", "rza1/rtt"]
+rtt = ["dep:rtt-target", "rza1l-hal/rtt"]

@@ -32,7 +32,7 @@ const L2C_REG7_INV_WAY: usize = L2C_BASE + 0x77C;
 const L2C_REG9_D_LOCK0: usize = L2C_BASE + 0x900;
 const L2C_REG9_I_LOCK0: usize = L2C_BASE + 0x904;
 
-const L2C_8WAY: u32 = 0x0000_00FF; // all 8 ways
+const L2C_8WAY: u32 = 0x0000_00FF; // bitmask for all 8 ways (REG7_INV_WAY)
 
 // ---------------------------------------------------------------------------
 // CP15 SCTLR / ACTLR bit constants (Cortex-A9 TRM §4.3.5, §4.3.6)
@@ -103,12 +103,13 @@ pub unsafe fn l1_enable() {
 /// 1. Disable L2 cache.
 /// 2. Flush all 8 ways (invalidate by way).
 /// 3. Clear interrupt status.
-/// 4. Lock D-cache ways (DMA bypass) and unlock I-cache ways.
+/// 4. Unlock all D-cache and I-cache ways.
 /// 5. Enable L2 cache.
 ///
-/// **Note:** Data-cache ways are locked (`0xFFFF_FFFF`) to prevent DMA
-/// coherency issues — this matches the C BSP.  Instruction-cache ways are
-/// left unlocked (fully caching).
+/// All 8 D-cache ways are left unlocked.  DMA coherency is maintained by
+/// always accessing DMA buffers through the non-cacheable OCRAM mirror alias
+/// (mapped as `PARA_NORMAL_NOT_CACHE` in the MMU TTB), so the L2 never
+/// allocates lines for DMA traffic.
 ///
 /// # Safety
 /// Writes to memory-mapped PL310 registers.  Must be called after
@@ -128,12 +129,14 @@ pub unsafe fn l2_init() {
         // 3. Clear all interrupt sources in one write (bits [8:0]).
         wr32(L2C_REG2_INT_CLR, L2C_INT_CLR_ALL);
 
-        // 4. Lock D-cache ways (avoid DMA/cache coherency issues with DMA on L2).
-        //    Only 8 valid way-bits [7:0] on this PL310 configuration; use L2C_8WAY.
+        // 4. Unlock both D-cache and I-cache ways (all 8 ways active).
+        //    DMA coherency is handled at the MMU level: all DMA buffers are
+        //    accessed exclusively through the OCRAM non-cacheable mirror alias
+        //    (0x60000000–0x609FFFFF, PARA_NORMAL_NOT_CACHE), which prevents L2
+        //    from allocating lines for DMA accesses regardless of lockdown.
         //    Only one AXI master (the Cortex-A9) is connected on RZ/A1L so only
-        //    D_LOCKDOWN0 needs to be written (masters 1–7 are unused).
-        //    Unlock I-cache ways (allow instruction caching).
-        wr32(L2C_REG9_D_LOCK0, L2C_8WAY);
+        //    LOCKDOWN0 needs to be written (masters 1–7 are unused).
+        wr32(L2C_REG9_D_LOCK0, 0x0000_0000);
         wr32(L2C_REG9_I_LOCK0, 0x0000_0000);
 
         // 5. Enable L2 cache.

@@ -364,7 +364,13 @@ pub unsafe fn register_irqs_for(ch: usize) {
         let eri = ERI_BASE + (ch as u16) * 4;
         let rxi = RXI_BASE + (ch as u16) * 4;
         let txi = TXI_BASE + (ch as u16) * 4;
-        log::trace!("uart: ch{} registering ERI={} RXI={} TXI={}", ch, eri, rxi, txi);
+        log::trace!(
+            "uart: ch{} registering ERI={} RXI={} TXI={}",
+            ch,
+            eri,
+            rxi,
+            txi
+        );
         gic::register(eri, ERI_HANDLERS[ch]);
         gic::register(rxi, RXI_HANDLERS[ch]);
         gic::register(txi, TXI_HANDLERS[ch]);

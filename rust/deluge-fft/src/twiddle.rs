@@ -108,7 +108,7 @@ impl<const N: usize> TwiddleTable<N> {
 // two float32x4_t: .0 = {wr0..wr3}, .1 = {wi0..wi3}.  This halves the
 // number of load instructions compared to two separate vld1q_f32 calls.
 
-const fn make_twiddles_ri<const N: usize>() -> [f32; { 2 * N }]
+const fn make_twiddles_ri<const N: usize>() -> [f32; 2 * N]
 where
     [(); 2 * N]:,
 {

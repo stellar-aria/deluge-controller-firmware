@@ -55,9 +55,10 @@
 //! | 9      | FFU0_3 → SRAM   | DMATU3_CIM   | 2      |
 
 use crate::dmac;
-use crate::dmac::
-    {CHCFG_AM_BURST, CHCFG_DAD, CHCFG_DDS_32BIT, CHCFG_DEM, CHCFG_DMS, CHCFG_HIEN, CHCFG_LVL,
-     CHCFG_REQD, CHCFG_SAD, CHCFG_SDS_32BIT};
+use crate::dmac::{
+    CHCFG_AM_BURST, CHCFG_DAD, CHCFG_DDS_32BIT, CHCFG_DEM, CHCFG_DMS, CHCFG_HIEN, CHCFG_LVL,
+    CHCFG_REQD, CHCFG_SAD, CHCFG_SDS_32BIT,
+};
 
 // ── Uncached mirror (must match ssi.rs) ──────────────────────────────────────
 
@@ -71,7 +72,7 @@ const SCUX_BASE: usize = 0xE820_8000;
 
 // ── IPC block (×4, stride 0x100) ─────────────────────────────────────────────
 
-const IPC_BASE: usize = SCUX_BASE + 0x0000;
+const IPC_BASE: usize = SCUX_BASE;
 const IPC_STRIDE: usize = 0x100;
 
 const IPCIR_OFF: usize = 0x00; // Init register (bit 0 = INIT)
@@ -297,8 +298,15 @@ const DESC_HEADER: u32 = 0b1101;
 //     | 0x0000_0200 | 0x0000_0020 | 0x0000_0008 | 0x0000_0040 | ch
 //   = 0x8122_2268 | ch  (matches C BSP scux_dev.c)
 const fn ffd_chcfg(dma_ch: u8) -> u32 {
-    CHCFG_DMS | CHCFG_DEM | CHCFG_DAD | CHCFG_DDS_32BIT | CHCFG_SDS_32BIT
-        | CHCFG_AM_BURST | CHCFG_HIEN | CHCFG_REQD | CHCFG_LVL
+    CHCFG_DMS
+        | CHCFG_DEM
+        | CHCFG_DAD
+        | CHCFG_DDS_32BIT
+        | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST
+        | CHCFG_HIEN
+        | CHCFG_REQD
+        | CHCFG_LVL
         | (dma_ch as u32 & 7)
 }
 
@@ -308,8 +316,14 @@ const fn ffd_chcfg(dma_ch: u8) -> u32 {
 //     | 0x0000_0200 | 0x0000_0020 | 0x0000_0040 | ch
 //   = 0x8112_2260 | ch  (matches C BSP)
 const fn ffu_chcfg(dma_ch: u8) -> u32 {
-    CHCFG_DMS | CHCFG_DEM | CHCFG_SAD | CHCFG_DDS_32BIT | CHCFG_SDS_32BIT
-        | CHCFG_AM_BURST | CHCFG_HIEN | CHCFG_LVL
+    CHCFG_DMS
+        | CHCFG_DEM
+        | CHCFG_SAD
+        | CHCFG_DDS_32BIT
+        | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST
+        | CHCFG_HIEN
+        | CHCFG_LVL
         | (dma_ch as u32 & 7)
 }
 
@@ -629,7 +643,7 @@ static mut FFD1_DESC: LinkDesc = LinkDesc([
     0,
     (CIM_BASE + DMATD1_CIM_OFF) as u32,
     0,
-    0,                                  // CHCFG (patched at init)
+    0, // CHCFG (patched at init)
     0,
     0,
     0,
@@ -651,7 +665,7 @@ static mut FFU1_DESC: LinkDesc = LinkDesc([
     (CIM_BASE + DMATU1_CIM_OFF) as u32,
     0,
     0,
-    0,                                  // CHCFG (patched at init)
+    0, // CHCFG (patched at init)
     0,
     0,
     0,
@@ -662,7 +676,7 @@ static mut FFD2_DESC: LinkDesc = LinkDesc([
     0,
     (CIM_BASE + DMATD2_CIM_OFF) as u32,
     0,
-    0,                                  // CHCFG (patched at init)
+    0, // CHCFG (patched at init)
     0,
     0,
     0,
@@ -673,7 +687,7 @@ static mut FFD3_DESC: LinkDesc = LinkDesc([
     0,
     (CIM_BASE + DMATD3_CIM_OFF) as u32,
     0,
-    0,                                  // CHCFG (patched at init)
+    0, // CHCFG (patched at init)
     0,
     0,
     0,
@@ -684,7 +698,7 @@ static mut FFU2_DESC: LinkDesc = LinkDesc([
     (CIM_BASE + DMATU2_CIM_OFF) as u32,
     0,
     0,
-    0,                                  // CHCFG (patched at init)
+    0, // CHCFG (patched at init)
     0,
     0,
     0,
@@ -695,7 +709,7 @@ static mut FFU3_DESC: LinkDesc = LinkDesc([
     (CIM_BASE + DMATU3_CIM_OFF) as u32,
     0,
     0,
-    0,                                  // CHCFG (patched at init)
+    0, // CHCFG (patched at init)
     0,
     0,
     0,
@@ -895,7 +909,7 @@ pub unsafe fn apply_dvu_after_init(ch: u8, cfg: DvuConfig) {
         // VOLxR: per-channel volume.
         // Format: 4.20 fixed-point. Unity (0 dB) = 0x0010_0000 (= 1.0).
         // WARNING: bit 23 is the sign bit — 0x00FF_FFFF has sign=1 → MUTE!
-        for i in 0..cfg.audio.channels as u8 {
+        for i in 0..cfg.audio.channels {
             dvu(ch, vol_off(i)).write_volatile(cfg.volumes[i as usize]);
         }
 
@@ -1104,8 +1118,7 @@ pub unsafe fn set_ssictrl(val: u32) {
 /// - Writes to static link-descriptor memory and DMAC registers.
 pub unsafe fn init_ffd_dma(ffd_ch: u8, dma_ch: u8, src_buf: *const u32, buf_bytes: usize) {
     unsafe {
-        FFD_DMA_CH_STORED[ffd_ch as usize]
-            .store(dma_ch, core::sync::atomic::Ordering::Relaxed);
+        FFD_DMA_CH_STORED[ffd_ch as usize].store(dma_ch, core::sync::atomic::Ordering::Relaxed);
         let (desc_ptr, cim_dmatd_off, dmars) = match ffd_ch {
             0 => (
                 core::ptr::addr_of_mut!(FFD0_DESC),
@@ -1155,8 +1168,7 @@ pub unsafe fn init_ffd_dma(ffd_ch: u8, dma_ch: u8, src_buf: *const u32, buf_byte
 /// Same requirements as [`init_ffd_dma`].
 pub unsafe fn init_ffu_dma(ffu_ch: u8, dma_ch: u8, dst_buf: *mut u32, buf_bytes: usize) {
     unsafe {
-        FFU_DMA_CH_STORED[ffu_ch as usize]
-            .store(dma_ch, core::sync::atomic::Ordering::Relaxed);
+        FFU_DMA_CH_STORED[ffu_ch as usize].store(dma_ch, core::sync::atomic::Ordering::Relaxed);
         let (desc_ptr, cim_dmatu_off, dmars) = match ffu_ch {
             0 => (
                 core::ptr::addr_of_mut!(FFU0_DESC),
@@ -1234,12 +1246,16 @@ pub unsafe fn start(
         // Start DMA channels
         for ch in 0..4u8 {
             if ffd_mask & (1 << ch) != 0 {
-                dmac::channel_start(FFD_DMA_CH_STORED[ch as usize].load(core::sync::atomic::Ordering::Relaxed));
+                dmac::channel_start(
+                    FFD_DMA_CH_STORED[ch as usize].load(core::sync::atomic::Ordering::Relaxed),
+                );
             }
         }
         for ch in 0..4u8 {
             if ffu_mask & (1 << ch) != 0 {
-                dmac::channel_start(FFU_DMA_CH_STORED[ch as usize].load(core::sync::atomic::Ordering::Relaxed));
+                dmac::channel_start(
+                    FFU_DMA_CH_STORED[ch as usize].load(core::sync::atomic::Ordering::Relaxed),
+                );
             }
         }
 

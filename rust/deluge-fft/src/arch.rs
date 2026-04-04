@@ -33,49 +33,51 @@ mod neon {
     where
         [(); 2 * N]:,
     {
-        let tw_base = half_m - 1;
-        let ri = &TwiddleTableRI::<N>::RI;
+        unsafe {
+            let tw_base = half_m - 1;
+            let ri = &TwiddleTableRI::<N>::RI;
 
-        let mut k = 0usize;
-        while k < N {
-            let mut j = 0usize;
-            while j + 4 <= half_m {
-                let tw = vld2q_f32(ri[2 * (tw_base + j)..].as_ptr());
-                let wr = tw.0;
-                let wi = tw.1;
+            let mut k = 0usize;
+            while k < N {
+                let mut j = 0usize;
+                while j + 4 <= half_m {
+                    let tw = vld2q_f32(ri[2 * (tw_base + j)..].as_ptr());
+                    let wr = tw.0;
+                    let wi = tw.1;
 
-                let ur = vld1q_f32(buf.re[k + j..].as_ptr());
-                let ui = vld1q_f32(buf.im[k + j..].as_ptr());
-                let vr = vld1q_f32(buf.re[k + j + half_m..].as_ptr());
-                let vi = vld1q_f32(buf.im[k + j + half_m..].as_ptr());
+                    let ur = vld1q_f32(buf.re[k + j..].as_ptr());
+                    let ui = vld1q_f32(buf.im[k + j..].as_ptr());
+                    let vr = vld1q_f32(buf.re[k + j + half_m..].as_ptr());
+                    let vi = vld1q_f32(buf.im[k + j + half_m..].as_ptr());
 
-                let tr = vmlsq_f32(vmulq_f32(wr, vr), wi, vi);
-                let ti = vmlaq_f32(vmulq_f32(wr, vi), wi, vr);
+                    let tr = vmlsq_f32(vmulq_f32(wr, vr), wi, vi);
+                    let ti = vmlaq_f32(vmulq_f32(wr, vi), wi, vr);
 
-                vst1q_f32(buf.re[k + j..].as_mut_ptr(), vaddq_f32(ur, tr));
-                vst1q_f32(buf.im[k + j..].as_mut_ptr(), vaddq_f32(ui, ti));
-                vst1q_f32(buf.re[k + j + half_m..].as_mut_ptr(), vsubq_f32(ur, tr));
-                vst1q_f32(buf.im[k + j + half_m..].as_mut_ptr(), vsubq_f32(ui, ti));
+                    vst1q_f32(buf.re[k + j..].as_mut_ptr(), vaddq_f32(ur, tr));
+                    vst1q_f32(buf.im[k + j..].as_mut_ptr(), vaddq_f32(ui, ti));
+                    vst1q_f32(buf.re[k + j + half_m..].as_mut_ptr(), vsubq_f32(ur, tr));
+                    vst1q_f32(buf.im[k + j + half_m..].as_mut_ptr(), vsubq_f32(ui, ti));
 
-                j += 4;
+                    j += 4;
+                }
+                // scalar tail for half_m not divisible by 4 (won't happen for power-of-two FFT)
+                while j < half_m {
+                    let wr = TwiddleTable::<N>::re(tw_base + j);
+                    let wi = TwiddleTable::<N>::im(tw_base + j);
+                    let ur = buf.re[k + j];
+                    let ui = buf.im[k + j];
+                    let vr = buf.re[k + j + half_m];
+                    let vi = buf.im[k + j + half_m];
+                    let tr = wr * vr - wi * vi;
+                    let ti = wr * vi + wi * vr;
+                    buf.re[k + j] = ur + tr;
+                    buf.im[k + j] = ui + ti;
+                    buf.re[k + j + half_m] = ur - tr;
+                    buf.im[k + j + half_m] = ui - ti;
+                    j += 1;
+                }
+                k += half_m * 2;
             }
-            // scalar tail for half_m not divisible by 4 (won't happen for power-of-two FFT)
-            while j < half_m {
-                let wr = TwiddleTable::<N>::re(tw_base + j);
-                let wi = TwiddleTable::<N>::im(tw_base + j);
-                let ur = buf.re[k + j];
-                let ui = buf.im[k + j];
-                let vr = buf.re[k + j + half_m];
-                let vi = buf.im[k + j + half_m];
-                let tr = wr * vr - wi * vi;
-                let ti = wr * vi + wi * vr;
-                buf.re[k + j] = ur + tr;
-                buf.im[k + j] = ui + ti;
-                buf.re[k + j + half_m] = ur - tr;
-                buf.im[k + j + half_m] = ui - ti;
-                j += 1;
-            }
-            k += half_m * 2;
         }
     }
 
@@ -89,101 +91,103 @@ mod neon {
     where
         [(); 2 * N]:,
     {
-        let tw2_base = qm - 1;
-        let tw1_base = 2 * qm - 1;
-        let m4 = 4 * qm;
-        let ri = &TwiddleTableRI::<N>::RI;
+        unsafe {
+            let tw2_base = qm - 1;
+            let tw1_base = 2 * qm - 1;
+            let m4 = 4 * qm;
+            let ri = &TwiddleTableRI::<N>::RI;
 
-        let mut k = 0usize;
-        while k < N {
-            let mut j = 0usize;
-            while j + 4 <= qm {
-                let tw2 = vld2q_f32(ri[2 * (tw2_base + j)..].as_ptr());
-                let tw1 = vld2q_f32(ri[2 * (tw1_base + j)..].as_ptr());
-                let w2r = tw2.0;
-                let w2i = tw2.1;
-                let w1r = tw1.0;
-                let w1i = tw1.1;
+            let mut k = 0usize;
+            while k < N {
+                let mut j = 0usize;
+                while j + 4 <= qm {
+                    let tw2 = vld2q_f32(ri[2 * (tw2_base + j)..].as_ptr());
+                    let tw1 = vld2q_f32(ri[2 * (tw1_base + j)..].as_ptr());
+                    let w2r = tw2.0;
+                    let w2i = tw2.1;
+                    let w1r = tw1.0;
+                    let w1i = tw1.1;
 
-                let x0r = vld1q_f32(buf.re[k + j..].as_ptr());
-                let x0i = vld1q_f32(buf.im[k + j..].as_ptr());
-                let x1r = vld1q_f32(buf.re[k + j + qm..].as_ptr());
-                let x1i = vld1q_f32(buf.im[k + j + qm..].as_ptr());
-                let x2r = vld1q_f32(buf.re[k + j + 2 * qm..].as_ptr());
-                let x2i = vld1q_f32(buf.im[k + j + 2 * qm..].as_ptr());
-                let x3r = vld1q_f32(buf.re[k + j + 3 * qm..].as_ptr());
-                let x3i = vld1q_f32(buf.im[k + j + 3 * qm..].as_ptr());
+                    let x0r = vld1q_f32(buf.re[k + j..].as_ptr());
+                    let x0i = vld1q_f32(buf.im[k + j..].as_ptr());
+                    let x1r = vld1q_f32(buf.re[k + j + qm..].as_ptr());
+                    let x1i = vld1q_f32(buf.im[k + j + qm..].as_ptr());
+                    let x2r = vld1q_f32(buf.re[k + j + 2 * qm..].as_ptr());
+                    let x2i = vld1q_f32(buf.im[k + j + 2 * qm..].as_ptr());
+                    let x3r = vld1q_f32(buf.re[k + j + 3 * qm..].as_ptr());
+                    let x3i = vld1q_f32(buf.im[k + j + 3 * qm..].as_ptr());
 
-                let t1r = vmlsq_f32(vmulq_f32(w2r, x1r), w2i, x1i);
-                let t1i = vmlaq_f32(vmulq_f32(w2r, x1i), w2i, x1r);
-                let t3r = vmlsq_f32(vmulq_f32(w2r, x3r), w2i, x3i);
-                let t3i = vmlaq_f32(vmulq_f32(w2r, x3i), w2i, x3r);
+                    let t1r = vmlsq_f32(vmulq_f32(w2r, x1r), w2i, x1i);
+                    let t1i = vmlaq_f32(vmulq_f32(w2r, x1i), w2i, x1r);
+                    let t3r = vmlsq_f32(vmulq_f32(w2r, x3r), w2i, x3i);
+                    let t3i = vmlaq_f32(vmulq_f32(w2r, x3i), w2i, x3r);
 
-                let ar = vaddq_f32(x0r, t1r);
-                let ai = vaddq_f32(x0i, t1i);
-                let br = vsubq_f32(x0r, t1r);
-                let bi = vsubq_f32(x0i, t1i);
-                let cr = vaddq_f32(x2r, t3r);
-                let ci = vaddq_f32(x2i, t3i);
-                let dr = vsubq_f32(x2r, t3r);
-                let di = vsubq_f32(x2i, t3i);
+                    let ar = vaddq_f32(x0r, t1r);
+                    let ai = vaddq_f32(x0i, t1i);
+                    let br = vsubq_f32(x0r, t1r);
+                    let bi = vsubq_f32(x0i, t1i);
+                    let cr = vaddq_f32(x2r, t3r);
+                    let ci = vaddq_f32(x2i, t3i);
+                    let dr = vsubq_f32(x2r, t3r);
+                    let di = vsubq_f32(x2i, t3i);
 
-                let er = vmlsq_f32(vmulq_f32(w1r, cr), w1i, ci);
-                let ei = vmlaq_f32(vmulq_f32(w1r, ci), w1i, cr);
-                let fr = vmlsq_f32(vmulq_f32(w1r, dr), w1i, di);
-                let fi = vmlaq_f32(vmulq_f32(w1r, di), w1i, dr);
+                    let er = vmlsq_f32(vmulq_f32(w1r, cr), w1i, ci);
+                    let ei = vmlaq_f32(vmulq_f32(w1r, ci), w1i, cr);
+                    let fr = vmlsq_f32(vmulq_f32(w1r, dr), w1i, di);
+                    let fi = vmlaq_f32(vmulq_f32(w1r, di), w1i, dr);
 
-                vst1q_f32(buf.re[k + j..].as_mut_ptr(), vaddq_f32(ar, er));
-                vst1q_f32(buf.im[k + j..].as_mut_ptr(), vaddq_f32(ai, ei));
-                vst1q_f32(buf.re[k + j + qm..].as_mut_ptr(), vaddq_f32(br, fi));
-                vst1q_f32(buf.im[k + j + qm..].as_mut_ptr(), vsubq_f32(bi, fr));
-                vst1q_f32(buf.re[k + j + 2 * qm..].as_mut_ptr(), vsubq_f32(ar, er));
-                vst1q_f32(buf.im[k + j + 2 * qm..].as_mut_ptr(), vsubq_f32(ai, ei));
-                vst1q_f32(buf.re[k + j + 3 * qm..].as_mut_ptr(), vsubq_f32(br, fi));
-                vst1q_f32(buf.im[k + j + 3 * qm..].as_mut_ptr(), vaddq_f32(bi, fr));
+                    vst1q_f32(buf.re[k + j..].as_mut_ptr(), vaddq_f32(ar, er));
+                    vst1q_f32(buf.im[k + j..].as_mut_ptr(), vaddq_f32(ai, ei));
+                    vst1q_f32(buf.re[k + j + qm..].as_mut_ptr(), vaddq_f32(br, fi));
+                    vst1q_f32(buf.im[k + j + qm..].as_mut_ptr(), vsubq_f32(bi, fr));
+                    vst1q_f32(buf.re[k + j + 2 * qm..].as_mut_ptr(), vsubq_f32(ar, er));
+                    vst1q_f32(buf.im[k + j + 2 * qm..].as_mut_ptr(), vsubq_f32(ai, ei));
+                    vst1q_f32(buf.re[k + j + 3 * qm..].as_mut_ptr(), vsubq_f32(br, fi));
+                    vst1q_f32(buf.im[k + j + 3 * qm..].as_mut_ptr(), vaddq_f32(bi, fr));
 
-                j += 4;
+                    j += 4;
+                }
+                while j < qm {
+                    let w2r = TwiddleTable::<N>::re(tw2_base + j);
+                    let w2i = TwiddleTable::<N>::im(tw2_base + j);
+                    let w1r = TwiddleTable::<N>::re(tw1_base + j);
+                    let w1i = TwiddleTable::<N>::im(tw1_base + j);
+                    let x0r = buf.re[k + j];
+                    let x0i = buf.im[k + j];
+                    let x1r = buf.re[k + j + qm];
+                    let x1i = buf.im[k + j + qm];
+                    let x2r = buf.re[k + j + 2 * qm];
+                    let x2i = buf.im[k + j + 2 * qm];
+                    let x3r = buf.re[k + j + 3 * qm];
+                    let x3i = buf.im[k + j + 3 * qm];
+                    let t1r = w2r * x1r - w2i * x1i;
+                    let t1i = w2r * x1i + w2i * x1r;
+                    let t3r = w2r * x3r - w2i * x3i;
+                    let t3i = w2r * x3i + w2i * x3r;
+                    let ar = x0r + t1r;
+                    let ai = x0i + t1i;
+                    let br = x0r - t1r;
+                    let bi = x0i - t1i;
+                    let cr = x2r + t3r;
+                    let ci = x2i + t3i;
+                    let dr = x2r - t3r;
+                    let di = x2i - t3i;
+                    let er = w1r * cr - w1i * ci;
+                    let ei = w1r * ci + w1i * cr;
+                    let fr = w1r * dr - w1i * di;
+                    let fi = w1r * di + w1i * dr;
+                    buf.re[k + j] = ar + er;
+                    buf.im[k + j] = ai + ei;
+                    buf.re[k + j + qm] = br + fi;
+                    buf.im[k + j + qm] = bi - fr;
+                    buf.re[k + j + 2 * qm] = ar - er;
+                    buf.im[k + j + 2 * qm] = ai - ei;
+                    buf.re[k + j + 3 * qm] = br - fi;
+                    buf.im[k + j + 3 * qm] = bi + fr;
+                    j += 1;
+                }
+                k += m4;
             }
-            while j < qm {
-                let w2r = TwiddleTable::<N>::re(tw2_base + j);
-                let w2i = TwiddleTable::<N>::im(tw2_base + j);
-                let w1r = TwiddleTable::<N>::re(tw1_base + j);
-                let w1i = TwiddleTable::<N>::im(tw1_base + j);
-                let x0r = buf.re[k + j];
-                let x0i = buf.im[k + j];
-                let x1r = buf.re[k + j + qm];
-                let x1i = buf.im[k + j + qm];
-                let x2r = buf.re[k + j + 2 * qm];
-                let x2i = buf.im[k + j + 2 * qm];
-                let x3r = buf.re[k + j + 3 * qm];
-                let x3i = buf.im[k + j + 3 * qm];
-                let t1r = w2r * x1r - w2i * x1i;
-                let t1i = w2r * x1i + w2i * x1r;
-                let t3r = w2r * x3r - w2i * x3i;
-                let t3i = w2r * x3i + w2i * x3r;
-                let ar = x0r + t1r;
-                let ai = x0i + t1i;
-                let br = x0r - t1r;
-                let bi = x0i - t1i;
-                let cr = x2r + t3r;
-                let ci = x2i + t3i;
-                let dr = x2r - t3r;
-                let di = x2i - t3i;
-                let er = w1r * cr - w1i * ci;
-                let ei = w1r * ci + w1i * cr;
-                let fr = w1r * dr - w1i * di;
-                let fi = w1r * di + w1i * dr;
-                buf.re[k + j] = ar + er;
-                buf.im[k + j] = ai + ei;
-                buf.re[k + j + qm] = br + fi;
-                buf.im[k + j + qm] = bi - fr;
-                buf.re[k + j + 2 * qm] = ar - er;
-                buf.im[k + j + 2 * qm] = ai - ei;
-                buf.re[k + j + 3 * qm] = br - fi;
-                buf.im[k + j + 3 * qm] = bi + fr;
-                j += 1;
-            }
-            k += m4;
         }
     }
 
@@ -501,118 +505,124 @@ mod neon {
     /// Radix-2 SoA narrow butterfly for `half_m == 1`.
     #[inline]
     pub(crate) unsafe fn r2_soa_hm1_neon<const N: usize>(buf: &mut FftBuf<N>, tw_off: usize) {
-        let wr = vdupq_n_f32(TwiddleTable::<N>::RE[tw_off]);
-        let wi = vdupq_n_f32(TwiddleTable::<N>::IM[tw_off]);
+        unsafe {
+            let wr = vdupq_n_f32(TwiddleTable::<N>::RE[tw_off]);
+            let wi = vdupq_n_f32(TwiddleTable::<N>::IM[tw_off]);
 
-        let mut k = 0usize;
-        while k + 8 <= N {
-            let re_uv = vld2q_f32(buf.re[k..].as_ptr());
-            let im_uv = vld2q_f32(buf.im[k..].as_ptr());
-            let ur = re_uv.0;
-            let ui = im_uv.0;
-            let vr = re_uv.1;
-            let vi = im_uv.1;
+            let mut k = 0usize;
+            while k + 8 <= N {
+                let re_uv = vld2q_f32(buf.re[k..].as_ptr());
+                let im_uv = vld2q_f32(buf.im[k..].as_ptr());
+                let ur = re_uv.0;
+                let ui = im_uv.0;
+                let vr = re_uv.1;
+                let vi = im_uv.1;
 
-            let tr = vmlsq_f32(vmulq_f32(wr, vr), wi, vi);
-            let ti = vmlaq_f32(vmulq_f32(wr, vi), wi, vr);
+                let tr = vmlsq_f32(vmulq_f32(wr, vr), wi, vi);
+                let ti = vmlaq_f32(vmulq_f32(wr, vi), wi, vr);
 
-            vst2q_f32(
-                buf.re[k..].as_mut_ptr(),
-                float32x4x2_t(vaddq_f32(ur, tr), vsubq_f32(ur, tr)),
-            );
-            vst2q_f32(
-                buf.im[k..].as_mut_ptr(),
-                float32x4x2_t(vaddq_f32(ui, ti), vsubq_f32(ui, ti)),
-            );
-            k += 8;
+                vst2q_f32(
+                    buf.re[k..].as_mut_ptr(),
+                    float32x4x2_t(vaddq_f32(ur, tr), vsubq_f32(ur, tr)),
+                );
+                vst2q_f32(
+                    buf.im[k..].as_mut_ptr(),
+                    float32x4x2_t(vaddq_f32(ui, ti), vsubq_f32(ui, ti)),
+                );
+                k += 8;
+            }
         }
     }
 
     /// Radix-2 SoA narrow butterfly for `half_m == 2`.
     #[inline]
     pub(crate) unsafe fn r2_soa_hm2_neon<const N: usize>(buf: &mut FftBuf<N>, tw_off: usize) {
-        let wr_pair = vld1_f32(TwiddleTable::<N>::RE[tw_off..].as_ptr());
-        let wi_pair = vld1_f32(TwiddleTable::<N>::IM[tw_off..].as_ptr());
-        let wr = vcombine_f32(wr_pair, wr_pair);
-        let wi = vcombine_f32(wi_pair, wi_pair);
+        unsafe {
+            let wr_pair = vld1_f32(TwiddleTable::<N>::RE[tw_off..].as_ptr());
+            let wi_pair = vld1_f32(TwiddleTable::<N>::IM[tw_off..].as_ptr());
+            let wr = vcombine_f32(wr_pair, wr_pair);
+            let wi = vcombine_f32(wi_pair, wi_pair);
 
-        let mut k = 0usize;
-        while k + 8 <= N {
-            let re0 = vld1q_f32(buf.re[k..].as_ptr());
-            let re1 = vld1q_f32(buf.re[k + 4..].as_ptr());
-            let im0 = vld1q_f32(buf.im[k..].as_ptr());
-            let im1 = vld1q_f32(buf.im[k + 4..].as_ptr());
+            let mut k = 0usize;
+            while k + 8 <= N {
+                let re0 = vld1q_f32(buf.re[k..].as_ptr());
+                let re1 = vld1q_f32(buf.re[k + 4..].as_ptr());
+                let im0 = vld1q_f32(buf.im[k..].as_ptr());
+                let im1 = vld1q_f32(buf.im[k + 4..].as_ptr());
 
-            let ur = vcombine_f32(vget_low_f32(re0), vget_low_f32(re1));
-            let vr = vcombine_f32(vget_high_f32(re0), vget_high_f32(re1));
-            let ui = vcombine_f32(vget_low_f32(im0), vget_low_f32(im1));
-            let vi = vcombine_f32(vget_high_f32(im0), vget_high_f32(im1));
+                let ur = vcombine_f32(vget_low_f32(re0), vget_low_f32(re1));
+                let vr = vcombine_f32(vget_high_f32(re0), vget_high_f32(re1));
+                let ui = vcombine_f32(vget_low_f32(im0), vget_low_f32(im1));
+                let vi = vcombine_f32(vget_high_f32(im0), vget_high_f32(im1));
 
-            let tr = vmlsq_f32(vmulq_f32(wr, vr), wi, vi);
-            let ti = vmlaq_f32(vmulq_f32(wr, vi), wi, vr);
+                let tr = vmlsq_f32(vmulq_f32(wr, vr), wi, vi);
+                let ti = vmlaq_f32(vmulq_f32(wr, vi), wi, vr);
 
-            let oar = vaddq_f32(ur, tr);
-            let oai = vaddq_f32(ui, ti);
-            let obr = vsubq_f32(ur, tr);
-            let obi = vsubq_f32(ui, ti);
+                let oar = vaddq_f32(ur, tr);
+                let oai = vaddq_f32(ui, ti);
+                let obr = vsubq_f32(ur, tr);
+                let obi = vsubq_f32(ui, ti);
 
-            vst1q_f32(
-                buf.re[k..].as_mut_ptr(),
-                vcombine_f32(vget_low_f32(oar), vget_low_f32(obr)),
-            );
-            vst1q_f32(
-                buf.re[k + 4..].as_mut_ptr(),
-                vcombine_f32(vget_high_f32(oar), vget_high_f32(obr)),
-            );
-            vst1q_f32(
-                buf.im[k..].as_mut_ptr(),
-                vcombine_f32(vget_low_f32(oai), vget_low_f32(obi)),
-            );
-            vst1q_f32(
-                buf.im[k + 4..].as_mut_ptr(),
-                vcombine_f32(vget_high_f32(oai), vget_high_f32(obi)),
-            );
-            k += 8;
+                vst1q_f32(
+                    buf.re[k..].as_mut_ptr(),
+                    vcombine_f32(vget_low_f32(oar), vget_low_f32(obr)),
+                );
+                vst1q_f32(
+                    buf.re[k + 4..].as_mut_ptr(),
+                    vcombine_f32(vget_high_f32(oar), vget_high_f32(obr)),
+                );
+                vst1q_f32(
+                    buf.im[k..].as_mut_ptr(),
+                    vcombine_f32(vget_low_f32(oai), vget_low_f32(obi)),
+                );
+                vst1q_f32(
+                    buf.im[k + 4..].as_mut_ptr(),
+                    vcombine_f32(vget_high_f32(oai), vget_high_f32(obi)),
+                );
+                k += 8;
+            }
         }
     }
 
     /// Radix-4 SoA narrow butterfly for `qm == 1` (twiddles = 1+0i).
     #[inline]
     pub(crate) unsafe fn r4_soa_qm1_neon<const N: usize>(buf: &mut FftBuf<N>) {
-        let mut k = 0usize;
-        while k + 16 <= N {
-            let re = vld4q_f32(buf.re[k..].as_ptr());
-            let im = vld4q_f32(buf.im[k..].as_ptr());
-            let x0r = re.0;
-            let x0i = im.0;
-            let x1r = re.1;
-            let x1i = im.1;
-            let x2r = re.2;
-            let x2i = im.2;
-            let x3r = re.3;
-            let x3i = im.3;
+        unsafe {
+            let mut k = 0usize;
+            while k + 16 <= N {
+                let re = vld4q_f32(buf.re[k..].as_ptr());
+                let im = vld4q_f32(buf.im[k..].as_ptr());
+                let x0r = re.0;
+                let x0i = im.0;
+                let x1r = re.1;
+                let x1i = im.1;
+                let x2r = re.2;
+                let x2i = im.2;
+                let x3r = re.3;
+                let x3i = im.3;
 
-            let ar = vaddq_f32(x0r, x1r);
-            let ai = vaddq_f32(x0i, x1i);
-            let br = vsubq_f32(x0r, x1r);
-            let bi = vsubq_f32(x0i, x1i);
-            let cr = vaddq_f32(x2r, x3r);
-            let ci = vaddq_f32(x2i, x3i);
-            let dr = vsubq_f32(x2r, x3r);
-            let di = vsubq_f32(x2i, x3i);
+                let ar = vaddq_f32(x0r, x1r);
+                let ai = vaddq_f32(x0i, x1i);
+                let br = vsubq_f32(x0r, x1r);
+                let bi = vsubq_f32(x0i, x1i);
+                let cr = vaddq_f32(x2r, x3r);
+                let ci = vaddq_f32(x2i, x3i);
+                let dr = vsubq_f32(x2r, x3r);
+                let di = vsubq_f32(x2i, x3i);
 
-            let y0r = vaddq_f32(ar, cr);
-            let y0i = vaddq_f32(ai, ci);
-            let y2r = vsubq_f32(ar, cr);
-            let y2i = vsubq_f32(ai, ci);
-            let y1r = vaddq_f32(br, di);
-            let y1i = vsubq_f32(bi, dr);
-            let y3r = vsubq_f32(br, di);
-            let y3i = vaddq_f32(bi, dr);
+                let y0r = vaddq_f32(ar, cr);
+                let y0i = vaddq_f32(ai, ci);
+                let y2r = vsubq_f32(ar, cr);
+                let y2i = vsubq_f32(ai, ci);
+                let y1r = vaddq_f32(br, di);
+                let y1i = vsubq_f32(bi, dr);
+                let y3r = vsubq_f32(br, di);
+                let y3i = vaddq_f32(bi, dr);
 
-            vst4q_f32(buf.re[k..].as_mut_ptr(), float32x4x4_t(y0r, y1r, y2r, y3r));
-            vst4q_f32(buf.im[k..].as_mut_ptr(), float32x4x4_t(y0i, y1i, y2i, y3i));
-            k += 16;
+                vst4q_f32(buf.re[k..].as_mut_ptr(), float32x4x4_t(y0r, y1r, y2r, y3r));
+                vst4q_f32(buf.im[k..].as_mut_ptr(), float32x4x4_t(y0i, y1i, y2i, y3i));
+                k += 16;
+            }
         }
     }
 
@@ -623,81 +633,83 @@ mod neon {
         tw2_off: usize,
         tw1_off: usize,
     ) {
-        let w2r_pair = vld1_f32(TwiddleTable::<N>::RE[tw2_off..].as_ptr());
-        let w2i_pair = vld1_f32(TwiddleTable::<N>::IM[tw2_off..].as_ptr());
-        let w1r_pair = vld1_f32(TwiddleTable::<N>::RE[tw1_off..].as_ptr());
-        let w1i_pair = vld1_f32(TwiddleTable::<N>::IM[tw1_off..].as_ptr());
-        let w2r = vcombine_f32(w2r_pair, w2r_pair);
-        let w2i = vcombine_f32(w2i_pair, w2i_pair);
-        let w1r = vcombine_f32(w1r_pair, w1r_pair);
-        let w1i = vcombine_f32(w1i_pair, w1i_pair);
+        unsafe {
+            let w2r_pair = vld1_f32(TwiddleTable::<N>::RE[tw2_off..].as_ptr());
+            let w2i_pair = vld1_f32(TwiddleTable::<N>::IM[tw2_off..].as_ptr());
+            let w1r_pair = vld1_f32(TwiddleTable::<N>::RE[tw1_off..].as_ptr());
+            let w1i_pair = vld1_f32(TwiddleTable::<N>::IM[tw1_off..].as_ptr());
+            let w2r = vcombine_f32(w2r_pair, w2r_pair);
+            let w2i = vcombine_f32(w2i_pair, w2i_pair);
+            let w1r = vcombine_f32(w1r_pair, w1r_pair);
+            let w1i = vcombine_f32(w1i_pair, w1i_pair);
 
-        let mut k = 0usize;
-        while k + 16 <= N {
-            let re_a = vld1q_f32(buf.re[k..].as_ptr());
-            let re_b = vld1q_f32(buf.re[k + 4..].as_ptr());
-            let re_c = vld1q_f32(buf.re[k + 8..].as_ptr());
-            let re_d = vld1q_f32(buf.re[k + 12..].as_ptr());
-            let im_a = vld1q_f32(buf.im[k..].as_ptr());
-            let im_b = vld1q_f32(buf.im[k + 4..].as_ptr());
-            let im_c = vld1q_f32(buf.im[k + 8..].as_ptr());
-            let im_d = vld1q_f32(buf.im[k + 12..].as_ptr());
+            let mut k = 0usize;
+            while k + 16 <= N {
+                let re_a = vld1q_f32(buf.re[k..].as_ptr());
+                let re_b = vld1q_f32(buf.re[k + 4..].as_ptr());
+                let re_c = vld1q_f32(buf.re[k + 8..].as_ptr());
+                let re_d = vld1q_f32(buf.re[k + 12..].as_ptr());
+                let im_a = vld1q_f32(buf.im[k..].as_ptr());
+                let im_b = vld1q_f32(buf.im[k + 4..].as_ptr());
+                let im_c = vld1q_f32(buf.im[k + 8..].as_ptr());
+                let im_d = vld1q_f32(buf.im[k + 12..].as_ptr());
 
-            let x0r = vcombine_f32(vget_low_f32(re_a), vget_low_f32(re_c));
-            let x1r = vcombine_f32(vget_high_f32(re_a), vget_high_f32(re_c));
-            let x2r = vcombine_f32(vget_low_f32(re_b), vget_low_f32(re_d));
-            let x3r = vcombine_f32(vget_high_f32(re_b), vget_high_f32(re_d));
-            let x0i = vcombine_f32(vget_low_f32(im_a), vget_low_f32(im_c));
-            let x1i = vcombine_f32(vget_high_f32(im_a), vget_high_f32(im_c));
-            let x2i = vcombine_f32(vget_low_f32(im_b), vget_low_f32(im_d));
-            let x3i = vcombine_f32(vget_high_f32(im_b), vget_high_f32(im_d));
+                let x0r = vcombine_f32(vget_low_f32(re_a), vget_low_f32(re_c));
+                let x1r = vcombine_f32(vget_high_f32(re_a), vget_high_f32(re_c));
+                let x2r = vcombine_f32(vget_low_f32(re_b), vget_low_f32(re_d));
+                let x3r = vcombine_f32(vget_high_f32(re_b), vget_high_f32(re_d));
+                let x0i = vcombine_f32(vget_low_f32(im_a), vget_low_f32(im_c));
+                let x1i = vcombine_f32(vget_high_f32(im_a), vget_high_f32(im_c));
+                let x2i = vcombine_f32(vget_low_f32(im_b), vget_low_f32(im_d));
+                let x3i = vcombine_f32(vget_high_f32(im_b), vget_high_f32(im_d));
 
-            let t1r = vmlsq_f32(vmulq_f32(w2r, x1r), w2i, x1i);
-            let t1i = vmlaq_f32(vmulq_f32(w2r, x1i), w2i, x1r);
-            let t3r = vmlsq_f32(vmulq_f32(w2r, x3r), w2i, x3i);
-            let t3i = vmlaq_f32(vmulq_f32(w2r, x3i), w2i, x3r);
+                let t1r = vmlsq_f32(vmulq_f32(w2r, x1r), w2i, x1i);
+                let t1i = vmlaq_f32(vmulq_f32(w2r, x1i), w2i, x1r);
+                let t3r = vmlsq_f32(vmulq_f32(w2r, x3r), w2i, x3i);
+                let t3i = vmlaq_f32(vmulq_f32(w2r, x3i), w2i, x3r);
 
-            let ar = vaddq_f32(x0r, t1r);
-            let ai = vaddq_f32(x0i, t1i);
-            let br = vsubq_f32(x0r, t1r);
-            let bi = vsubq_f32(x0i, t1i);
-            let cr = vaddq_f32(x2r, t3r);
-            let ci = vaddq_f32(x2i, t3i);
-            let dr = vsubq_f32(x2r, t3r);
-            let di = vsubq_f32(x2i, t3i);
+                let ar = vaddq_f32(x0r, t1r);
+                let ai = vaddq_f32(x0i, t1i);
+                let br = vsubq_f32(x0r, t1r);
+                let bi = vsubq_f32(x0i, t1i);
+                let cr = vaddq_f32(x2r, t3r);
+                let ci = vaddq_f32(x2i, t3i);
+                let dr = vsubq_f32(x2r, t3r);
+                let di = vsubq_f32(x2i, t3i);
 
-            let er = vmlsq_f32(vmulq_f32(w1r, cr), w1i, ci);
-            let ei = vmlaq_f32(vmulq_f32(w1r, ci), w1i, cr);
-            let fr = vmlsq_f32(vmulq_f32(w1r, dr), w1i, di);
-            let fi = vmlaq_f32(vmulq_f32(w1r, di), w1i, dr);
+                let er = vmlsq_f32(vmulq_f32(w1r, cr), w1i, ci);
+                let ei = vmlaq_f32(vmulq_f32(w1r, ci), w1i, cr);
+                let fr = vmlsq_f32(vmulq_f32(w1r, dr), w1i, di);
+                let fi = vmlaq_f32(vmulq_f32(w1r, di), w1i, dr);
 
-            let y0r = vaddq_f32(ar, er);
-            let y0i = vaddq_f32(ai, ei);
-            let y1r = vaddq_f32(br, fi);
-            let y1i = vsubq_f32(bi, fr);
-            let y2r = vsubq_f32(ar, er);
-            let y2i = vsubq_f32(ai, ei);
-            let y3r = vsubq_f32(br, fi);
-            let y3i = vaddq_f32(bi, fr);
+                let y0r = vaddq_f32(ar, er);
+                let y0i = vaddq_f32(ai, ei);
+                let y1r = vaddq_f32(br, fi);
+                let y1i = vsubq_f32(bi, fr);
+                let y2r = vsubq_f32(ar, er);
+                let y2i = vsubq_f32(ai, ei);
+                let y3r = vsubq_f32(br, fi);
+                let y3i = vaddq_f32(bi, fr);
 
-            let re_a_out = vcombine_f32(vget_low_f32(y0r), vget_low_f32(y1r));
-            let re_b_out = vcombine_f32(vget_low_f32(y2r), vget_low_f32(y3r));
-            let re_c_out = vcombine_f32(vget_high_f32(y0r), vget_high_f32(y1r));
-            let re_d_out = vcombine_f32(vget_high_f32(y2r), vget_high_f32(y3r));
-            let im_a_out = vcombine_f32(vget_low_f32(y0i), vget_low_f32(y1i));
-            let im_b_out = vcombine_f32(vget_low_f32(y2i), vget_low_f32(y3i));
-            let im_c_out = vcombine_f32(vget_high_f32(y0i), vget_high_f32(y1i));
-            let im_d_out = vcombine_f32(vget_high_f32(y2i), vget_high_f32(y3i));
+                let re_a_out = vcombine_f32(vget_low_f32(y0r), vget_low_f32(y1r));
+                let re_b_out = vcombine_f32(vget_low_f32(y2r), vget_low_f32(y3r));
+                let re_c_out = vcombine_f32(vget_high_f32(y0r), vget_high_f32(y1r));
+                let re_d_out = vcombine_f32(vget_high_f32(y2r), vget_high_f32(y3r));
+                let im_a_out = vcombine_f32(vget_low_f32(y0i), vget_low_f32(y1i));
+                let im_b_out = vcombine_f32(vget_low_f32(y2i), vget_low_f32(y3i));
+                let im_c_out = vcombine_f32(vget_high_f32(y0i), vget_high_f32(y1i));
+                let im_d_out = vcombine_f32(vget_high_f32(y2i), vget_high_f32(y3i));
 
-            vst1q_f32(buf.re[k..].as_mut_ptr(), re_a_out);
-            vst1q_f32(buf.re[k + 4..].as_mut_ptr(), re_b_out);
-            vst1q_f32(buf.re[k + 8..].as_mut_ptr(), re_c_out);
-            vst1q_f32(buf.re[k + 12..].as_mut_ptr(), re_d_out);
-            vst1q_f32(buf.im[k..].as_mut_ptr(), im_a_out);
-            vst1q_f32(buf.im[k + 4..].as_mut_ptr(), im_b_out);
-            vst1q_f32(buf.im[k + 8..].as_mut_ptr(), im_c_out);
-            vst1q_f32(buf.im[k + 12..].as_mut_ptr(), im_d_out);
-            k += 16;
+                vst1q_f32(buf.re[k..].as_mut_ptr(), re_a_out);
+                vst1q_f32(buf.re[k + 4..].as_mut_ptr(), re_b_out);
+                vst1q_f32(buf.re[k + 8..].as_mut_ptr(), re_c_out);
+                vst1q_f32(buf.re[k + 12..].as_mut_ptr(), re_d_out);
+                vst1q_f32(buf.im[k..].as_mut_ptr(), im_a_out);
+                vst1q_f32(buf.im[k + 4..].as_mut_ptr(), im_b_out);
+                vst1q_f32(buf.im[k + 8..].as_mut_ptr(), im_c_out);
+                vst1q_f32(buf.im[k + 12..].as_mut_ptr(), im_d_out);
+                k += 16;
+            }
         }
     }
 

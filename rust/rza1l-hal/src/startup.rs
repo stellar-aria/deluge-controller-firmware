@@ -292,7 +292,7 @@ _fiq_handler:       subs pc, lr, #4
 "#
 );
 
-/// RTT-enabled data-abort body: writes "DABT" to RTT channel 0 then halts.
+// RTT-enabled data-abort body: writes "DABT" to RTT channel 0 then halts.
 #[cfg(feature = "rtt")]
 global_asm!(
     r#"

@@ -140,8 +140,55 @@ pub const INFO2_ERR_ALL: u16 = 0x807F;
 // ---------------------------------------------------------------------------
 // CC_EXT_MODE bits
 // ---------------------------------------------------------------------------
-#[allow(dead_code)]
 const CC_EXT_MODE_DMASDRW: u16 = 1 << 1; // Enable SDHI DMA read/write
+
+// ---------------------------------------------------------------------------
+// DMA resource selectors (DMARS) for SDHI (BSP: dma_if.h DMA_RS_SDHI_*)
+// Encoding: (MID[6:0] << 2) | RID[1:0]
+// ---------------------------------------------------------------------------
+
+/// DMARS for SDHI0 transmit (memory → SD_BUF0). MID=0x30, RID=01.
+const DMARS_SDHI0_TX: u32 = 0x00C1;
+/// DMARS for SDHI0 receive  (SD_BUF0 → memory). MID=0x30, RID=02.
+const DMARS_SDHI0_RX: u32 = 0x00C2;
+/// DMARS for SDHI1 transmit (memory → SD_BUF0). MID=0x31, RID=01.
+const DMARS_SDHI1_TX: u32 = 0x00C5;
+/// DMARS for SDHI1 receive  (SD_BUF0 → memory). MID=0x31, RID=02.
+const DMARS_SDHI1_RX: u32 = 0x00C6;
+
+use crate::dmac::{
+    CHCFG_AM_BURST, CHCFG_DAD, CHCFG_DDS_32BIT, CHCFG_HIEN, CHCFG_LVL, CHCFG_REQD, CHCFG_SAD,
+    CHCFG_SDS_32BIT,
+};
+
+/// Compute CHCFG for an SDHI DMA TX channel (memory → SD_BUF0).
+/// Source increments (SAD=0); destination is fixed SD_BUF0 (DAD=1, REQD=1).
+/// Register mode (DMS=0), DEM=0 (completion interrupt enabled).
+#[inline(always)]
+const fn chcfg_sdhi_tx(dma_ch: u8) -> u32 {
+    CHCFG_DAD
+        | CHCFG_DDS_32BIT
+        | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST
+        | CHCFG_HIEN
+        | CHCFG_LVL
+        | CHCFG_REQD
+        | (dma_ch as u32 & 7)
+}
+
+/// Compute CHCFG for an SDHI DMA RX channel (SD_BUF0 → memory).
+/// Source is fixed SD_BUF0 (SAD=1); destination increments (DAD=0, REQD=0).
+/// Register mode (DMS=0), DEM=0 (completion interrupt enabled).
+#[inline(always)]
+const fn chcfg_sdhi_rx(dma_ch: u8) -> u32 {
+    CHCFG_SAD
+        | CHCFG_DDS_32BIT
+        | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST
+        | CHCFG_HIEN
+        | CHCFG_LVL
+        | (dma_ch as u32 & 7)
+}
 
 // ---------------------------------------------------------------------------
 // Clock divider constants (SD_CLK_CTRL bits[7:0], P1φ input ≈ 66.6 MHz)
@@ -283,7 +330,11 @@ pub unsafe fn init(port: u8, sd_option: u16) {
         // Use RMW to enable only the clocks for the requested port; preserve
         // the other port's stop-bits so unused clocks stay gated.
         let stbcr12 = STBCR12 as *mut u8;
-        let bits: u8 = if port == 0 { STBCR12_SDHI0_MASK } else { STBCR12_SDHI1_MASK };
+        let bits: u8 = if port == 0 {
+            STBCR12_SDHI0_MASK
+        } else {
+            STBCR12_SDHI1_MASK
+        };
         stbcr12.write_volatile(stbcr12.read_volatile() & !bits);
         let _ = stbcr12.read_volatile(); // dummy read (required per RZ/A1 HW manual)
 
@@ -356,7 +407,10 @@ pub unsafe fn set_clock_fast(port: u8) {
             }
         }
         if !ok {
-            log::warn!("sdhi{}: set_clock_fast: SCLKDIVEN post-change timeout", port);
+            log::warn!(
+                "sdhi{}: set_clock_fast: SCLKDIVEN post-change timeout",
+                port
+            );
         }
     }
 }
@@ -860,6 +914,238 @@ pub async unsafe fn write_blocks_sw(port: u8, buf: *const u8, count: u32) -> Res
 }
 
 // ---------------------------------------------------------------------------
+// DMA data transfer
+// ---------------------------------------------------------------------------
+
+/// Read `count` 512-byte blocks from the card into `buf` using DMAC.
+///
+/// Handles the complete DMA transfer sequence per TRM §38.4.9:
+/// 1. Enables SDHI DMA mode (`CC_EXT_MODE = 0x0002`) before issuing the command.
+/// 2. Issues `cmd_val` (CMD17 or CMD18) and waits for response end.
+/// 3. Configures and starts the DMAC (SD_BUF0 → `buf`).
+/// 4. Waits for `INFO1_DATA_TRNS` via the SDHI interrupt.
+///
+/// Caller must have already called [`set_block_count`] and [`set_arg`].
+///
+/// # Safety
+/// * `buf` must point to `count × 512` bytes of valid **uncached** memory
+///   (virtual address in the uncached OCRAM mirror, i.e. physical +
+///   `rza1::UNCACHED_MIRROR_OFFSET`).  Using a cached buffer results in
+///   undefined cache coherence behaviour.
+/// * Must not be called concurrently on the same port.
+pub async unsafe fn read_blocks_dma(
+    port: u8,
+    cmd_val: u16,
+    buf: *mut u8,
+    count: u32,
+    dma_ch: u8,
+) -> Result<(), SdhiError> {
+    unsafe {
+        let base = port_base(port);
+        let (dmars_rx, sd_buf0) = if port == 0 {
+            (DMARS_SDHI0_RX, (SDHI0_BASE + OFF_BUF0) as u32)
+        } else {
+            (DMARS_SDHI1_RX, (SDHI1_BASE + OFF_BUF0) as u32)
+        };
+
+        // 1. Enable DMA mode BEFORE issuing the command (TRM §38.4.9).
+        reg16(base, OFF_CC_EXT_MODE).write_volatile(CC_EXT_MODE_DMASDRW);
+
+        // 2. Issue command and wait for response end (mirrors send_cmd).
+        wait_clk_stable(port);
+        clear_info(port);
+        reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_RESP);
+        reg16(base, OFF_INFO2_MASK).write_volatile(!INFO2_ERR_ALL);
+        reg16(base, OFF_CMD).write_volatile(cmd_val);
+
+        let cmd_result = poll_fn(|cx| {
+            let st = &STATE[port as usize];
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_RESP != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            st.waker.register(cx.waker());
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_RESP != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Pending
+        })
+        .await;
+
+        reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
+        reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
+        clear_info(port);
+
+        if let Err(e) = cmd_result {
+            reg16(base, OFF_CC_EXT_MODE).write_volatile(0x0000);
+            return Err(e);
+        }
+
+        // 3. Configure DMAC: SD_BUF0 (fixed source) → buf (incrementing dest).
+        crate::dmac::init_register_mode_rx(dma_ch, chcfg_sdhi_rx(dma_ch), sd_buf0, dmars_rx);
+
+        // 4. Enable DATA_TRNS + error interrupts, then kick the DMAC.
+        reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_DATA_TRNS);
+        reg16(base, OFF_INFO2_MASK).write_volatile(!INFO2_ERR_ALL);
+        crate::dmac::start_transfer_rx(dma_ch, buf as u32, count * 512);
+
+        // 5. Wait for transfer complete (DATA_TRNS via SDHI interrupt).
+        let data_result = poll_fn(|cx| {
+            let st = &STATE[port as usize];
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_DATA_TRNS != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            st.waker.register(cx.waker());
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_DATA_TRNS != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Pending
+        })
+        .await;
+
+        // 6. Restore software transfer mode.
+        reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
+        reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
+        clear_info(port);
+        reg16(base, OFF_CC_EXT_MODE).write_volatile(0x0000);
+
+        data_result
+    }
+}
+
+/// Write `count` 512-byte blocks from `buf` to the card using DMAC.
+///
+/// Handles the complete DMA transfer sequence per TRM §38.4.9:
+/// 1. Enables SDHI DMA mode (`CC_EXT_MODE = 0x0002`) before issuing the command.
+/// 2. Issues `cmd_val` (CMD24 or CMD25) and waits for response end.
+/// 3. Configures and starts the DMAC (`buf` → SD_BUF0).
+/// 4. Waits for `INFO1_DATA_TRNS` via the SDHI interrupt.
+///
+/// Caller must have already called [`set_block_count`] and [`set_arg`].
+///
+/// # Safety
+/// * `buf` must point to `count × 512` bytes of valid **uncached** memory
+///   so the DMAC reads the CPU-written bytes without stale cache lines.
+/// * Must not be called concurrently on the same port.
+pub async unsafe fn write_blocks_dma(
+    port: u8,
+    cmd_val: u16,
+    buf: *const u8,
+    count: u32,
+    dma_ch: u8,
+) -> Result<(), SdhiError> {
+    unsafe {
+        let base = port_base(port);
+        let (dmars_tx, sd_buf0) = if port == 0 {
+            (DMARS_SDHI0_TX, (SDHI0_BASE + OFF_BUF0) as u32)
+        } else {
+            (DMARS_SDHI1_TX, (SDHI1_BASE + OFF_BUF0) as u32)
+        };
+
+        // 1. Enable DMA mode BEFORE issuing the command (TRM §38.4.9).
+        reg16(base, OFF_CC_EXT_MODE).write_volatile(CC_EXT_MODE_DMASDRW);
+
+        // 2. Issue command and wait for response end.
+        wait_clk_stable(port);
+        clear_info(port);
+        reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_RESP);
+        reg16(base, OFF_INFO2_MASK).write_volatile(!INFO2_ERR_ALL);
+        reg16(base, OFF_CMD).write_volatile(cmd_val);
+
+        let cmd_result = poll_fn(|cx| {
+            let st = &STATE[port as usize];
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_RESP != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            st.waker.register(cx.waker());
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_RESP != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Pending
+        })
+        .await;
+
+        reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
+        reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
+        clear_info(port);
+
+        if let Err(e) = cmd_result {
+            reg16(base, OFF_CC_EXT_MODE).write_volatile(0x0000);
+            return Err(e);
+        }
+
+        // 3. Configure DMAC: buf (incrementing source) → SD_BUF0 (fixed dest).
+        crate::dmac::init_register_mode(dma_ch, chcfg_sdhi_tx(dma_ch), sd_buf0, dmars_tx);
+
+        // 4. Enable DATA_TRNS + error interrupts, then kick the DMAC.
+        reg16(base, OFF_INFO1_MASK).write_volatile(!INFO1_DATA_TRNS);
+        reg16(base, OFF_INFO2_MASK).write_volatile(!INFO2_ERR_ALL);
+        crate::dmac::start_transfer(dma_ch, buf as u32, count * 512);
+
+        // 5. Wait for transfer complete (DATA_TRNS via SDHI interrupt).
+        let data_result = poll_fn(|cx| {
+            let st = &STATE[port as usize];
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_DATA_TRNS != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            st.waker.register(cx.waker());
+            let i1 = st.info1.load(Ordering::Acquire);
+            let i2 = st.info2.load(Ordering::Acquire);
+            if let Err(e) = check_info2_errors(i2) {
+                return Poll::Ready(Err(e));
+            }
+            if i1 & INFO1_DATA_TRNS != 0 {
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Pending
+        })
+        .await;
+
+        // 6. Restore software transfer mode.
+        reg16(base, OFF_INFO1_MASK).write_volatile(0xFFFF);
+        reg16(base, OFF_INFO2_MASK).write_volatile(0xFFFF);
+        clear_info(port);
+        reg16(base, OFF_CC_EXT_MODE).write_volatile(0x0000);
+
+        data_result
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Block-count / stop-transfer helpers
 // ---------------------------------------------------------------------------
 
@@ -1217,6 +1503,39 @@ impl<const PORT: u8> Sdhi<PORT> {
     /// Must not be called concurrently.  `buf` must be valid for `count * 512` bytes.
     pub unsafe fn write_blocks_poll(&self, buf: *const u8, count: u32) -> Result<(), SdhiError> {
         unsafe { write_blocks_poll(PORT, buf, count) }
+    }
+    /// Read `count` 512-byte blocks using DMAC (async, DMA-driven).
+    ///
+    /// Caller must have called [`set_block_count`] and [`set_arg`] first.
+    /// `buf` must be uncached memory (`physical + rza1::UNCACHED_MIRROR_OFFSET`).
+    ///
+    /// # Safety
+    /// Same requirements as [`read_blocks_dma`].
+    pub async unsafe fn read_blocks_dma(
+        &self,
+        cmd_val: u16,
+        buf: *mut u8,
+        count: u32,
+        dma_ch: u8,
+    ) -> Result<(), SdhiError> {
+        unsafe { read_blocks_dma(PORT, cmd_val, buf, count, dma_ch).await }
+    }
+
+    /// Write `count` 512-byte blocks using DMAC (async, DMA-driven).
+    ///
+    /// Caller must have called [`set_block_count`] and [`set_arg`] first.
+    /// `buf` must be uncached memory.
+    ///
+    /// # Safety
+    /// Same requirements as [`write_blocks_dma`].
+    pub async unsafe fn write_blocks_dma(
+        &self,
+        cmd_val: u16,
+        buf: *const u8,
+        count: u32,
+        dma_ch: u8,
+    ) -> Result<(), SdhiError> {
+        unsafe { write_blocks_dma(PORT, cmd_val, buf, count, dma_ch).await }
     }
 }
 

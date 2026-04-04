@@ -326,7 +326,10 @@ pub unsafe fn send32_blocking(ch: u8, data: u32) {
             }
         }
         if !ready {
-            log::warn!("rspi: ch{} send32_blocking: SPTEF timeout (STBCR10 cleared?)", ch);
+            log::warn!(
+                "rspi: ch{} send32_blocking: SPTEF timeout (STBCR10 cleared?)",
+                ch
+            );
         }
         log::debug!("rspi: ch{} SPTEF ok", ch);
 

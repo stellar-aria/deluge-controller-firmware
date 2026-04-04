@@ -79,7 +79,7 @@ fn spectrum_colours() -> [[[u8; 3]; 16]; 9] {
         // Range: -50 dBFS (dark) → -5 dBFS (full 8 rows).
         let filled = if avg_sq > 1e-10 {
             let db = 10.0 * log10f(avg_sq); // e.g. avg_sq=1.0 → 0 dBFS
-            ((db + 50.0) * (8.0 / 45.0)).max(0.0).min(8.0) as usize
+            ((db + 50.0) * (8.0 / 45.0)).clamp(0.0, 8.0) as usize
         } else {
             0
         };

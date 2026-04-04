@@ -327,6 +327,77 @@ pub fn on_dma_int(ch: u8) {
     DMAC_WAKERS[ch as usize].wake();
 }
 
+/// Initialise a DMAC channel in **register mode** for a peripheral→memory
+/// block transfer.
+///
+/// Like [`init_register_mode`] but holds the *source* address fixed (e.g.
+/// `SD_BUF0`) and lets the destination address increment with each transfer.
+///
+/// The channel is left idle.  Call [`start_transfer_rx`] for each block.
+///
+/// # Safety
+/// Writes to DMAC registers.  Must be called before the channel is used.
+pub unsafe fn init_register_mode_rx(ch: u8, chcfg: u32, src: u32, dmars: u32) {
+    unsafe {
+        log::debug!(
+            "dmac: ch{} register-mode-rx init, chcfg={:#010x}, src={:#010x}, dmars={:#06x}",
+            ch,
+            chcfg,
+            src,
+            dmars
+        );
+
+        // 1. Clear group DCTRL.
+        dctrl_reg(ch).write_volatile(0);
+
+        // 2. CHCFG / CHITVL / CHEXT.
+        ch_reg(ch, OFF_CHCFG).write_volatile(chcfg);
+        ch_reg(ch, OFF_CHITVL).write_volatile(0);
+        ch_reg(ch, OFF_CHEXT).write_volatile(0);
+
+        // 3. Fixed source (peripheral register).
+        ch_reg(ch, OFF_N0SA).write_volatile(src);
+
+        // 4. Software reset + clear TC.
+        let chctrl = ch_reg(ch, OFF_CHCTRL);
+        chctrl.write_volatile(CHCTRL_SWRST | CHCTRL_CLRTC);
+        // Re-write N0SA after reset (matches C firmware's double-write pattern).
+        ch_reg(ch, OFF_N0SA).write_volatile(src);
+
+        // 5. DMARS.
+        let dmars_ptr = dmars_reg(ch);
+        let (shifted, mask) = if ch & 1 == 0 {
+            (dmars & 0xFFFF, 0xFFFF_0000u32)
+        } else {
+            ((dmars & 0xFFFF) << 16, 0x0000_FFFFu32)
+        };
+        dmars_ptr.write_volatile((dmars_ptr.read_volatile() & mask) | shifted);
+    }
+}
+
+/// Arm and start a one-shot peripheral→memory DMA transfer on a channel
+/// initialised with [`init_register_mode_rx`].
+///
+/// Sets `N0DA = dst`, `N0TB = count`, then writes `CLRTC | SETEN`.
+///
+/// # Safety
+/// The destination region `[dst, dst+count)` must be uncached memory (or have
+/// had its cache lines invalidated) so the CPU reads the DMAC-written data.
+pub unsafe fn start_transfer_rx(ch: u8, dst: u32, count: u32) {
+    unsafe {
+        log::trace!(
+            "dmac: ch{} start_transfer_rx dst={:#010x} count={}",
+            ch,
+            dst,
+            count
+        );
+        ch_reg(ch, OFF_N0DA).write_volatile(dst);
+        ch_reg(ch, OFF_N0TB).write_volatile(count);
+        let chctrl = ch_reg(ch, OFF_CHCTRL);
+        chctrl.write_volatile(CHCTRL_CLRTC | CHCTRL_SETEN);
+    }
+}
+
 /// Arm and start a one-shot DMA transfer on a channel set up with
 /// [`init_register_mode`].
 ///

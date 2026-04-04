@@ -1,5 +1,5 @@
 use core::ops::{Add, Mul, Sub};
-use core::simd::{Simd, simd_swizzle};
+use core::simd::Simd;
 
 use crate::buf::FftBuf;
 use crate::complex::Complex;

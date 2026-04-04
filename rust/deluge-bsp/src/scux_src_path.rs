@@ -23,10 +23,8 @@
 //!   from the DVU output path (channels 0 and 1) so both can run simultaneously.
 //! - The 2SRC unit 0, pair 1 is used, independent of the DVU path's pair 0.
 
-use rza1::scux::{
-    self, AudioInfo, IpcSel, MixConfig, OpcSel, SrcConfig, SrcMode,
-};
 use rza1::UNCACHED_MIRROR_OFFSET;
+use rza1::scux::{self, AudioInfo, IpcSel, MixConfig, OpcSel, SrcConfig, SrcMode};
 
 /// Number of stereo frames in the SRC path input (TX) buffer.
 pub const SRC_TX_FRAMES: usize = 1024;

@@ -36,6 +36,10 @@ use rza1::sdhi::{self, SdhiError};
 // The Deluge SD card is on SDHI port 1.
 const SD_PORT: u8 = 1;
 
+const UNCACHED_MIRROR_OFFSET: usize = 0x4000_0000;
+
+use crate::system::{SD_DMA_MAX_SECTORS, SD_DMA_RX_CH, SD_DMA_TX_CH};
+
 // ---------------------------------------------------------------------------
 // Well-known SD command register values (written to SD_CMD register).
 //
@@ -96,6 +100,22 @@ static CARD_RCA: AtomicU16 = AtomicU16::new(0);
 static CARD_HC: AtomicBool = AtomicBool::new(false);
 /// `true` once `init()` has completed successfully.
 static CARD_READY: AtomicBool = AtomicBool::new(false);
+
+// ---------------------------------------------------------------------------
+// DMA bounce buffer
+// ---------------------------------------------------------------------------
+//
+// DMA requires uncached memory.  Callers pass arbitrary (possibly cached)
+// buffers, so we maintain a statically-allocated bounce buffer and access it
+// through its uncached alias (physical address | 0x4000_0000).
+//
+// Access is serialised by the single-task async design: only one SD operation
+// runs at a time, so no locking is needed.
+
+#[repr(align(32))]
+struct SdDmaBuf([u8; SD_DMA_MAX_SECTORS * 512]);
+// Safety: access is serialised by the async executor (single SD task).
+static mut SD_DMA_BUF: SdDmaBuf = SdDmaBuf([0u8; SD_DMA_MAX_SECTORS * 512]);
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -257,10 +277,12 @@ pub async fn read_sector(lba: u32, buf: &mut [u8; 512]) -> Result<(), SdError> {
     let cmd = if hc { CMD17_SDHC } else { CMD17 };
 
     unsafe {
+        let dma_ptr =
+            (core::ptr::addr_of!(SD_DMA_BUF.0[0]) as usize + UNCACHED_MIRROR_OFFSET) as *mut u8;
         sdhi::set_block_count(SD_PORT, 1);
         sdhi::set_arg(SD_PORT, addr);
-        sdhi::send_cmd(SD_PORT, cmd).await?;
-        sdhi::read_blocks_sw(SD_PORT, buf.as_mut_ptr(), 1).await?;
+        sdhi::read_blocks_dma(SD_PORT, cmd, dma_ptr, 1, SD_DMA_RX_CH).await?;
+        buf.copy_from_slice(core::slice::from_raw_parts(dma_ptr, 512));
     }
     Ok(())
 }
@@ -280,10 +302,12 @@ pub async fn write_sector(lba: u32, buf: &[u8; 512]) -> Result<(), SdError> {
     let cmd = if hc { CMD24_SDHC } else { CMD24 };
 
     unsafe {
+        let dma_ptr =
+            (core::ptr::addr_of!(SD_DMA_BUF.0[0]) as usize + UNCACHED_MIRROR_OFFSET) as *mut u8;
+        core::ptr::copy_nonoverlapping(buf.as_ptr(), dma_ptr, 512);
         sdhi::set_block_count(SD_PORT, 1);
         sdhi::set_arg(SD_PORT, addr);
-        sdhi::send_cmd(SD_PORT, cmd).await?;
-        sdhi::write_blocks_sw(SD_PORT, buf.as_ptr(), 1).await?;
+        sdhi::write_blocks_dma(SD_PORT, cmd, dma_ptr as *const u8, 1, SD_DMA_TX_CH).await?;
     }
     Ok(())
 }
@@ -311,18 +335,28 @@ pub async fn read_sectors(lba: u32, count: u32, buf: &mut [u8]) -> Result<(), Sd
         return read_sector(lba, unsafe { &mut *arr }).await;
     }
 
-    let addr = lba_to_addr(lba);
     let hc = CARD_HC.load(Ordering::Relaxed);
-    let cmd = if hc { CMD18_SDHC } else { CMD18 };
 
     unsafe {
-        sdhi::set_block_count(SD_PORT, count);
-        sdhi::set_arg(SD_PORT, addr);
-        sdhi::send_cmd(SD_PORT, cmd).await?;
-        sdhi::read_blocks_sw(SD_PORT, buf.as_mut_ptr(), count).await?;
-        // CMD18 auto-stops via SD_STOP SEC bit; belt-and-suspenders here:
-        // if auto-stop already issued by HW, the extra CMD12 will be ignored
-        // for well-behaved cards.  Omit to avoid the round-trip on every read.
+        let dma_ptr =
+            (core::ptr::addr_of!(SD_DMA_BUF.0[0]) as usize + UNCACHED_MIRROR_OFFSET) as *mut u8;
+        let mut remaining = count;
+        let mut cur_lba = lba;
+        let mut buf_offset = 0usize;
+        while remaining > 0 {
+            let chunk = remaining.min(SD_DMA_MAX_SECTORS as u32);
+            let chunk_addr = lba_to_addr(cur_lba);
+            let cmd = if hc { CMD18_SDHC } else { CMD18 };
+            sdhi::set_block_count(SD_PORT, chunk);
+            sdhi::set_arg(SD_PORT, chunk_addr);
+            sdhi::read_blocks_dma(SD_PORT, cmd, dma_ptr, chunk, SD_DMA_RX_CH).await?;
+            let chunk_bytes = (chunk as usize) * 512;
+            buf[buf_offset..buf_offset + chunk_bytes]
+                .copy_from_slice(core::slice::from_raw_parts(dma_ptr, chunk_bytes));
+            remaining -= chunk;
+            cur_lba += chunk;
+            buf_offset += chunk_bytes;
+        }
     }
     Ok(())
 }
@@ -345,15 +379,27 @@ pub async fn write_sectors(lba: u32, count: u32, buf: &[u8]) -> Result<(), SdErr
         return write_sector(lba, unsafe { &*arr }).await;
     }
 
-    let addr = lba_to_addr(lba);
     let hc = CARD_HC.load(Ordering::Relaxed);
-    let cmd = if hc { CMD25_SDHC } else { CMD25 };
 
     unsafe {
-        sdhi::set_block_count(SD_PORT, count);
-        sdhi::set_arg(SD_PORT, addr);
-        sdhi::send_cmd(SD_PORT, cmd).await?;
-        sdhi::write_blocks_sw(SD_PORT, buf.as_ptr(), count).await?;
+        let dma_ptr =
+            (core::ptr::addr_of!(SD_DMA_BUF.0[0]) as usize + UNCACHED_MIRROR_OFFSET) as *mut u8;
+        let mut remaining = count;
+        let mut cur_lba = lba;
+        let mut buf_offset = 0usize;
+        while remaining > 0 {
+            let chunk = remaining.min(SD_DMA_MAX_SECTORS as u32);
+            let chunk_addr = lba_to_addr(cur_lba);
+            let cmd = if hc { CMD25_SDHC } else { CMD25 };
+            let chunk_bytes = (chunk as usize) * 512;
+            core::ptr::copy_nonoverlapping(buf.as_ptr().add(buf_offset), dma_ptr, chunk_bytes);
+            sdhi::set_block_count(SD_PORT, chunk);
+            sdhi::set_arg(SD_PORT, chunk_addr);
+            sdhi::write_blocks_dma(SD_PORT, cmd, dma_ptr as *const u8, chunk, SD_DMA_TX_CH).await?;
+            remaining -= chunk;
+            cur_lba += chunk;
+            buf_offset += chunk_bytes;
+        }
     }
     Ok(())
 }
