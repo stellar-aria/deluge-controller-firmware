@@ -40,6 +40,30 @@ pub(crate) const GICC_HPPIR_ADDR: usize = GICC_BASE + 0x018; // Highest-Priority
 pub(crate) const GICD_IPRIORITYR0_ADDR: usize = GICD_IPRIORITYR0;
 
 // ---------------------------------------------------------------------------
+// Priority field constants
+// ---------------------------------------------------------------------------
+
+/// GIC priority field is bits [7:3] of each IPRIORITYR byte; shift a 5-bit
+/// priority value left by this amount to position it correctly.
+const GIC_PRIORITY_SHIFT: u32 = 3;
+/// Priority-word filled with the lowest active priority (31 << 3 = 0xF8)
+/// repeated in every byte.  Written to all IPRIORITYR words during init to
+/// start all interrupts at the lowest priority until explicitly lowered.
+const GIC_PRIORITY_LOWEST_WORD: u32 = 0xF8F8_F8F8;
+/// GICC_CTLR (ICCICR) bit 0: EnableS — enables forwarding of Group 0 (secure) interrupts.
+/// BSP: INTC_ICCICR_EnableS = 0x01
+const ICCICR_ENABLES: u32 = 0x1;
+/// GICC_CTLR (ICCICR) bit 1: EnableNS — enables forwarding of Group 1 (non-secure) interrupts.
+/// BSP: INTC_ICCICR_EnableNS = 0x02
+const ICCICR_ENABLENS: u32 = 0x2;
+/// ICCIAR bits [9:0]: ACKINTID — Interrupt Acknowledge ID field.
+/// BSP: INTC_ICCIAR_ACKINTID = 0x3FF
+const ICCIAR_ACKINTID: u32 = 0x3FF;
+/// ICCIAR spurious interrupt ID lower bound (IDs ≥ 0x3FE are spurious).
+/// 0x3FE = 1022 (spurious group IRQ), 0x3FF = 1023 (spurious FIQ).
+const ICCIAR_SPURIOUS: u32 = 0x3FE;
+
+// ---------------------------------------------------------------------------
 
 /// Total number of interrupt sources on RZ/A1L.
 pub const INT_ID_TOTAL: usize = 587;
@@ -179,7 +203,7 @@ pub unsafe fn init() {
         //    Priority field is [7:3], so 31 << 3 = 0xF8 per byte.
         let ipr = GICD_IPRIORITYR0 as *mut u32;
         for i in 0..n_ipr {
-            ipr.add(i).write_volatile(0xF8F8_F8F8);
+            ipr.add(i).write_volatile(GIC_PRIORITY_LOWEST_WORD);
         }
 
         // 4. Route all SPI interrupts (IDs 32+) to CPU 0 (target byte = 0x01).
@@ -197,13 +221,13 @@ pub unsafe fn init() {
 
         // 6. CPU interface: priority mask — accept all priorities 0–30.
         //    ICCPMR bit field [7:3] is valid; 31 << 3 = 0xF8.
-        (GICC_PMR_ADDR as *mut u32).write_volatile(31u32 << 3);
+        (GICC_PMR_ADDR as *mut u32).write_volatile(31u32 << GIC_PRIORITY_SHIFT);
 
         // 7. Binary point: group priority [7:3], sub-priority [2:0] unused.
         (GICC_BPR_ADDR as *mut u32).write_volatile(2);
 
         // 8. Enable CPU interface — FIQ+IRQ forwarding for secure interrupts.
-        (GICC_CTLR_ADDR as *mut u32).write_volatile(0x3);
+        (GICC_CTLR_ADDR as *mut u32).write_volatile(ICCICR_ENABLES | ICCICR_ENABLENS);
 
         // 9. Enable GIC distributor.
         (GICD_CTLR as *mut u32).write_volatile(1);
@@ -272,7 +296,7 @@ pub unsafe fn set_priority(id: u16, priority: u8) {
         let shift = ((id % 4) * 8) as u32;
         let mut val = addr.read_volatile();
         val &= !(0xFFu32 << shift);
-        val |= ((priority as u32) << 3) << shift; // bits [7:3] are the valid field
+        val |= ((priority as u32) << GIC_PRIORITY_SHIFT) << shift; // bits [7:3] are the valid field
         addr.write_volatile(val);
     }
 }
@@ -332,12 +356,12 @@ pub unsafe fn clear_irq_pending(irq_num: u8) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gic_dispatch(icciar: u32) {
     unsafe {
-        let int_id = (icciar & 0x3FF) as u16;
+        let int_id = (icciar & ICCIAR_ACKINTID) as u16;
 
         // IDs 1022 (0x3FE) and 1023 (0x3FF) are spurious — no EOI needed for them
         // but we just return; the assembly will still write ICCEOIR with the value
         // we received, which is harmless for 0x3FE/0x3FF.
-        if int_id >= 0x3FE {
+        if int_id >= ICCIAR_SPURIOUS as u16 {
             log::warn!("GIC: spurious IRQ {}", int_id);
             return;
         }

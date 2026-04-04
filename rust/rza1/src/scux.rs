@@ -55,6 +55,9 @@
 //! | 9      | FFU0_3 → SRAM   | DMATU3_CIM   | 2      |
 
 use crate::dmac;
+use crate::dmac::
+    {CHCFG_AM_BURST, CHCFG_DAD, CHCFG_DDS_32BIT, CHCFG_DEM, CHCFG_DMS, CHCFG_HIEN, CHCFG_LVL,
+     CHCFG_REQD, CHCFG_SAD, CHCFG_SDS_32BIT};
 
 // ── Uncached mirror (must match ssi.rs) ──────────────────────────────────────
 
@@ -277,27 +280,38 @@ pub const DMARS_SCURXI2: u32 = 0x010A;
 /// DMARS resource-selector for SCUX output FIFO 3 RX (FFU0_3 → CPU, 2-ch path).
 pub const DMARS_SCURXI3: u32 = 0x010E;
 
-// ── DMA channel assignments (Deluge) ─────────────────────────────────────────
+// ── DMA channel assignments (Deluge) — moved to deluge-bsp ───────────────────
+//
+// The DMA channels previously declared here as FFD*_DMA_CH / FFU*_DMA_CH
+// public constants are board-specific and are now provided by the caller via
+// the `dma_ch` parameter of [`init_ffd_dma`] and [`init_ffu_dma`].
+// The Deluge values can be found in `deluge_bsp::system`.
 
-/// DMA channel for FFD path 0 (CPU → SCUX, 8-ch, main synthesis / DVU output path).
-pub const FFD0_DMA_CH: u8 = 0;
-/// DMA channel for FFD path 1 (CPU → SCUX, 8-ch, sample playback / SRC offload path).
-pub const FFD1_DMA_CH: u8 = 3;
-/// DMA channel for FFD path 2 (CPU → SCUX, 2-ch stereo aux path).
-pub const FFD2_DMA_CH: u8 = 2;
-/// DMA channel for FFD path 3 (CPU → SCUX, 2-ch stereo aux path).
-pub const FFD3_DMA_CH: u8 = 4;
-/// DMA channel for FFU path 0 (SCUX → CPU, 8-ch, main capture / SRC offload path).
-pub const FFU0_DMA_CH: u8 = 1;
-/// DMA channel for FFU path 1 (SCUX → CPU, 8-ch, capture path).
-pub const FFU1_DMA_CH: u8 = 5;
-/// DMA channel for FFU path 2 (SCUX → CPU, 2-ch stereo aux path).
-pub const FFU2_DMA_CH: u8 = 8;
-/// DMA channel for FFU path 3 (SCUX → CPU, 2-ch stereo aux path).
-pub const FFU3_DMA_CH: u8 = 9;
+/// Link-descriptor HEADER word (same field encoding as SSI — see ssi.rs `DESC_HEADER`).
+/// bits: LDEN(3)=1, NXA(2)=1, reserved(1)=0, valid(0)=1 → 0b1101.
+const DESC_HEADER: u32 = 0b1101;
 
-/// Level-triggered DMA flag bit used in CHCFG (bit 6).
-const DMA_LVL: u32 = 1 << 6;
+// CHCFG for SCUX FFD DMA (SRAM → SCUX FIFO, source increments, destination fixed):
+//   DMS | DEM | DAD | DDS_32BIT | SDS_32BIT | AM_BURST | HIEN | REQD | LVL | channel
+//   = 0x8000_0000 | 0x0100_0000 | 0x0020_0000 | 0x0002_0000 | 0x0000_2000
+//     | 0x0000_0200 | 0x0000_0020 | 0x0000_0008 | 0x0000_0040 | ch
+//   = 0x8122_2268 | ch  (matches C BSP scux_dev.c)
+const fn ffd_chcfg(dma_ch: u8) -> u32 {
+    CHCFG_DMS | CHCFG_DEM | CHCFG_DAD | CHCFG_DDS_32BIT | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST | CHCFG_HIEN | CHCFG_REQD | CHCFG_LVL
+        | (dma_ch as u32 & 7)
+}
+
+// CHCFG for SCUX FFU DMA (SCUX FIFO → SRAM, source fixed, destination increments):
+//   DMS | DEM | SAD | DDS_32BIT | SDS_32BIT | AM_BURST | HIEN | LVL | channel
+//   = 0x8000_0000 | 0x0100_0000 | 0x0010_0000 | 0x0002_0000 | 0x0000_2000
+//     | 0x0000_0200 | 0x0000_0020 | 0x0000_0040 | ch
+//   = 0x8112_2260 | ch  (matches C BSP)
+const fn ffu_chcfg(dma_ch: u8) -> u32 {
+    CHCFG_DMS | CHCFG_DEM | CHCFG_SAD | CHCFG_DDS_32BIT | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST | CHCFG_HIEN | CHCFG_LVL
+        | (dma_ch as u32 & 7)
+}
 
 // ── INTIFS helper constants (Q22 ratio: fin/fout * 2^22) ─────────────────────
 
@@ -584,104 +598,104 @@ pub struct MixConfig {
 #[repr(C, align(32))]
 struct LinkDesc([u32; 8]);
 
-// CHCFG for SCUX FFD DMA (SRAM → SCUX FIFO, source increments):
-//   Base = 0b10000001_00100010_00100010_00101000
-//         = 0x8122_2228
-//   | DMA_LVL (bit 6) | channel
-const fn ffd_chcfg(dma_ch: u8) -> u32 {
-    0x8122_2228u32 | DMA_LVL | (dma_ch as u32 & 7)
-}
-
-// CHCFG for SCUX FFU DMA (SCUX FIFO → SRAM, destination increments):
-//   Base = 0b10000001_00010010_00100010_00100000
-//         = 0x8112_2220
-const fn ffu_chcfg(dma_ch: u8) -> u32 {
-    0x8112_2220u32 | DMA_LVL | (dma_ch as u32 & 7)
-}
+// Stored DMA channel numbers — set at init_ffd_dma / init_ffu_dma time so
+// start() can channel_start() the correct channels from a bitmask alone.
+static FFD_DMA_CH_STORED: [core::sync::atomic::AtomicU8; 4] = [
+    core::sync::atomic::AtomicU8::new(0),
+    core::sync::atomic::AtomicU8::new(0),
+    core::sync::atomic::AtomicU8::new(0),
+    core::sync::atomic::AtomicU8::new(0),
+];
+static FFU_DMA_CH_STORED: [core::sync::atomic::AtomicU8; 4] = [
+    core::sync::atomic::AtomicU8::new(0),
+    core::sync::atomic::AtomicU8::new(0),
+    core::sync::atomic::AtomicU8::new(0),
+    core::sync::atomic::AtomicU8::new(0),
+];
 
 static mut FFD0_DESC: LinkDesc = LinkDesc([
-    0b1101,                             // Header: LDEN + NXA + valid
+    DESC_HEADER,                        // LDEN + NXA + valid (see DESC_HEADER)
     0,                                  // src  → FFD0 buffer (set at init)
     (CIM_BASE + DMATD0_CIM_OFF) as u32, // dst = DMATD0_CIM data register
     0,                                  // byte count (set at init)
-    ffd_chcfg(FFD0_DMA_CH),             // CHCFG
+    0,                                  // CHCFG (patched at init from dma_ch param)
     0,                                  // CHITVL
     0,                                  // CHEXT
     0,                                  // NXLA → &FFD0_DESC (set at init)
 ]);
 
 static mut FFD1_DESC: LinkDesc = LinkDesc([
-    0b1101,
+    DESC_HEADER,
     0,
     (CIM_BASE + DMATD1_CIM_OFF) as u32,
     0,
-    ffd_chcfg(FFD1_DMA_CH),
+    0,                                  // CHCFG (patched at init)
     0,
     0,
     0,
 ]);
 
 static mut FFU0_DESC: LinkDesc = LinkDesc([
-    0b1101,
+    DESC_HEADER,
     (CIM_BASE + DMATU0_CIM_OFF) as u32, // src = DMATU0_CIM data register
     0,                                  // dst → FFU0 buffer (set at init)
     0,                                  // byte count (set at init)
-    ffu_chcfg(FFU0_DMA_CH),
+    0,                                  // CHCFG (patched at init)
     0,
     0,
     0,
 ]);
 
 static mut FFU1_DESC: LinkDesc = LinkDesc([
-    0b1101,
+    DESC_HEADER,
     (CIM_BASE + DMATU1_CIM_OFF) as u32,
     0,
     0,
-    ffu_chcfg(FFU1_DMA_CH),
+    0,                                  // CHCFG (patched at init)
     0,
     0,
     0,
 ]);
 
 static mut FFD2_DESC: LinkDesc = LinkDesc([
-    0b1101,
+    DESC_HEADER,
     0,
     (CIM_BASE + DMATD2_CIM_OFF) as u32,
     0,
-    ffd_chcfg(FFD2_DMA_CH),
+    0,                                  // CHCFG (patched at init)
     0,
     0,
     0,
 ]);
 
 static mut FFD3_DESC: LinkDesc = LinkDesc([
-    0b1101,
+    DESC_HEADER,
     0,
     (CIM_BASE + DMATD3_CIM_OFF) as u32,
     0,
-    ffd_chcfg(FFD3_DMA_CH),
+    0,                                  // CHCFG (patched at init)
     0,
     0,
     0,
 ]);
 
 static mut FFU2_DESC: LinkDesc = LinkDesc([
-    0b1101,
+    DESC_HEADER,
     (CIM_BASE + DMATU2_CIM_OFF) as u32,
     0,
     0,
-    ffu_chcfg(FFU2_DMA_CH),
+    0,                                  // CHCFG (patched at init)
     0,
     0,
     0,
 ]);
 
 static mut FFU3_DESC: LinkDesc = LinkDesc([
-    0b1101,
+    DESC_HEADER,
     (CIM_BASE + DMATU3_CIM_OFF) as u32,
     0,
     0,
-    ffu_chcfg(FFU3_DMA_CH),
+    0,                                  // CHCFG (patched at init)
     0,
     0,
     0,
@@ -1088,29 +1102,27 @@ pub unsafe fn set_ssictrl(val: u32) {
 /// - `src_buf` must remain valid and DMA-accessible for the lifetime of the
 ///   transfer.
 /// - Writes to static link-descriptor memory and DMAC registers.
-pub unsafe fn init_ffd_dma(ffd_ch: u8, src_buf: *const u32, buf_bytes: usize) {
+pub unsafe fn init_ffd_dma(ffd_ch: u8, dma_ch: u8, src_buf: *const u32, buf_bytes: usize) {
     unsafe {
-        let (dma_ch, desc_ptr, cim_dmatd_off, dmars) = match ffd_ch {
+        FFD_DMA_CH_STORED[ffd_ch as usize]
+            .store(dma_ch, core::sync::atomic::Ordering::Relaxed);
+        let (desc_ptr, cim_dmatd_off, dmars) = match ffd_ch {
             0 => (
-                FFD0_DMA_CH,
                 core::ptr::addr_of_mut!(FFD0_DESC),
                 DMATD0_CIM_OFF,
                 DMARS_SCUTXI0,
             ),
             1 => (
-                FFD1_DMA_CH,
                 core::ptr::addr_of_mut!(FFD1_DESC),
                 DMATD1_CIM_OFF,
                 DMARS_SCUTXI1,
             ),
             2 => (
-                FFD2_DMA_CH,
                 core::ptr::addr_of_mut!(FFD2_DESC),
                 DMATD2_CIM_OFF,
                 DMARS_SCUTXI2,
             ),
             3 => (
-                FFD3_DMA_CH,
                 core::ptr::addr_of_mut!(FFD3_DESC),
                 DMATD3_CIM_OFF,
                 DMARS_SCUTXI3,
@@ -1128,6 +1140,8 @@ pub unsafe fn init_ffd_dma(ffd_ch: u8, src_buf: *const u32, buf_bytes: usize) {
             .write_volatile((CIM_BASE + cim_dmatd_off) as u32);
         // Patch: transfer byte count
         desc_u.add(3).write_volatile(buf_bytes as u32);
+        // Patch: CHCFG (computed from dma_ch at runtime)
+        desc_u.add(4).write_volatile(ffd_chcfg(dma_ch));
         // Patch: self-referential NXLA (uncached alias)
         desc_u.add(7).write_volatile(desc_u as u32);
 
@@ -1139,29 +1153,27 @@ pub unsafe fn init_ffd_dma(ffd_ch: u8, src_buf: *const u32, buf_bytes: usize) {
 ///
 /// # Safety
 /// Same requirements as [`init_ffd_dma`].
-pub unsafe fn init_ffu_dma(ffu_ch: u8, dst_buf: *mut u32, buf_bytes: usize) {
+pub unsafe fn init_ffu_dma(ffu_ch: u8, dma_ch: u8, dst_buf: *mut u32, buf_bytes: usize) {
     unsafe {
-        let (dma_ch, desc_ptr, cim_dmatu_off, dmars) = match ffu_ch {
+        FFU_DMA_CH_STORED[ffu_ch as usize]
+            .store(dma_ch, core::sync::atomic::Ordering::Relaxed);
+        let (desc_ptr, cim_dmatu_off, dmars) = match ffu_ch {
             0 => (
-                FFU0_DMA_CH,
                 core::ptr::addr_of_mut!(FFU0_DESC),
                 DMATU0_CIM_OFF,
                 DMARS_SCURXI0,
             ),
             1 => (
-                FFU1_DMA_CH,
                 core::ptr::addr_of_mut!(FFU1_DESC),
                 DMATU1_CIM_OFF,
                 DMARS_SCURXI1,
             ),
             2 => (
-                FFU2_DMA_CH,
                 core::ptr::addr_of_mut!(FFU2_DESC),
                 DMATU2_CIM_OFF,
                 DMARS_SCURXI2,
             ),
             3 => (
-                FFU3_DMA_CH,
                 core::ptr::addr_of_mut!(FFU3_DESC),
                 DMATU3_CIM_OFF,
                 DMARS_SCURXI3,
@@ -1179,6 +1191,8 @@ pub unsafe fn init_ffu_dma(ffu_ch: u8, dst_buf: *mut u32, buf_bytes: usize) {
         desc_u.add(2).write_volatile(dst_buf as u32);
         // Patch: byte count
         desc_u.add(3).write_volatile(buf_bytes as u32);
+        // Patch: CHCFG (computed from dma_ch at runtime)
+        desc_u.add(4).write_volatile(ffu_chcfg(dma_ch));
         // Patch: NXLA
         desc_u.add(7).write_volatile(desc_u as u32);
 
@@ -1218,16 +1232,14 @@ pub unsafe fn start(
         cim(DMACR_CIM_OFF).write_volatile(dmacr);
 
         // Start DMA channels
-        const FFD_DMA_CHS: [u8; 4] = [FFD0_DMA_CH, FFD1_DMA_CH, FFD2_DMA_CH, FFD3_DMA_CH];
-        const FFU_DMA_CHS: [u8; 4] = [FFU0_DMA_CH, FFU1_DMA_CH, FFU2_DMA_CH, FFU3_DMA_CH];
         for ch in 0..4u8 {
             if ffd_mask & (1 << ch) != 0 {
-                dmac::channel_start(FFD_DMA_CHS[ch as usize]);
+                dmac::channel_start(FFD_DMA_CH_STORED[ch as usize].load(core::sync::atomic::Ordering::Relaxed));
             }
         }
         for ch in 0..4u8 {
             if ffu_mask & (1 << ch) != 0 {
-                dmac::channel_start(FFU_DMA_CHS[ch as usize]);
+                dmac::channel_start(FFU_DMA_CH_STORED[ch as usize].load(core::sync::atomic::Ordering::Relaxed));
             }
         }
 

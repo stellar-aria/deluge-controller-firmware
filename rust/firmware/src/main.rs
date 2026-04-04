@@ -34,6 +34,8 @@
 #![feature(impl_trait_in_assoc_type)]
 #![feature(stdarch_arm_neon_intrinsics)]
 #![feature(arm_target_feature)]
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
 
 mod events;
 mod pads;
@@ -48,7 +50,7 @@ use embassy_executor::{Executor, Spawner};
 use deluge_bsp::cv_gate;
 use deluge_bsp::uart as bsp_uart;
 use deluge_bsp::usb::{Rusb1Driver, dcd_int_handler};
-use rza1::{allocator, cache, gic, mmu, ostm, sdram, stb};
+use rza1::{allocator, gic};
 
 unsafe extern "C" {
     /// Start of the free SRAM heap region (set by the linker script).
@@ -126,39 +128,12 @@ pub extern "C" fn main() -> ! {
         s / 1024
     });
 
-    unsafe { stb::init() };
-    info!("STB: module clocks enabled");
-
-    unsafe { mmu::init_and_enable() };
-    info!("MMU: enabled");
-
-    info!("cache: enabling L1...");
-    unsafe { cache::l1_enable() };
-    info!("cache: L1 enabled");
-
-    info!("cache: enabling L2...");
-    unsafe { cache::l2_init() };
-    info!("cache: L2 enabled");
-
-    info!("SDRAM: initialising...");
-    unsafe { sdram::init() };
-    info!("SDRAM: initialised");
+    unsafe { deluge_bsp::system::init_clocks() };
+    info!("system: module clocks, MMU, cache, SDRAM, GIC, OSTM, time driver ready");
 
     // Initialise the SDRAM heap now that the SDRAM window is accessible.
     unsafe { allocator::SDRAM.init(0x0C00_0000 as *mut u8, 64 * 1024 * 1024) };
     info!("SDRAM heap: initialised (64 MB)");
-
-    info!("GIC: initialising...");
-    unsafe { gic::init() };
-    info!("GIC: initialised");
-
-    info!("OSTM: enabling clock...");
-    unsafe { ostm::enable_clock() };
-    info!("OSTM: clock enabled");
-
-    info!("time driver: initialising...");
-    unsafe { rza1::time_driver::init() };
-    info!("time driver: ready");
 
     info!("GPIO: configuring heartbeat LED...");
     unsafe { rza1::gpio::set_as_output(6, 7) };

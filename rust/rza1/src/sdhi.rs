@@ -207,6 +207,39 @@ const SDHI1_IRQS: [u16; 3] = [305, 306, 307];
 const SDHI_IRQ_PRIORITY: u8 = 10;
 
 // ---------------------------------------------------------------------------
+// STBCR12 clock-gate bit masks
+// ---------------------------------------------------------------------------
+
+/// STBCR12 bits 3+2: SDHI00+SDHI01 — clock-gate mask for SDHI port 0.
+const STBCR12_SDHI0_MASK: u8 = 0x0C;
+/// STBCR12 bits 1+0: SDHI10+SDHI11 — clock-gate mask for SDHI port 1.
+const STBCR12_SDHI1_MASK: u8 = 0x03;
+
+// ---------------------------------------------------------------------------
+// Interrupt-mask initialisation values (sd_init.c SD_INFO*_MASK constants)
+// ---------------------------------------------------------------------------
+
+/// INFO1_MASK init value: mask all INFO1 interrupts except card-detect.
+/// BSP: `SD_INFO1_MASK = 0x031D` (sd_init.c).
+const INFO1_MASK_INIT: u16 = 0x031D;
+/// INFO2_MASK init value: mask all INFO2 error/status interrupts.
+/// BSP: `SD_INFO2_MASK = 0x8B7F` (sd_init.c).
+const INFO2_MASK_INIT: u16 = 0x8B7F;
+/// SDIO_INFO1_MASK init value: mask all SDIO status interrupts.
+const SDIO_INFO1_MASK_INIT: u16 = 0xC007;
+
+// ---------------------------------------------------------------------------
+// Soft-reset sequence values (SOFT_RST register)
+// ---------------------------------------------------------------------------
+
+/// SOFT_RST value to assert reset (bit 1 set, bit 0 clear).
+/// BSP: written first in the RZ/A1 two-step soft-reset sequence.
+const SOFT_RST_ASSERT: u16 = 0x0006;
+/// SOFT_RST value to deassert reset (bit 1 set, bit 0 set).
+/// BSP: written second to release the core from reset while keeping CMD/DAT active.
+const SOFT_RST_DEASSERT: u16 = 0x0007;
+
+// ---------------------------------------------------------------------------
 // Register helpers
 // ---------------------------------------------------------------------------
 
@@ -241,7 +274,7 @@ unsafe fn reg32(base: usize, off: usize) -> *mut u32 {
 ///
 /// # Safety
 /// Writes to memory-mapped peripheral registers.
-pub unsafe fn init(port: u8) {
+pub unsafe fn init(port: u8, sd_option: u16) {
     unsafe {
         // ---- enable SDHI module clock (STBCR12) ----
         // STBCR12 layout (bit 7..0): [1][1][1][1][SDHI00][SDHI01][SDHI10][SDHI11]
@@ -250,7 +283,7 @@ pub unsafe fn init(port: u8) {
         // Use RMW to enable only the clocks for the requested port; preserve
         // the other port's stop-bits so unused clocks stay gated.
         let stbcr12 = STBCR12 as *mut u8;
-        let bits: u8 = if port == 0 { 0x0C } else { 0x03 };
+        let bits: u8 = if port == 0 { STBCR12_SDHI0_MASK } else { STBCR12_SDHI1_MASK };
         stbcr12.write_volatile(stbcr12.read_volatile() & !bits);
         let _ = stbcr12.read_volatile(); // dummy read (required per RZ/A1 HW manual)
 
@@ -258,9 +291,9 @@ pub unsafe fn init(port: u8) {
 
         // ---- mask all meaningful interrupts (0 = enabled, 1 = masked) ----
         // Values match sd_init.c: SD_INFO1_MASK=0x031D, SD_INFO2_MASK=0x8B7F (RZA1)
-        reg16(base, OFF_INFO1_MASK).write_volatile(0x031D);
-        reg16(base, OFF_INFO2_MASK).write_volatile(0x8B7F);
-        reg16(base, OFF_SDIO_INFO1_MASK).write_volatile(0xC007);
+        reg16(base, OFF_INFO1_MASK).write_volatile(INFO1_MASK_INIT);
+        reg16(base, OFF_INFO2_MASK).write_volatile(INFO2_MASK_INIT);
+        reg16(base, OFF_SDIO_INFO1_MASK).write_volatile(SDIO_INFO1_MASK_INIT);
 
         // ---- clear SDIO mode ----
         reg16(base, OFF_SDIO_MODE).write_volatile(0x0000);
@@ -268,17 +301,17 @@ pub unsafe fn init(port: u8) {
         // ---- clear status registers ----
         // Clear RESP(bit0) and DATA_TRNS(bit2) only, per sd_init.c: info1 & ~0x0005
         let info1 = reg16(base, OFF_INFO1).read_volatile();
-        reg16(base, OFF_INFO1).write_volatile(info1 & !0x0005u16);
+        reg16(base, OFF_INFO1).write_volatile(info1 & !(INFO1_RESP | INFO1_DATA_TRNS));
         reg16(base, OFF_INFO2).write_volatile(0x0000);
         reg16(base, OFF_SDIO_INFO1).write_volatile(0x0000);
 
-        // ---- soft reset (RZ/A1 variant: 0x0006 → 0x0007) ----
-        reg16(base, OFF_SOFT_RST).write_volatile(0x0006);
-        reg16(base, OFF_SOFT_RST).write_volatile(0x0007);
+        // ---- soft reset (RZ/A1 variant: SOFT_RST_ASSERT → SOFT_RST_DEASSERT) ----
+        reg16(base, OFF_SOFT_RST).write_volatile(SOFT_RST_ASSERT);
+        reg16(base, OFF_SOFT_RST).write_volatile(SOFT_RST_DEASSERT);
 
         // ---- SD_OPTION: NCycle = SDCLK×2^23, 4-bit bus ----
-        // Value 0x00BD: Rohan's tuning for faster card detect on the Deluge.
-        reg16(base, OFF_OPTION).write_volatile(0x00BD);
+        // Pass a board-specific value via the sd_option parameter.
+        reg16(base, OFF_OPTION).write_volatile(sd_option);
 
         // ---- EXT_SWAP: no byte-swap ----
         reg16(base, OFF_EXT_SWAP).write_volatile(0x0000);
@@ -1126,8 +1159,8 @@ impl<const PORT: u8> Sdhi<PORT> {
     ///
     /// # Safety
     /// Writes memory-mapped SDHI registers.
-    pub unsafe fn init(&self) {
-        unsafe { init(PORT) }
+    pub unsafe fn init(&self, sd_option: u16) {
+        unsafe { init(PORT, sd_option) }
     }
 
     /// Switch the SD clock to high speed (~16.7 MHz, P1/4).

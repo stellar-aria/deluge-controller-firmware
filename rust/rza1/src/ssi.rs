@@ -41,18 +41,36 @@ use crate::dmac;
 
 /// SSI hardware channel used for audio (SSI0).
 pub const SSI_CH: u8 = 0;
-/// DMA channel for SSI0 TX (SRAM → SSIFTDR).
-pub const TX_DMA_CH: u8 = 6;
-/// DMA channel for SSI0 RX (SSIFRDR → SRAM).
-pub const RX_DMA_CH: u8 = 7;
+
+/// Stored DMA channel numbers (set by [`init`] / [`init_rx_only`]).
+/// Used by [`tx_current_ptr`] and [`rx_current_ptr`] without needing the
+/// original config reference.
+static TX_DMA_CH_ACTIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+static RX_DMA_CH_ACTIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// Board-specific SSI0 configuration.
+///
+/// Pass to [`init`] and [`init_rx_only`] so the HAL does not hard-code
+/// Deluge-specific DMA channels or clock settings.
+pub struct SsiConfig {
+    /// SSICR initialisation value (master/slave mode, clock divider, word length).
+    pub ssicr: u32,
+    /// DMA channel number for SSI0 TX (SRAM → SSIFTDR).
+    pub tx_dma_ch: u8,
+    /// DMA channel number for SSI0 RX (SSIFRDR → SRAM).
+    pub rx_dma_ch: u8,
+}
 
 /// DMARS resource-selector value for SSI0 transmit.
 const DMARS_SSI0_TX: u32 = 0x00E1;
 /// DMARS resource-selector value for SSI0 receive.
 const DMARS_SSI0_RX: u32 = 0x00E2;
 
-/// Level-triggered DMA flag bit used in CHCFG (bit 6).
-const DMA_LVL: u32 = 1 << 6;
+// ── CHCFG register field constants (shared with scux; defined in dmac) ───────
+use crate::dmac::{
+    CHCFG_AM_BURST, CHCFG_DAD, CHCFG_DDS_32BIT, CHCFG_DEM, CHCFG_DMS, CHCFG_HIEN, CHCFG_LVL,
+    CHCFG_REQD, CHCFG_SAD, CHCFG_SDS_32BIT,
+};
 
 // ── SSI0 register map ────────────────────────────────────────────────────────
 
@@ -74,9 +92,9 @@ const SSITDMR_OFF: usize = 0x20; // TDM mode register
 ///   - SCKP=SWSP=SPDP=SDTA=PDTA=DEL=0 (all defaults)
 ///   - CKDV=0010 (7:4)  : AUDIO_X1 ÷ 4 = 5.6448 MHz BCLK
 ///
-/// NOTE: the previous value 0x003B_C020 had DWL=7 (prohibited). Correct
-/// value is 0x002B_C020: DWL bits [21:19] = 5 = 0b101 = 24-bit.
-const SSICR_INIT: u32 = 0x002B_C020;
+/// NOTE: the previously-used value 0x003B_C020 had DWL=7 (prohibited). The
+/// correct Deluge SSICR value is 0x002B_C020 (DWL bits [21:19] = 0b101 = 24-bit),
+/// held in `deluge_bsp::system::SSI_CONFIG.ssicr`.
 
 /// SSIFCR bit positions (verified against vendor/rbsp ssif.h SSIF_FCR_SHIFT_*).
 const SSIFCR_RFRST: u32 = 1 << 0; // RX FIFO reset (active high)
@@ -96,12 +114,18 @@ const SSICR_TEN: u32 = 1 << 1; // Transmit enable
 /// BSP: SCUX_SSITDMR_CONT_SET = (1U << 8)  (ssif.h: SSIF_TDMR_BIT_CONT)
 const SSITDMR_CONT: u32 = 1 << 8;
 
-/// SSIFCR initialisation value:
-///   - TFRST=1, RFRST=1: both FIFOs held in reset until `ssiStart`
-///   - TTRG=10b (bits 7:6): TX trigger = 4 empty stages
-///   - RTRG=10b (bits 5:4): RX trigger = 4 received bytes
-///   - TIE=0, RIE=0: interrupts disabled until FIFOs are released
-const SSIFCR_INIT: u32 = 0x0000_00A3;
+/// SSIFCR bits [7:6]: TTRG — TX trigger level (0b10 = assert DMA request when ≥ 4 TX FIFO
+/// stages are empty).  BSP: `SSI_SSIFCR_TTRG_INIT_VALUE = 0x000000A0` (Rohan).
+const SSIFCR_TTRG_4: u32 = 0b10 << 6; // = 0x80
+/// SSIFCR bits [5:4]: RTRG — RX trigger level (0b10 = assert DMA request when ≥ 4 RX FIFO
+/// stages have been filled).
+const SSIFCR_RTRG_4: u32 = 0b10 << 4; // = 0x20
+
+/// SSIFCR initialisation value: both FIFOs held in reset, TX/RX triggers set to 4
+/// stages, interrupts disabled.  Mirrors `SSI_SSIFCR_BASE_INIT_VALUE` from `drv_ssif.h`.
+///   TFRST=1 | RFRST=1 | TTRG=0b10 (bits [7:6]) | RTRG=0b10 (bits [5:4]) | TIE=0 | RIE=0
+///   = 0x02 | 0x01 | 0x80 | 0x20 = 0xA3
+const SSIFCR_INIT: u32 = SSIFCR_TFRST | SSIFCR_RFRST | SSIFCR_TTRG_4 | SSIFCR_RTRG_4;
 
 // ── CPG soft-reset ───────────────────────────────────────────────────────────
 
@@ -159,45 +183,76 @@ static mut RX_BUF: Aligned32<RX_BUF_LEN> = Aligned32([0i32; RX_BUF_LEN]);
 #[repr(C, align(32))]
 struct LinkDesc([u32; 8]);
 
-// CHCFG values for the two SSI DMA channels, computed at compile time from
-// the same formula as the C driver:
-//
-//   TX: 0b10000001_00100010_00100010_00101000 | DMA_LVL | (TX_DMA_CH & 7)
-//       = 0x8122_2228 | 0x40 | 0x06  = 0x8122_226E
-//   RX: 0b10000001_00010010_00100010_00100000 | DMA_LVL | (RX_DMA_CH & 7)
-//       = 0x8112_2220 | 0x40 | 0x07  = 0x8112_2267
-//
-// The TX config increments the source address (memory side) and keeps the
-// destination fixed (SSIFTDR hardware register).  The RX config does the
-// reverse.
+/// Link-descriptor HEADER word.
+///
+/// Bit layout (TRM §9.5 link-descriptor format):
+///   bit 3 (LDEN): 1 — this channel uses link-descriptor mode
+///   bit 2 (NXA):  1 — NXLA field (word\[7\]) holds the next descriptor address
+///   bit 1:        0 — reserved
+///   bit 0:        1 — descriptor valid
+/// Combined: 0b1101 = LDEN | NXA | valid.
+const DESC_HEADER: u32 = 0b1101;
 
-const TX_CHCFG: u32 = 0x8122_2228 | DMA_LVL | (TX_DMA_CH as u32 & 7);
-const RX_CHCFG: u32 = 0x8112_2220 | DMA_LVL | (RX_DMA_CH as u32 & 7);
+/// Mask to align a DMA current-address register down to a stereo-frame boundary.
+/// One stereo frame = 2 × i32 = 8 bytes, so the mask clears the low 3 bits.
+const STEREO_FRAME_ALIGN_MASK: u32 = !7u32;
 
-/// TX link descriptor.  The `src` (word 1) and `next` (word 7) fields are
-/// patched at runtime by [`init`] once the static addresses are known.
+// CHCFG values for the two SSI DMA channels, composed from named field constants.
+// Reference: C BSP `drivers/ssi/ssi.c` link-descriptor initialisers:
+//
+//   TX: DMS | DEM | DAD | DDS_32BIT | SDS_32BIT | AM_BURST | HIEN | REQD | LVL | sel
+//       = 0x8000_0000 | 0x0100_0000 | 0x0020_0000 | 0x0002_0000 | 0x0000_2000
+//         | 0x0000_0200 | 0x0000_0020 | 0x0000_0008 | 0x0000_0040 | ch
+//       = 0x8122_2268 | ch  (ch=6 → 0x8122_226E)
+//   RX: DMS | DEM | SAD | DDS_32BIT | SDS_32BIT | AM_BURST | HIEN | LVL | sel
+//       = 0x8000_0000 | 0x0100_0000 | 0x0010_0000 | 0x0002_0000 | 0x0000_2000
+//         | 0x0000_0200 | 0x0000_0020 | 0x0000_0040 | ch
+//       = 0x8112_2260 | ch  (ch=7 → 0x8112_2267)
+
+/// Compute CHCFG word for an SSI TX DMA channel (SRAM → SSIFTDR).
+/// Source address increments (SAD=0); destination is fixed SSIFTDR (DAD=1).
+/// Trigger: destination-select (REQD=1) — SSI TX FIFO drives the request.
+#[inline(always)]
+const fn tx_chcfg(dma_ch: u8) -> u32 {
+    CHCFG_DMS | CHCFG_DEM | CHCFG_DAD | CHCFG_DDS_32BIT | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST | CHCFG_HIEN | CHCFG_REQD | CHCFG_LVL
+        | (dma_ch as u32 & 7)
+}
+
+/// Compute CHCFG word for an SSI RX DMA channel (SSIFRDR → SRAM).
+/// Source is fixed SSIFRDR (SAD=1); destination address increments (DAD=0).
+/// Trigger: source-select (REQD=0) — SSI RX FIFO drives the request.
+#[inline(always)]
+const fn rx_chcfg(dma_ch: u8) -> u32 {
+    CHCFG_DMS | CHCFG_DEM | CHCFG_SAD | CHCFG_DDS_32BIT | CHCFG_SDS_32BIT
+        | CHCFG_AM_BURST | CHCFG_HIEN | CHCFG_LVL
+        | (dma_ch as u32 & 7)
+}
+
+/// TX link descriptor.  Word[1] (src), word[4] (CHCFG), and word[7] (NXLA)
+/// are patched at runtime by [`init`].
 static mut TX_DESC: LinkDesc = LinkDesc([
-    0b1101,                                            // Header: LDEN + NXA + valid
+    DESC_HEADER,                                       // Header: LDEN + NXA + valid
     0,                                                 // src  (→ TX_BUF, set at init)
     (SSI0_BASE + SSIFTDR_OFF) as u32,                  // dst  = SSIFTDR (fixed)
     (TX_BUF_LEN * core::mem::size_of::<i32>()) as u32, // transfer bytes
-    TX_CHCFG,                                          // CHCFG
+    0,                                                 // CHCFG (patched at init)
     0,                                                 // CHITVL (no interval)
     0,                                                 // CHEXT
-    0,                                                 // next → &TX_DESC (set at init)
+    0,                                                 // NXLA → &TX_DESC (set at init)
 ]);
 
-/// RX link descriptor.  The `dst` (word 2) and `next` (word 7) fields are
-/// patched at runtime by [`init`].
+/// RX link descriptor.  Word[2] (dst), word[4] (CHCFG), and word[7] (NXLA)
+/// are patched at runtime by [`init`].
 static mut RX_DESC: LinkDesc = LinkDesc([
-    0b1101,                                            // Header
+    DESC_HEADER,                                       // Header: LDEN + NXA + valid
     (SSI0_BASE + SSIFRDR_OFF) as u32,                  // src  = SSIFRDR (fixed)
     0,                                                 // dst  (→ RX_BUF, set at init)
     (RX_BUF_LEN * core::mem::size_of::<i32>()) as u32, // transfer bytes
-    RX_CHCFG,                                          // CHCFG
+    0,                                                 // CHCFG (patched at init)
     0,                                                 // CHITVL
     0,                                                 // CHEXT
-    0,                                                 // next → &RX_DESC (set at init)
+    0,                                                 // NXLA → &RX_DESC (set at init)
 ]);
 
 // ── Register helpers ─────────────────────────────────────────────────────────
@@ -224,12 +279,14 @@ fn ssi_reg(off: usize) -> *mut u32 {
 /// # Safety
 /// Must be called exactly once, from a single-threaded boot context, before
 /// any audio task accesses the buffer pointers.
-pub unsafe fn init() {
+pub unsafe fn init(cfg: &SsiConfig) {
     unsafe {
+        TX_DMA_CH_ACTIVE.store(cfg.tx_dma_ch, core::sync::atomic::Ordering::Relaxed);
+        RX_DMA_CH_ACTIVE.store(cfg.rx_dma_ch, core::sync::atomic::Ordering::Relaxed);
         log::debug!(
             "ssi: init SSI0 (44.1 kHz I\u{00B2}S, DMA ch{}/{})",
-            TX_DMA_CH,
-            RX_DMA_CH
+            cfg.tx_dma_ch,
+            cfg.rx_dma_ch
         );
         // 1. Patch self-referential fields in the link descriptors.
         //    Write through the uncached alias so the DMAC sees the correct values
@@ -244,11 +301,13 @@ pub unsafe fn init() {
         tx_desc_u
             .add(1)
             .write_volatile(core::ptr::addr_of!(TX_BUF.0[0]) as u32);
+        tx_desc_u.add(4).write_volatile(tx_chcfg(cfg.tx_dma_ch));
         tx_desc_u.add(7).write_volatile(tx_desc_u as u32);
 
         rx_desc_u
             .add(2)
             .write_volatile(core::ptr::addr_of!(RX_BUF.0[0]) as u32);
+        rx_desc_u.add(4).write_volatile(rx_chcfg(cfg.rx_dma_ch));
         rx_desc_u.add(7).write_volatile(rx_desc_u as u32);
 
         // 2. SSI0 software reset via CPG SWRSTCR1 bit 6.
@@ -264,7 +323,7 @@ pub unsafe fn init() {
         //   TDM=0 (normal stereo, not TDM).
         //   BSP sets SCUX_SSITDMR_CONT_SET when mode_master=true.
         ssi_reg(SSITDMR_OFF).write_volatile(SSITDMR_CONT);
-        ssi_reg(SSICR_OFF).write_volatile(SSICR_INIT); // master, 24-bit/32-bit, ÷4
+        ssi_reg(SSICR_OFF).write_volatile(cfg.ssicr); // master, 24-bit/32-bit, ÷4
         ssi_reg(SSIFCR_OFF).write_volatile(SSIFCR_INIT); // FIFOs in reset
 
         // 4. Initialise and connect DMA channels to the link descriptors.
@@ -273,13 +332,13 @@ pub unsafe fn init() {
             (core::ptr::addr_of!(TX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
         let rx_desc_u =
             (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
-        dmac::init_with_link_descriptor(TX_DMA_CH, tx_desc_u, DMARS_SSI0_TX);
-        dmac::init_with_link_descriptor(RX_DMA_CH, rx_desc_u, DMARS_SSI0_RX);
+        dmac::init_with_link_descriptor(cfg.tx_dma_ch, tx_desc_u, DMARS_SSI0_TX);
+        dmac::init_with_link_descriptor(cfg.rx_dma_ch, rx_desc_u, DMARS_SSI0_RX);
 
         // 5. Start both DMA channels (software-reset then enable).
-        dmac::channel_start(TX_DMA_CH);
-        dmac::channel_start(RX_DMA_CH);
-        log::debug!("ssi: DMA TX ch{} + RX ch{} started", TX_DMA_CH, RX_DMA_CH);
+        dmac::channel_start(cfg.tx_dma_ch);
+        dmac::channel_start(cfg.rx_dma_ch);
+        log::debug!("ssi: DMA TX ch{} + RX ch{} started", cfg.tx_dma_ch, cfg.rx_dma_ch);
 
         // 6. Release the FIFOs from reset and enable TX/RX.
         //    This mirrors `ssiStart()` from the C firmware exactly.
@@ -310,11 +369,12 @@ pub unsafe fn init() {
 /// # Safety
 /// Same requirements as [`init`].  Do not call both [`init`] and this
 /// function — call exactly one of the two.
-pub unsafe fn init_rx_only() {
+pub unsafe fn init_rx_only(cfg: &SsiConfig) {
     unsafe {
+        RX_DMA_CH_ACTIVE.store(cfg.rx_dma_ch, core::sync::atomic::Ordering::Relaxed);
         log::debug!(
             "ssi: init SSI0 RX-only (44.1 kHz I\u{00B2}S, DMA ch{} RX, TX owned by SCUX)",
-            RX_DMA_CH
+            cfg.rx_dma_ch
         );
 
         // 1. Patch RX link descriptor only.
@@ -323,6 +383,7 @@ pub unsafe fn init_rx_only() {
         rx_desc_u
             .add(2)
             .write_volatile(core::ptr::addr_of!(RX_BUF.0[0]) as u32);
+        rx_desc_u.add(4).write_volatile(rx_chcfg(cfg.rx_dma_ch));
         rx_desc_u.add(7).write_volatile(rx_desc_u as u32);
 
         // 2. SSI0 software reset.
@@ -335,17 +396,17 @@ pub unsafe fn init_rx_only() {
 
         // 3. Configure SSI registers (same as full init).
         ssi_reg(SSITDMR_OFF).write_volatile(SSITDMR_CONT); // WS continue mode (master)
-        ssi_reg(SSICR_OFF).write_volatile(SSICR_INIT);
+        ssi_reg(SSICR_OFF).write_volatile(cfg.ssicr);
         ssi_reg(SSIFCR_OFF).write_volatile(SSIFCR_INIT); // both FIFOs held in reset
 
         // 4. Initialise and start RX DMA only.
         let rx_desc_u =
             (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
-        dmac::init_with_link_descriptor(RX_DMA_CH, rx_desc_u, DMARS_SSI0_RX);
-        dmac::channel_start(RX_DMA_CH);
+        dmac::init_with_link_descriptor(cfg.rx_dma_ch, rx_desc_u, DMARS_SSI0_RX);
+        dmac::channel_start(cfg.rx_dma_ch);
         log::debug!(
             "ssi: DMA RX ch{} started (TX skipped — SCUX owns TX)",
-            RX_DMA_CH
+            cfg.rx_dma_ch
         );
 
         // 5. Release RX FIFO only; leave TX FIFO in reset (TFRST stays set).
@@ -393,9 +454,10 @@ pub unsafe fn enable_tx() {
 ///
 /// Write audio samples *ahead of* this pointer.  Wrap at [`tx_buf_end`].
 pub fn tx_current_ptr() -> *mut i32 {
-    let crsa = unsafe { dmac::current_src(TX_DMA_CH) };
-    // Align down to a stereo frame (2 × i32 = 8 bytes)
-    let aligned = crsa & !7u32;
+    let ch = TX_DMA_CH_ACTIVE.load(core::sync::atomic::Ordering::Relaxed);
+    let crsa = unsafe { dmac::current_src(ch) };
+    // Align down to a stereo frame (2 × i32 = 8 bytes).
+    let aligned = crsa & STEREO_FRAME_ALIGN_MASK;
     (aligned as usize + UNCACHED_MIRROR_OFFSET) as *mut i32
 }
 
@@ -404,8 +466,9 @@ pub fn tx_current_ptr() -> *mut i32 {
 ///
 /// Read received samples *behind* this pointer.  Wrap at [`rx_buf_start`].
 pub fn rx_current_ptr() -> *const i32 {
-    let crda = unsafe { dmac::current_dst(RX_DMA_CH) };
-    let aligned = crda & !7u32;
+    let ch = RX_DMA_CH_ACTIVE.load(core::sync::atomic::Ordering::Relaxed);
+    let crda = unsafe { dmac::current_dst(ch) };
+    let aligned = crda & STEREO_FRAME_ALIGN_MASK;
     (aligned as usize + UNCACHED_MIRROR_OFFSET) as *const i32
 }
 

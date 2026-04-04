@@ -24,8 +24,9 @@
 //! - The 2SRC unit 0, pair 1 is used, independent of the DVU path's pair 0.
 
 use rza1::scux::{
-    self, AudioInfo, IpcSel, MixConfig, OpcSel, SrcConfig, SrcMode, UNCACHED_MIRROR_OFFSET,
+    self, AudioInfo, IpcSel, MixConfig, OpcSel, SrcConfig, SrcMode,
 };
+use rza1::UNCACHED_MIRROR_OFFSET;
 
 /// Number of stereo frames in the SRC path input (TX) buffer.
 pub const SRC_TX_FRAMES: usize = 1024;
@@ -88,12 +89,12 @@ pub unsafe fn init(fin_hz: u32, fout_hz: u32) {
         // DMA: TX buffer → FFD0_1 (DMA ch 3)
         let tx_ptr = core::ptr::addr_of!(SRC_TX_BUF.0[0]) as *const u32;
         let tx_bytes = SRC_TX_BUF_LEN * core::mem::size_of::<i32>();
-        scux::init_ffd_dma(FFD_CH, tx_ptr, tx_bytes);
+        scux::init_ffd_dma(FFD_CH, crate::system::SCUX_FFD1_DMA_CH, tx_ptr, tx_bytes);
 
         // DMA: FFU0_1 → RX buffer (DMA ch 5)
         let rx_ptr = core::ptr::addr_of_mut!(SRC_RX_BUF.0[0]) as *mut u32;
         let rx_bytes = SRC_RX_BUF_LEN * core::mem::size_of::<i32>();
-        scux::init_ffu_dma(FFU_CH, rx_ptr, rx_bytes);
+        scux::init_ffu_dma(FFU_CH, crate::system::SCUX_FFU1_DMA_CH, rx_ptr, rx_bytes);
 
         // Sub-block config
         scux::configure_ipc(IPC_CH, IpcSel::FfdToSrcAsync);

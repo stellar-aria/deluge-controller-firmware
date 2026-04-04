@@ -35,6 +35,28 @@ const L2C_REG9_I_LOCK0: usize = L2C_BASE + 0x904;
 const L2C_8WAY: u32 = 0x0000_00FF; // all 8 ways
 
 // ---------------------------------------------------------------------------
+// CP15 SCTLR / ACTLR bit constants (Cortex-A9 TRM §4.3.5, §4.3.6)
+// ---------------------------------------------------------------------------
+
+/// SCTLR bit 2: C — L1 data-cache enable.
+const SCTLR_DCACHE: u32 = 1 << 2;
+/// SCTLR bit 11: Z — branch prediction enable.
+const SCTLR_ZBRANCH: u32 = 1 << 11;
+/// SCTLR bit 12: I — L1 instruction-cache enable.
+const SCTLR_ICACHE: u32 = 1 << 12;
+/// ACTLR bit 2: enable L1 D-side prefetch (Cortex-A9 TRM §4.3.6).
+const ACTLR_DPREFETCH: u32 = 1 << 2;
+
+// ---------------------------------------------------------------------------
+// PL310 L2C interrupt and enable constants
+// ---------------------------------------------------------------------------
+
+/// L2C_REG2_INT_CLEAR: write 1 to each of bits [8:0] to clear all 9 interrupt sources.
+const L2C_INT_CLR_ALL: u32 = 0x0000_01FF;
+/// L2C_REG1_CONTROL bit 0: enable L2 cache.
+const L2C_ENABLE: u32 = 0x0000_0001;
+
+// ---------------------------------------------------------------------------
 // L1 cache
 // ---------------------------------------------------------------------------
 
@@ -52,7 +74,7 @@ pub unsafe fn l1_enable() {
         // Read SCTLR and set I-cache (bit 12), D-cache (bit 2), Z/branch (bit 11).
         let mut sctlr: u32;
         asm!("mrc p15, 0, {0}, c1, c0, 0", out(reg) sctlr, options(nomem, nostack));
-        sctlr |= (1 << 12) | (1 << 11) | (1 << 2);
+        sctlr |= SCTLR_ICACHE | SCTLR_ZBRANCH | SCTLR_DCACHE;
         // DSB: drain the write buffer so all prior stores reach physical OCRAM
         // before the cache starts intercepting loads (the ISB that follows
         // activates D-cache for the very next instruction).
@@ -64,7 +86,7 @@ pub unsafe fn l1_enable() {
         // Read ACTLR and set D-side prefetch (bit 2).
         let mut actlr: u32;
         asm!("mrc p15, 0, {0}, c1, c0, 1", out(reg) actlr, options(nomem, nostack));
-        actlr |= 1 << 2;
+        actlr |= ACTLR_DPREFETCH;
         asm!("mcr p15, 0, {0}, c1, c0, 1", in(reg) actlr, options(nomem, nostack));
         asm!("isb", options(nomem, nostack));
         log::debug!("cache: L1 enabled");
@@ -104,7 +126,7 @@ pub unsafe fn l2_init() {
         log::trace!("cache: L2 all ways invalidated");
 
         // 3. Clear all interrupt sources in one write (bits [8:0]).
-        wr32(L2C_REG2_INT_CLR, 0x0000_01FF);
+        wr32(L2C_REG2_INT_CLR, L2C_INT_CLR_ALL);
 
         // 4. Lock D-cache ways (avoid DMA/cache coherency issues with DMA on L2).
         //    Only 8 valid way-bits [7:0] on this PL310 configuration; use L2C_8WAY.
@@ -115,7 +137,7 @@ pub unsafe fn l2_init() {
         wr32(L2C_REG9_I_LOCK0, 0x0000_0000);
 
         // 5. Enable L2 cache.
-        wr32(L2C_REG1_CONTROL, 0x0000_0001);
+        wr32(L2C_REG1_CONTROL, L2C_ENABLE);
     }
 }
 

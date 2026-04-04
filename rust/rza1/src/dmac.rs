@@ -40,6 +40,42 @@ const CHCTRL_SETEN: u32 = 1 << 0; // Set enable  (start transfer)
 const CHCTRL_SWRST: u32 = 1 << 3; // Software reset (clears status)
 const CHCTRL_CLRTC: u32 = 1 << 6; // Clear terminal count (TC bit)
 
+// ── CHSTAT bits ──────────────────────────────────────────────────────────────
+/// CHSTAT bit 6: TC — Terminal Count flag set when transfer completes.
+pub(crate) const CHSTAT_TC: u32 = 1 << 6;
+
+// ── CHCFG register field constants (TRM §9.3.14; dmac_iobitmask.h) ───────────
+/// CHCFG bit 31: DMS — DMA Mode Select (0 = register mode, 1 = link mode).
+pub(crate) const CHCFG_DMS: u32 = 1 << 31;
+/// CHCFG bit 24: DEM — DMA End interrupt Mask (1 = end interrupt suppressed).
+pub(crate) const CHCFG_DEM: u32 = 1 << 24;
+/// CHCFG bit 21: DAD — Destination Address Direction (1 = fixed / no increment).
+/// Set when the destination is a peripheral register (e.g. SSI TX FIFO, SCUX FFD).
+pub(crate) const CHCFG_DAD: u32 = 1 << 21;
+/// CHCFG bit 20: SAD — Source Address Direction (1 = fixed / no increment).
+/// Set when the source is a peripheral register (e.g. SSI RX FIFO, SCUX FFU).
+pub(crate) const CHCFG_SAD: u32 = 1 << 20;
+/// CHCFG bits [19:16]: DDS — Destination Data Size, value 2 = 4 bytes (32-bit).
+pub(crate) const CHCFG_DDS_32BIT: u32 = 2 << 16;
+/// CHCFG bits [15:12]: SDS — Source Data Size, value 2 = 4 bytes (32-bit).
+pub(crate) const CHCFG_SDS_32BIT: u32 = 2 << 12;
+/// CHCFG bits [10:8]: AM — Acknowledge Mode, value 2 = burst-transfer mode.
+pub(crate) const CHCFG_AM_BURST: u32 = 2 << 8;
+/// CHCFG bit 5: HIEN — High Enable.
+/// Selects the DMA request signal edge detected: rising edge (LVL=0) or High level (LVL=1).
+pub(crate) const CHCFG_HIEN: u32 = 1 << 5;
+/// CHCFG bit 6: LVL — Level-triggered DMA (1 = level, 0 = edge).
+/// BSP: `DMA_LVL_FOR_SSI = (1 << 6)` in `cpu_specific.h`.
+pub(crate) const CHCFG_LVL: u32 = 1 << 6;
+/// CHCFG bit 3: REQD — Request Direction (1 = dest-select, 0 = src-select).
+/// Set for TX (destination peripheral requests); clear for RX (source peripheral).
+pub(crate) const CHCFG_REQD: u32 = 1 << 3;
+
+// ── GIC priority for DMAC completion interrupts ───────────────────────────────
+/// GIC priority assigned to DMAC completion (DMAINT) interrupts.
+/// Matches the original C firmware value for OLED DMA.
+const DMAC_IRQ_PRIORITY: u8 = 13;
+
 // ── DCTRL group-control registers ───────────────────────────────────────────
 const DCTRL_0_7: usize = DMAC_BASE + 0x300;
 const DCTRL_8_15: usize = DMAC_BASE + 0x700;
@@ -279,7 +315,7 @@ pub unsafe fn register_completion_irq(ch: u8) {
         use crate::gic;
         let id = DMAINT_BASE + ch as u16;
         gic::register(id, DMA_INT_HANDLERS[ch as usize]);
-        gic::set_priority(id, 13); // matches original C firmware priority for OLED DMA
+        gic::set_priority(id, DMAC_IRQ_PRIORITY);
         gic::enable(id);
     }
 }
@@ -327,7 +363,7 @@ pub async fn wait_transfer_complete(ch: u8) {
         // Check TC flag (CHSTAT.TC = bit 6) directly to avoid missing a
         // completion that arrived before we registered the waker.
         let chstat = unsafe { ch_reg(ch, OFF_CHSTAT).read_volatile() };
-        if chstat & (1 << 6) != 0 {
+        if chstat & CHSTAT_TC != 0 {
             // TC bit set — transfer complete
             Poll::Ready(())
         } else {

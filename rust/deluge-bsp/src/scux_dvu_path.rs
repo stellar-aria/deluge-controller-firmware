@@ -33,9 +33,10 @@
 use rza1::{
     scux::{
         self, AudioInfo, DvuConfig, INTIFS_44100_TO_44100, IpcSel, MixConfig, OpcSel, RampConfig,
-        SrcConfig, SrcMode, UNCACHED_MIRROR_OFFSET,
+        SrcConfig, SrcMode,
     },
     ssi,
+    UNCACHED_MIRROR_OFFSET,
 };
 
 /// Number of stereo frames in the DVU path DMA buffer.
@@ -96,7 +97,7 @@ pub unsafe fn init() {
 
         // Start SSI0 RX DMA (codec → memory) but intentionally skip SSI0 TX DMA —
         // the SCUX will drive SSIF0 TX directly via SSICTRL.SSI012TEN.
-        ssi::init_rx_only();
+        ssi::init_rx_only(&crate::system::SSI_CONFIG);
 
         // 1. Software-reset the SCUX block.
         scux::reset();
@@ -105,7 +106,7 @@ pub unsafe fn init() {
         //    set up DMA channel 0 → FFD0_0.
         let buf_ptr = core::ptr::addr_of!(DVU_TX_BUF.0[0]) as *const u32;
         let buf_bytes = DVU_PATH_BUF_LEN * core::mem::size_of::<i32>();
-        scux::init_ffd_dma(FFD_CH, buf_ptr, buf_bytes);
+        scux::init_ffd_dma(FFD_CH, crate::system::SCUX_FFD0_DMA_CH, buf_ptr, buf_bytes);
 
         // 3. Configure sub-blocks (all INIT bits = 1 after reset — OK to write).
 
@@ -254,7 +255,7 @@ pub fn tx_buf_end() -> *mut i32 {
 /// Mirrors `rza1::ssi::tx_current_ptr` in signature and semantics — write
 /// audio samples *ahead of* this pointer.
 pub fn tx_current_ptr() -> *mut i32 {
-    let crsa = unsafe { rza1::dmac::current_src(scux::FFD0_DMA_CH) };
+    let crsa = unsafe { rza1::dmac::current_src(crate::system::SCUX_FFD0_DMA_CH) };
     let aligned = crsa & !7u32;
     (aligned as usize + UNCACHED_MIRROR_OFFSET) as *mut i32
 }

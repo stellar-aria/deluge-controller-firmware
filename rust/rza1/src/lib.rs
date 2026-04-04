@@ -28,7 +28,6 @@ pub mod rspi;
 pub mod rusb1;
 pub mod scux;
 pub mod sdhi;
-pub mod sdram;
 pub mod ssi;
 #[cfg(target_os = "none")]
 pub mod startup;

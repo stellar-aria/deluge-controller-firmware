@@ -38,7 +38,7 @@
 //! SDRAM mode registers (CS2 @ 0x3FFF_D040, CS3 @ 0x3FFF_E040) are written
 //! as 16-bit accesses to latch the JEDEC mode register into the DRAM.
 
-use crate::gpio::set_pin_mux;
+use rza1::gpio::set_pin_mux;
 
 // BSC register addresses
 const CS2BCR: usize = 0x3FFF_C00C;

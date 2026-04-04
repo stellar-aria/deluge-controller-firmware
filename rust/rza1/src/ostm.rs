@@ -58,6 +58,10 @@ const CTL_FREE_RUN_INT: u8 = 0x03; // free-running with compare interrupt
 // stb.c initializes STBCR5 = 0b11111100 — bits 0 and 1 clear → OSTM0+OSTM1 clocked.
 // A dummy read after write is required by the hardware spec.
 const STBCR5: usize = 0xFCFE_0428;
+/// STBCR5 bit 0: MSTP50 — stop OSTM0 clock (1 = stopped, 0 = running).
+const STBCR5_MSTP50: u8 = 1 << 0;
+/// STBCR5 bit 1: MSTP51 — stop OSTM1 clock (1 = stopped, 0 = running).
+const STBCR5_MSTP51: u8 = 1 << 1;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -81,7 +85,7 @@ pub unsafe fn enable_clock() {
     unsafe {
         let reg = STBCR5 as *mut u8;
         let val = reg.read_volatile();
-        reg.write_volatile(val & !0x03); // clear MSTP50 (OSTM0) and MSTP51 (OSTM1)
+        reg.write_volatile(val & !(STBCR5_MSTP50 | STBCR5_MSTP51)); // clear MSTP50 (OSTM0) and MSTP51 (OSTM1)
         let _ = reg.read_volatile(); // mandatory dummy read per HW spec
     }
 }

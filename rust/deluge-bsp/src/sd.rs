@@ -153,7 +153,7 @@ pub async fn init() -> Result<(), SdError> {
     CARD_READY.store(false, Ordering::Release);
 
     unsafe {
-        sdhi::init(SD_PORT);
+        sdhi::init(SD_PORT, crate::system::SD_OPTION);
         sdhi::register_irqs(SD_PORT);
     }
 
