@@ -26,9 +26,6 @@ embedded-io-async = "0.7"
 log = { version = "0.4", default-features = false, features = ["release_max_level_off"] }
 
 [features]
-## Enable RTT (SEGGER Real-Time Transfer) support.
-## Provides the _SEGGER_RTT symbol and writes "DABT" to the RTT channel on
-## a data-abort exception.  Should be disabled in release builds.
 rtt = ["dep:rtt-target"]
 
 [dependencies.rtt-target]

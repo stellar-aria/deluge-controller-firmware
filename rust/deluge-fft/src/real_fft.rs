@@ -36,7 +36,7 @@ use core::ops::{Add, Mul, Sub};
 use core::simd::Simd;
 
 use crate::buf::FftBuf;
-use crate::twiddle::TwiddleTableSoa;
+use crate::twiddle::TwiddleTable;
 
 /// Real-input FFT: processes `N` real `f32` samples and produces the
 /// `N/2 + 1` independent complex frequency bins.
@@ -59,6 +59,8 @@ where
         + Sub<Output = Simd<f32, LANES>>
         + Mul<Output = Simd<f32, LANES>>
         + Copy,
+    [(); N]:,
+    [(); 2 * (N / 2)]:,
 {
     /// Process `N` real samples and write `N/2 + 1` complex bins to `out`.
     ///
@@ -102,7 +104,7 @@ where
         };
 
         // 4. General bins k = 1 .. N/2-1.
-        //    The twiddle table TwiddleTableSoa::<N> holds W_N^k.
+        //    The twiddle table TwiddleTable::<N> holds W_N^k.
         //    For the post-processing we need W_N^k for k = 1..N/2-1.
         //    Those live at the *last* stage's twiddle sub-table: half_m = N/2,
         //    offset = N/2 - 1,  W_N^j = entry [N/2-1 + j] (j = 0..N/2).
@@ -135,8 +137,8 @@ where
             //   product (wr + j*wi)(di + j*(-dr)):
             //     re = wr*di - wi*(-dr) = wr*di + wi*dr
             //     im = wr*(-dr) + wi*di = wi*di - wr*dr
-            let wr = TwiddleTableSoa::<N>::RE[tw_off + k];
-            let wi = TwiddleTableSoa::<N>::IM[tw_off + k]; // W_N^k, wi < 0
+            let wr = TwiddleTable::<N>::re(tw_off + k);
+            let wi = TwiddleTable::<N>::im(tw_off + k); // W_N^k, wi < 0
 
             // W_N^k * (-j * d):
             let td_r = wr * di + wi * dr;

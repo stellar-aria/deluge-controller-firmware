@@ -73,7 +73,7 @@ fn enc_irq_handler(enc_idx: usize, irq_pin: u8, companion: u8, irq_num: u8, inve
     // sampled at the same instant, eliminating the direction-decode race.
     let pins = unsafe { rza1::gpio::read_port(1) };
     let irq_new = (pins >> irq_pin) & 1 != 0;
-    let comp    = (pins >> companion) & 1 != 0;
+    let comp = (pins >> companion) & 1 != 0;
     // A-first (IRQ on A): CW when irq_new == comp  → matches old code's A-branch formula.
     // B-first (IRQ on B, invert=true): CW when irq_new != comp.
     let cw = if invert {

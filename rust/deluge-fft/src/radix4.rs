@@ -34,7 +34,7 @@ use core::simd::Simd;
 use crate::buf::FftBuf;
 use crate::complex::Complex;
 use crate::fft::{assert_valid_size_r4, ilog2};
-use crate::twiddle::TwiddleTableSoa;
+use crate::twiddle::TwiddleTable;
 
 // ---------------------------------------------------------------------------
 // Public entry points
@@ -75,6 +75,7 @@ where
         + Sub<Output = Simd<f32, LANES>>
         + Mul<Output = Simd<f32, LANES>>
         + Copy,
+    [(); 2 * N]:,
 {
     assert_valid_size_r4::<N>();
     bit_reverse_soa(buf);
@@ -118,7 +119,7 @@ fn bit_reverse_aos<const N: usize>(buf: &mut [Complex; N]) {
     }
 }
 
-fn bit_reverse_soa<const N: usize>(buf: &mut FftBuf<N>) {
+pub(crate) fn bit_reverse_soa<const N: usize>(buf: &mut FftBuf<N>) {
     let bits = ilog2(N) as u32;
     for i in 0..N {
         let j = bit_rev(i, bits);
@@ -141,11 +142,86 @@ where
         + Copy,
 {
     let tw_off = half_m - 1;
+    // For half_m < LANES, vectorise across LANES groups at once.
+    if half_m < LANES {
+        let stride = 2 * half_m;
+        let groups_per_vec = LANES / half_m;
+        let wr_arr: [f32; LANES] =
+            core::array::from_fn(|l| TwiddleTable::<N>::re(tw_off + l % half_m));
+        let wi_arr: [f32; LANES] =
+            core::array::from_fn(|l| TwiddleTable::<N>::im(tw_off + l % half_m));
+        let wr = Simd::<f32, LANES>::from_array(wr_arr);
+        let wi = Simd::<f32, LANES>::from_array(wi_arr);
+        let mut k = 0usize;
+        while k + stride * groups_per_vec <= N {
+            let mut ur_arr = [0f32; LANES];
+            let mut ui_arr = [0f32; LANES];
+            let mut vr_arr = [0f32; LANES];
+            let mut vi_arr = [0f32; LANES];
+            for g in 0..groups_per_vec {
+                let base = k + g * stride;
+                for j in 0..half_m {
+                    let l = g * half_m + j;
+                    let u = buf[base + j];
+                    let v = buf[base + j + half_m];
+                    ur_arr[l] = u.re;
+                    ui_arr[l] = u.im;
+                    vr_arr[l] = v.re;
+                    vi_arr[l] = v.im;
+                }
+            }
+            let ur = Simd::<f32, LANES>::from_array(ur_arr);
+            let ui = Simd::<f32, LANES>::from_array(ui_arr);
+            let vr = Simd::<f32, LANES>::from_array(vr_arr);
+            let vi = Simd::<f32, LANES>::from_array(vi_arr);
+            let tr = wr * vr - wi * vi;
+            let ti = wr * vi + wi * vr;
+            let oar = (ur + tr).to_array();
+            let oai = (ui + ti).to_array();
+            let obr = (ur - tr).to_array();
+            let obi = (ui - ti).to_array();
+            for g in 0..groups_per_vec {
+                let base = k + g * stride;
+                for j in 0..half_m {
+                    let l = g * half_m + j;
+                    buf[base + j] = Complex {
+                        re: oar[l],
+                        im: oai[l],
+                    };
+                    buf[base + j + half_m] = Complex {
+                        re: obr[l],
+                        im: obi[l],
+                    };
+                }
+            }
+            k += stride * groups_per_vec;
+        }
+        while k < N {
+            for j in 0..half_m {
+                let wr = TwiddleTable::<N>::re(tw_off + j);
+                let wi = TwiddleTable::<N>::im(tw_off + j);
+                let u = buf[k + j];
+                let v = buf[k + j + half_m];
+                let tr = wr * v.re - wi * v.im;
+                let ti = wr * v.im + wi * v.re;
+                buf[k + j] = Complex {
+                    re: u.re + tr,
+                    im: u.im + ti,
+                };
+                buf[k + j + half_m] = Complex {
+                    re: u.re - tr,
+                    im: u.im - ti,
+                };
+            }
+            k += stride;
+        }
+        return;
+    }
     let mut k = 0usize;
     while k < N {
         for j in 0..half_m {
-            let wr = TwiddleTableSoa::<N>::RE[tw_off + j];
-            let wi = TwiddleTableSoa::<N>::IM[tw_off + j];
+            let wr = TwiddleTable::<N>::re(tw_off + j);
+            let wi = TwiddleTable::<N>::im(tw_off + j);
             let u = buf[k + j];
             let v = buf[k + j + half_m];
             let tr = wr * v.re - wi * v.im;
@@ -163,7 +239,7 @@ where
     }
 }
 
-fn r2_stage_soa<const N: usize, const LANES: usize>(buf: &mut FftBuf<N>, half_m: usize)
+pub(crate) fn r2_stage_soa<const N: usize, const LANES: usize>(buf: &mut FftBuf<N>, half_m: usize)
 where
     Simd<f32, LANES>: Add<Output = Simd<f32, LANES>>
         + Sub<Output = Simd<f32, LANES>>
@@ -171,11 +247,86 @@ where
         + Copy,
 {
     let tw_off = half_m - 1;
+    // For half_m < LANES, vectorise across LANES groups simultaneously.
+    if half_m < LANES {
+        #[cfg(all(target_arch = "arm", target_feature = "neon"))]
+        if LANES == 4 {
+            unsafe {
+                crate::arch::r2_soa_narrow_neon::<N>(buf, tw_off, half_m);
+            }
+            return;
+        }
+
+        let stride = 2 * half_m;
+        let groups_per_vec = LANES / half_m;
+        let wr_arr: [f32; LANES] =
+            core::array::from_fn(|l| TwiddleTable::<N>::re(tw_off + l % half_m));
+        let wi_arr: [f32; LANES] =
+            core::array::from_fn(|l| TwiddleTable::<N>::im(tw_off + l % half_m));
+        let wr = Simd::<f32, LANES>::from_array(wr_arr);
+        let wi = Simd::<f32, LANES>::from_array(wi_arr);
+        let mut k = 0usize;
+        while k + stride * groups_per_vec <= N {
+            let mut ur_arr = [0f32; LANES];
+            let mut ui_arr = [0f32; LANES];
+            let mut vr_arr = [0f32; LANES];
+            let mut vi_arr = [0f32; LANES];
+            for g in 0..groups_per_vec {
+                let base = k + g * stride;
+                for j in 0..half_m {
+                    let l = g * half_m + j;
+                    ur_arr[l] = buf.re[base + j];
+                    ui_arr[l] = buf.im[base + j];
+                    vr_arr[l] = buf.re[base + j + half_m];
+                    vi_arr[l] = buf.im[base + j + half_m];
+                }
+            }
+            let ur = Simd::<f32, LANES>::from_array(ur_arr);
+            let ui = Simd::<f32, LANES>::from_array(ui_arr);
+            let vr = Simd::<f32, LANES>::from_array(vr_arr);
+            let vi = Simd::<f32, LANES>::from_array(vi_arr);
+            let tr = wr * vr - wi * vi;
+            let ti = wr * vi + wi * vr;
+            let oar = (ur + tr).to_array();
+            let oai = (ui + ti).to_array();
+            let obr = (ur - tr).to_array();
+            let obi = (ui - ti).to_array();
+            for g in 0..groups_per_vec {
+                let base = k + g * stride;
+                for j in 0..half_m {
+                    let l = g * half_m + j;
+                    buf.re[base + j] = oar[l];
+                    buf.im[base + j] = oai[l];
+                    buf.re[base + j + half_m] = obr[l];
+                    buf.im[base + j + half_m] = obi[l];
+                }
+            }
+            k += stride * groups_per_vec;
+        }
+        while k < N {
+            for j in 0..half_m {
+                let wr = TwiddleTable::<N>::re(tw_off + j);
+                let wi = TwiddleTable::<N>::im(tw_off + j);
+                let ur = buf.re[k + j];
+                let ui = buf.im[k + j];
+                let vr = buf.re[k + j + half_m];
+                let vi = buf.im[k + j + half_m];
+                let tr = wr * vr - wi * vi;
+                let ti = wr * vi + wi * vr;
+                buf.re[k + j] = ur + tr;
+                buf.im[k + j] = ui + ti;
+                buf.re[k + j + half_m] = ur - tr;
+                buf.im[k + j + half_m] = ui - ti;
+            }
+            k += stride;
+        }
+        return;
+    }
     let mut k = 0usize;
     while k < N {
         for j in 0..half_m {
-            let wr = TwiddleTableSoa::<N>::RE[tw_off + j];
-            let wi = TwiddleTableSoa::<N>::IM[tw_off + j];
+            let wr = TwiddleTable::<N>::re(tw_off + j);
+            let wi = TwiddleTable::<N>::im(tw_off + j);
             let ur = buf.re[k + j];
             let ui = buf.im[k + j];
             let vr = buf.re[k + j + half_m];
@@ -227,10 +378,18 @@ where
         // SIMD path.
         while j + LANES <= qm {
             // Twiddles — two sequential contiguous loads each.
-            let w2r = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::RE[tw2_off + j..]);
-            let w2i = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::IM[tw2_off + j..]);
-            let w1r = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::RE[tw1_off + j..]);
-            let w1i = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::IM[tw1_off + j..]);
+            let w2r = Simd::<f32, LANES>::from_array(core::array::from_fn(|l| {
+                TwiddleTable::<N>::re(tw2_off + j + l)
+            }));
+            let w2i = Simd::<f32, LANES>::from_array(core::array::from_fn(|l| {
+                TwiddleTable::<N>::im(tw2_off + j + l)
+            }));
+            let w1r = Simd::<f32, LANES>::from_array(core::array::from_fn(|l| {
+                TwiddleTable::<N>::re(tw1_off + j + l)
+            }));
+            let w1i = Simd::<f32, LANES>::from_array(core::array::from_fn(|l| {
+                TwiddleTable::<N>::im(tw1_off + j + l)
+            }));
 
             // Load x0..x3 (AoS: extract re/im from interleaved Complex).
             let (x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i) = {
@@ -329,10 +488,10 @@ where
 
         // Scalar tail.
         while j < qm {
-            let w2r = TwiddleTableSoa::<N>::RE[tw2_off + j];
-            let w2i = TwiddleTableSoa::<N>::IM[tw2_off + j];
-            let w1r = TwiddleTableSoa::<N>::RE[tw1_off + j];
-            let w1i = TwiddleTableSoa::<N>::IM[tw1_off + j];
+            let w2r = TwiddleTable::<N>::re(tw2_off + j);
+            let w2i = TwiddleTable::<N>::im(tw2_off + j);
+            let w1r = TwiddleTable::<N>::re(tw1_off + j);
+            let w1i = TwiddleTable::<N>::im(tw1_off + j);
 
             let x0 = buf[k + j];
             let x1 = buf[k + j + qm];
@@ -386,26 +545,191 @@ where
 // Merged two-stage radix-4 butterfly (SoA)
 // ---------------------------------------------------------------------------
 
-fn r4_stage_soa<const N: usize, const LANES: usize>(buf: &mut FftBuf<N>, qm: usize)
+pub(crate) fn r4_stage_soa<const N: usize, const LANES: usize>(buf: &mut FftBuf<N>, qm: usize)
 where
     Simd<f32, LANES>: Add<Output = Simd<f32, LANES>>
         + Sub<Output = Simd<f32, LANES>>
         + Mul<Output = Simd<f32, LANES>>
         + Copy,
+    [(); 2 * N]:,
 {
     let tw2_off = qm - 1;
     let tw1_off = 2 * qm - 1;
     let m4 = 4 * qm;
+
+    // For qm < LANES, the j-loop never fills a SIMD vector.
+    // Pack LANES/qm consecutive k-groups into one vector instead.
+    if qm < LANES {
+        #[cfg(all(target_arch = "arm", target_feature = "neon"))]
+        if LANES == 4 {
+            unsafe {
+                crate::arch::r4_soa_narrow_neon::<N>(buf, qm, tw2_off, tw1_off);
+            }
+            return;
+        }
+
+        let groups_per_vec = LANES / qm;
+        let w2r_arr: [f32; LANES] =
+            core::array::from_fn(|l| TwiddleTable::<N>::re(tw2_off + l % qm));
+        let w2i_arr: [f32; LANES] =
+            core::array::from_fn(|l| TwiddleTable::<N>::im(tw2_off + l % qm));
+        let w1r_arr: [f32; LANES] =
+            core::array::from_fn(|l| TwiddleTable::<N>::re(tw1_off + l % qm));
+        let w1i_arr: [f32; LANES] =
+            core::array::from_fn(|l| TwiddleTable::<N>::im(tw1_off + l % qm));
+        let w2r = Simd::<f32, LANES>::from_array(w2r_arr);
+        let w2i = Simd::<f32, LANES>::from_array(w2i_arr);
+        let w1r = Simd::<f32, LANES>::from_array(w1r_arr);
+        let w1i = Simd::<f32, LANES>::from_array(w1i_arr);
+
+        let mut k = 0usize;
+        while k + m4 * groups_per_vec <= N {
+            let mut x0r_a = [0f32; LANES];
+            let mut x0i_a = [0f32; LANES];
+            let mut x1r_a = [0f32; LANES];
+            let mut x1i_a = [0f32; LANES];
+            let mut x2r_a = [0f32; LANES];
+            let mut x2i_a = [0f32; LANES];
+            let mut x3r_a = [0f32; LANES];
+            let mut x3i_a = [0f32; LANES];
+            for g in 0..groups_per_vec {
+                let base = k + g * m4;
+                for j in 0..qm {
+                    let l = g * qm + j;
+                    x0r_a[l] = buf.re[base + j];
+                    x0i_a[l] = buf.im[base + j];
+                    x1r_a[l] = buf.re[base + j + qm];
+                    x1i_a[l] = buf.im[base + j + qm];
+                    x2r_a[l] = buf.re[base + j + 2 * qm];
+                    x2i_a[l] = buf.im[base + j + 2 * qm];
+                    x3r_a[l] = buf.re[base + j + 3 * qm];
+                    x3i_a[l] = buf.im[base + j + 3 * qm];
+                }
+            }
+            let x0r = Simd::<f32, LANES>::from_array(x0r_a);
+            let x0i = Simd::<f32, LANES>::from_array(x0i_a);
+            let x1r = Simd::<f32, LANES>::from_array(x1r_a);
+            let x1i = Simd::<f32, LANES>::from_array(x1i_a);
+            let x2r = Simd::<f32, LANES>::from_array(x2r_a);
+            let x2i = Simd::<f32, LANES>::from_array(x2i_a);
+            let x3r = Simd::<f32, LANES>::from_array(x3r_a);
+            let x3i = Simd::<f32, LANES>::from_array(x3i_a);
+
+            let t1r = w2r * x1r - w2i * x1i;
+            let t1i = w2r * x1i + w2i * x1r;
+            let t3r = w2r * x3r - w2i * x3i;
+            let t3i = w2r * x3i + w2i * x3r;
+
+            let ar = x0r + t1r;
+            let ai = x0i + t1i;
+            let br = x0r - t1r;
+            let bi = x0i - t1i;
+            let cr = x2r + t3r;
+            let ci = x2i + t3i;
+            let dr = x2r - t3r;
+            let di = x2i - t3i;
+
+            let er = w1r * cr - w1i * ci;
+            let ei = w1r * ci + w1i * cr;
+            let fr = w1r * dr - w1i * di;
+            let fi = w1r * di + w1i * dr;
+
+            let o0r = (ar + er).to_array();
+            let o0i = (ai + ei).to_array();
+            let o1r = (br + fi).to_array();
+            let o1i = (bi - fr).to_array();
+            let o2r = (ar - er).to_array();
+            let o2i = (ai - ei).to_array();
+            let o3r = (br - fi).to_array();
+            let o3i = (bi + fr).to_array();
+
+            for g in 0..groups_per_vec {
+                let base = k + g * m4;
+                for j in 0..qm {
+                    let l = g * qm + j;
+                    buf.re[base + j] = o0r[l];
+                    buf.im[base + j] = o0i[l];
+                    buf.re[base + j + qm] = o1r[l];
+                    buf.im[base + j + qm] = o1i[l];
+                    buf.re[base + j + 2 * qm] = o2r[l];
+                    buf.im[base + j + 2 * qm] = o2i[l];
+                    buf.re[base + j + 3 * qm] = o3r[l];
+                    buf.im[base + j + 3 * qm] = o3i[l];
+                }
+            }
+            k += m4 * groups_per_vec;
+        }
+        // scalar tail (shouldn't be reached for power-of-two N)
+        while k < N {
+            for j in 0..qm {
+                let w2r = TwiddleTable::<N>::re(tw2_off + j);
+                let w2i = TwiddleTable::<N>::im(tw2_off + j);
+                let w1r = TwiddleTable::<N>::re(tw1_off + j);
+                let w1i = TwiddleTable::<N>::im(tw1_off + j);
+                let x0r = buf.re[k + j];
+                let x0i = buf.im[k + j];
+                let x1r = buf.re[k + j + qm];
+                let x1i = buf.im[k + j + qm];
+                let x2r = buf.re[k + j + 2 * qm];
+                let x2i = buf.im[k + j + 2 * qm];
+                let x3r = buf.re[k + j + 3 * qm];
+                let x3i = buf.im[k + j + 3 * qm];
+                let t1r = w2r * x1r - w2i * x1i;
+                let t1i = w2r * x1i + w2i * x1r;
+                let t3r = w2r * x3r - w2i * x3i;
+                let t3i = w2r * x3i + w2i * x3r;
+                let ar = x0r + t1r;
+                let ai = x0i + t1i;
+                let br = x0r - t1r;
+                let bi = x0i - t1i;
+                let cr = x2r + t3r;
+                let ci = x2i + t3i;
+                let dr = x2r - t3r;
+                let di = x2i - t3i;
+                let er = w1r * cr - w1i * ci;
+                let ei = w1r * ci + w1i * cr;
+                let fr = w1r * dr - w1i * di;
+                let fi = w1r * di + w1i * dr;
+                buf.re[k + j] = ar + er;
+                buf.im[k + j] = ai + ei;
+                buf.re[k + j + qm] = br + fi;
+                buf.im[k + j + qm] = bi - fr;
+                buf.re[k + j + 2 * qm] = ar - er;
+                buf.im[k + j + 2 * qm] = ai - ei;
+                buf.re[k + j + 3 * qm] = br - fi;
+                buf.im[k + j + 3 * qm] = bi + fr;
+            }
+            k += m4;
+        }
+        return;
+    }
+
+    // NEON wide path: vld1q_f32 loads 4 consecutive twiddle values per register.
+    #[cfg(all(target_arch = "arm", target_feature = "neon"))]
+    if LANES == 4 {
+        unsafe {
+            crate::arch::r4_soa_wide_neon::<N>(buf, qm);
+        }
+        return;
+    }
 
     let mut k = 0usize;
     while k < N {
         let mut j = 0usize;
 
         while j + LANES <= qm {
-            let w2r = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::RE[tw2_off + j..]);
-            let w2i = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::IM[tw2_off + j..]);
-            let w1r = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::RE[tw1_off + j..]);
-            let w1i = Simd::<f32, LANES>::from_slice(&TwiddleTableSoa::<N>::IM[tw1_off + j..]);
+            let w2r = Simd::<f32, LANES>::from_array(core::array::from_fn(|l| {
+                TwiddleTable::<N>::re(tw2_off + j + l)
+            }));
+            let w2i = Simd::<f32, LANES>::from_array(core::array::from_fn(|l| {
+                TwiddleTable::<N>::im(tw2_off + j + l)
+            }));
+            let w1r = Simd::<f32, LANES>::from_array(core::array::from_fn(|l| {
+                TwiddleTable::<N>::re(tw1_off + j + l)
+            }));
+            let w1i = Simd::<f32, LANES>::from_array(core::array::from_fn(|l| {
+                TwiddleTable::<N>::im(tw1_off + j + l)
+            }));
 
             // All 8 sample loads are sequential contiguous reads.
             let x0r = Simd::<f32, LANES>::from_slice(&buf.re[k + j..]);
@@ -451,10 +775,10 @@ where
 
         // Scalar tail.
         while j < qm {
-            let w2r = TwiddleTableSoa::<N>::RE[tw2_off + j];
-            let w2i = TwiddleTableSoa::<N>::IM[tw2_off + j];
-            let w1r = TwiddleTableSoa::<N>::RE[tw1_off + j];
-            let w1i = TwiddleTableSoa::<N>::IM[tw1_off + j];
+            let w2r = TwiddleTable::<N>::re(tw2_off + j);
+            let w2i = TwiddleTable::<N>::im(tw2_off + j);
+            let w1r = TwiddleTable::<N>::re(tw1_off + j);
+            let w1i = TwiddleTable::<N>::im(tw1_off + j);
 
             let x0r = buf.re[k + j];
             let x0i = buf.im[k + j];

@@ -21,11 +21,17 @@
 #![feature(portable_simd)]
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
+#![cfg_attr(
+    all(target_arch = "arm", target_feature = "neon"),
+    feature(stdarch_arm_neon_intrinsics)
+)]
 
+mod arch;
 pub mod buf;
 mod complex;
 mod fft;
 mod radix4;
+mod radix8;
 mod real_fft;
 mod spectrum;
 mod trig;
@@ -35,6 +41,7 @@ pub use buf::FftBuf;
 pub use complex::Complex;
 pub use fft::Fft;
 pub use radix4::{process_r4_simd, process_r4_simd_soa};
+pub use radix8::process_r8_simd_soa;
 pub use real_fft::RealFft;
 pub use spectrum::{
     apply_hann_window, apply_hann_window_real, apply_hann_window_soa, magnitude_spectrum,

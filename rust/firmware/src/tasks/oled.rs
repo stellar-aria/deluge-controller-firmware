@@ -74,9 +74,8 @@ fn render_waveform(fb: &mut oled::FrameBuffer) {
     //         single-threaded cooperative executor.
     let waveform = unsafe { &*core::ptr::addr_of!(WAVEFORM) };
 
-    let sample_to_y = |s: f32| -> usize {
-        (CENTER - (s * HALF_SCALE) as i32).clamp(Y_MIN, Y_MAX) as usize
-    };
+    let sample_to_y =
+        |s: f32| -> usize { (CENTER - (s * HALF_SCALE) as i32).clamp(Y_MIN, Y_MAX) as usize };
 
     let mut prev_y = sample_to_y(waveform[0]);
     fb.set_pixel(0, prev_y, true);
@@ -84,7 +83,11 @@ fn render_waveform(fb: &mut oled::FrameBuffer) {
     for (x, &sample) in waveform.iter().enumerate().skip(1).take(oled::WIDTH - 1) {
         let y = sample_to_y(sample);
         // Draw a vertical segment from prev_y to y so there are no gaps.
-        let (y0, y1) = if prev_y <= y { (prev_y, y) } else { (y, prev_y) };
+        let (y0, y1) = if prev_y <= y {
+            (prev_y, y)
+        } else {
+            (y, prev_y)
+        };
         for row in y0..=y1 {
             fb.set_pixel(x, row, true);
         }

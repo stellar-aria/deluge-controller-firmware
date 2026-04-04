@@ -6,12 +6,12 @@
 
 pub mod audio;
 pub mod cv_gate;
-pub mod scux_dvu_path;
-pub mod scux_src_path;
 pub mod fat;
 pub mod midi_gate;
 pub mod oled;
 pub mod pic;
+pub mod scux_dvu_path;
+pub mod scux_src_path;
 pub mod sd;
 pub mod uart;
 pub mod usb;

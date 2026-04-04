@@ -2,6 +2,7 @@ use crate::buf::FftBuf;
 use crate::complex::Complex;
 use crate::fft::Fft;
 use crate::radix4::{process_r4_simd, process_r4_simd_soa};
+use crate::radix8::process_r8_simd_soa;
 use crate::real_fft::RealFft;
 use crate::spectrum::{apply_hann_window, apply_hann_window_soa};
 use crate::test_utils::{dft, max_error};
@@ -276,4 +277,47 @@ fn real_fft_sine_peak_512() {
         .map(|(i, _)| i)
         .unwrap();
     assert_eq!(peak, 13, "peak at {peak}, expected 13");
+}
+
+// ---------------------------------------------------------------------------
+// Radix-8 SoA
+// ---------------------------------------------------------------------------
+
+#[test]
+fn r8_soa_matches_r4_soa_512() {
+    let base = sine_aos::<512>(7);
+    let mut r4 = FftBuf::from_complex(&base);
+    let mut r8 = FftBuf::from_complex(&base);
+    process_r4_simd_soa::<512, 4>(&mut r4);
+    process_r8_simd_soa::<512, 4>(&mut r8);
+    let r4_c = r4.to_complex();
+    let r8_c = r8.to_complex();
+    let err = max_error(&r4_c, &r8_c);
+    assert!(err < 1e-3, "r8 SoA vs r4 SoA (N=512): {err}");
+}
+
+#[test]
+fn r8_soa_matches_r4_soa_1024() {
+    let base = sine_aos::<1024>(13);
+    let mut r4 = FftBuf::from_complex(&base);
+    let mut r8 = FftBuf::from_complex(&base);
+    process_r4_simd_soa::<1024, 4>(&mut r4);
+    process_r8_simd_soa::<1024, 4>(&mut r8);
+    let r4_c = r4.to_complex();
+    let r8_c = r8.to_complex();
+    let err = max_error(&r4_c, &r8_c);
+    assert!(err < 1e-3, "r8 SoA vs r4 SoA (N=1024): {err}");
+}
+
+#[test]
+fn r8_soa_matches_r4_soa_256() {
+    let base = sine_aos::<256>(5);
+    let mut r4 = FftBuf::from_complex(&base);
+    let mut r8 = FftBuf::from_complex(&base);
+    process_r4_simd_soa::<256, 4>(&mut r4);
+    process_r8_simd_soa::<256, 4>(&mut r8);
+    let r4_c = r4.to_complex();
+    let r8_c = r8.to_complex();
+    let err = max_error(&r4_c, &r8_c);
+    assert!(err < 1e-3, "r8 SoA vs r4 SoA (N=256): {err}");
 }

@@ -20,8 +20,8 @@
 //! SSI0 TX DMA (ch 6) is intentionally **not** started; SCUX drives SSIF0 TX
 //! directly via `SSICTRL.SSI012TEN`.  SSI0 RX DMA (ch 7) is started as usual.
 
-use rza1::{gpio, ostm};
 use crate::scux_dvu_path;
+use rza1::{gpio, ostm};
 
 /// Port and pin of the codec hardware-enable line.
 const CODEC_PORT: u8 = 6;

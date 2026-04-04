@@ -96,13 +96,13 @@ fn opc(ch: u8, off: usize) -> *mut u32 {
 const FFD_BASE: usize = SCUX_BASE + 0x0800;
 const FFD_STRIDE: usize = 0x100;
 
-const FFDIR_OFF: usize  = 0x00; // Init register (bit 0 = INIT)
-const FDAIR_OFF: usize  = 0x04; // Audio info register (channels, bit depth)
-const DRQSR_OFF: usize  = 0x08; // DMA request size register
-const FFDPR_OFF: usize  = 0x0C; // FIFO data pass register
-const FFDBR_OFF: usize  = 0x10; // Boot register (bit 0 = BOOT)
-const DEVMR_OFF: usize  = 0x14; // DMA event mode register (0 = DMA trigger, 1 = interrupt)
-const DEVCR_OFF: usize  = 0x1C; // DMA event clear register
+const FFDIR_OFF: usize = 0x00; // Init register (bit 0 = INIT)
+const FDAIR_OFF: usize = 0x04; // Audio info register (channels, bit depth)
+const DRQSR_OFF: usize = 0x08; // DMA request size register
+const FFDPR_OFF: usize = 0x0C; // FIFO data pass register
+const FFDBR_OFF: usize = 0x10; // Boot register (bit 0 = BOOT)
+const DEVMR_OFF: usize = 0x14; // DMA event mode register (0 = DMA trigger, 1 = interrupt)
+const DEVCR_OFF: usize = 0x1C; // DMA event clear register
 
 #[inline(always)]
 fn ffd(ch: u8, off: usize) -> *mut u32 {
@@ -140,19 +140,19 @@ const SRC_BASE: usize = 0xE820_9000;
 const SRC_UNIT_STRIDE: usize = 0x80;
 const SRC_PAIR_STRIDE: usize = 0x34;
 
-const SRCIR_OFF: usize   = 0x00; // Init register
-const SADIR_OFF: usize   = 0x04; // Audio input direction (channels, bit depth)
-const SRCBR_OFF: usize   = 0x08; // Bypass register (bit 0 = BYPASS)
-const IFSCR_OFF: usize   = 0x0C; // Input frequency select (0=sync, 1=async)
-const IFSVR_OFF: usize   = 0x10; // Input frequency value (INTIFS ratio Q22)
-const SRCCR_OFF: usize   = 0x14; // Common control (must-be-1 bits 16,8,4)
-const MNFSR_OFF: usize   = 0x18; // Minimum frequency select
-const BFSSR_OFF: usize   = 0x1C; // Buffer size select
+const SRCIR_OFF: usize = 0x00; // Init register
+const SADIR_OFF: usize = 0x04; // Audio input direction (channels, bit depth)
+const SRCBR_OFF: usize = 0x08; // Bypass register (bit 0 = BYPASS)
+const IFSCR_OFF: usize = 0x0C; // Input frequency select (0=sync, 1=async)
+const IFSVR_OFF: usize = 0x10; // Input frequency value (INTIFS ratio Q22)
+const SRCCR_OFF: usize = 0x14; // Common control (must-be-1 bits 16,8,4)
+const MNFSR_OFF: usize = 0x18; // Minimum frequency select
+const BFSSR_OFF: usize = 0x1C; // Buffer size select
 // 0x20: SC2SR (status, read-only)
 // 0x24: WATSR (wait time)
-const SEVMR_OFF: usize   = 0x28; // Sampling event mode register
+const SEVMR_OFF: usize = 0x28; // Sampling event mode register
 // 0x2C: 4-byte reserved gap
-const SEVCR_OFF: usize   = 0x30; // Sampling event clear register
+const SEVCR_OFF: usize = 0x30; // Sampling event clear register
 // SRCIRR lives at unit_base + 0x68 (after both pairs); see srcirr() below.
 const SRCIRR_UNIT_OFF: usize = 0x68;
 
@@ -173,19 +173,19 @@ fn srcirr(unit: u8) -> *mut u32 {
 const DVU_BASE: usize = 0xE820_9200;
 const DVU_STRIDE: usize = 0x100;
 
-const DVUIR_OFF: usize  = 0x00; // Init register
-const VADIR_OFF: usize  = 0x04; // Audio direction (channels, bit depth)
-const DVUBR_OFF: usize  = 0x08; // Bypass register (bit 0 = BYPASS)
-const DVUCR_OFF: usize  = 0x0C; // Control (enable flags)
-const ZCMCR_OFF: usize  = 0x10; // Zero-cross mute control
-const VRCTR_OFF: usize  = 0x14; // Volume ramp control (bit 0 = enable ramp)
-const VRPDR_OFF: usize  = 0x18; // Volume ramp period
-const VRDBR_OFF: usize  = 0x1C; // Volume ramp dB step
-const VRWTR_OFF: usize  = 0x20; // Volume ramp wait time register
-const VOL0R_OFF: usize  = 0x24; // Per-channel volume registers (ch 0–7)
-const DVUER_OFF: usize  = 0x44; // DVU enable register (bit 0 = EN)
-const VEVMR_OFF: usize  = 0x4C; // Volume event mode
-const VEVCR_OFF: usize  = 0x54; // Volume event clear (0x50 is a 4-byte gap)
+const DVUIR_OFF: usize = 0x00; // Init register
+const VADIR_OFF: usize = 0x04; // Audio direction (channels, bit depth)
+const DVUBR_OFF: usize = 0x08; // Bypass register (bit 0 = BYPASS)
+const DVUCR_OFF: usize = 0x0C; // Control (enable flags)
+const ZCMCR_OFF: usize = 0x10; // Zero-cross mute control
+const VRCTR_OFF: usize = 0x14; // Volume ramp control (bit 0 = enable ramp)
+const VRPDR_OFF: usize = 0x18; // Volume ramp period
+const VRDBR_OFF: usize = 0x1C; // Volume ramp dB step
+const VRWTR_OFF: usize = 0x20; // Volume ramp wait time register
+const VOL0R_OFF: usize = 0x24; // Per-channel volume registers (ch 0–7)
+const DVUER_OFF: usize = 0x44; // DVU enable register (bit 0 = EN)
+const VEVMR_OFF: usize = 0x4C; // Volume event mode
+const VEVCR_OFF: usize = 0x54; // Volume event clear (0x50 is a 4-byte gap)
 
 #[inline(always)]
 fn dvu(ch: u8, off: usize) -> *mut u32 {
@@ -202,16 +202,16 @@ fn vol_off(audio_ch: u8) -> usize {
 
 const MIX_BASE: usize = 0xE820_9600;
 
-const MIXIR_OFF: usize  = 0x00; // Init register
-const MADIR_OFF: usize  = 0x04; // Audio direction
-const MIXBR_OFF: usize  = 0x08; // Bypass register (bit 0 = BYPASS)
-const MIXMR_OFF: usize  = 0x0C; // Mix mode register
-const MVPDR_OFF: usize  = 0x10; // Master volume period
-const MDB0R_OFF: usize  = 0x14; // Mix data buffer 0 (per-source gain)
-const MDB1R_OFF: usize  = 0x18;
-const MDB2R_OFF: usize  = 0x1C;
-const MDB3R_OFF: usize  = 0x20;
-const MDBER_OFF: usize  = 0x24; // Mix data buffer enable
+const MIXIR_OFF: usize = 0x00; // Init register
+const MADIR_OFF: usize = 0x04; // Audio direction
+const MIXBR_OFF: usize = 0x08; // Bypass register (bit 0 = BYPASS)
+const MIXMR_OFF: usize = 0x0C; // Mix mode register
+const MVPDR_OFF: usize = 0x10; // Master volume period
+const MDB0R_OFF: usize = 0x14; // Mix data buffer 0 (per-source gain)
+const MDB1R_OFF: usize = 0x18;
+const MDB2R_OFF: usize = 0x1C;
+const MDB3R_OFF: usize = 0x20;
+const MDBER_OFF: usize = 0x24; // Mix data buffer enable
 
 #[inline(always)]
 fn mix(off: usize) -> *mut u32 {
@@ -222,16 +222,16 @@ fn mix(off: usize) -> *mut u32 {
 
 const CIM_BASE: usize = 0xE820_9700;
 
-const SWRSR_CIM_OFF: usize   = 0x00; // Software reset (bit 0; 0=reset, 1=run)
-const DMACR_CIM_OFF: usize   = 0x04; // DMA enable (bit 0=FFD0 TX, bit 1=FFD1, bit 16=FFU0 RX, …)
-const DMATD0_CIM_OFF: usize  = 0x08; // DMA transfer register: DMA channel number for FFD0
-const DMATD1_CIM_OFF: usize  = 0x0C; // DMA channel number for FFD1
-const DMATD2_CIM_OFF: usize  = 0x10;
-const DMATD3_CIM_OFF: usize  = 0x14;
-const DMATU0_CIM_OFF: usize  = 0x18; // DMA transfer register: DMA channel number for FFU0
-const DMATU1_CIM_OFF: usize  = 0x1C;
-const DMATU2_CIM_OFF: usize  = 0x20;
-const DMATU3_CIM_OFF: usize  = 0x24;
+const SWRSR_CIM_OFF: usize = 0x00; // Software reset (bit 0; 0=reset, 1=run)
+const DMACR_CIM_OFF: usize = 0x04; // DMA enable (bit 0=FFD0 TX, bit 1=FFD1, bit 16=FFU0 RX, …)
+const DMATD0_CIM_OFF: usize = 0x08; // DMA transfer register: DMA channel number for FFD0
+const DMATD1_CIM_OFF: usize = 0x0C; // DMA channel number for FFD1
+const DMATD2_CIM_OFF: usize = 0x10;
+const DMATD3_CIM_OFF: usize = 0x14;
+const DMATU0_CIM_OFF: usize = 0x18; // DMA transfer register: DMA channel number for FFU0
+const DMATU1_CIM_OFF: usize = 0x1C;
+const DMATU2_CIM_OFF: usize = 0x20;
+const DMATU3_CIM_OFF: usize = 0x24;
 // 0x28–0x37: 16-byte reserved gap (TRM Table 37.2, between DMATUn and SSIRSEL)
 const SSIRSEL_CIM_OFF: usize = 0x38; // SSI→SRC route selector
 const FDTSEL0_CIM_OFF: usize = 0x3C; // FFD→SRC/SSI selector for FFD0
@@ -242,7 +242,7 @@ const FUTSEL0_CIM_OFF: usize = 0x4C; // FFU source selector for FFU0
 const FUTSEL1_CIM_OFF: usize = 0x50;
 const FUTSEL2_CIM_OFF: usize = 0x54;
 const FUTSEL3_CIM_OFF: usize = 0x58;
-const SSIPMD_CIM_OFF: usize  = 0x5C; // SSI port mode
+const SSIPMD_CIM_OFF: usize = 0x5C; // SSI port mode
 const SSICTRL_CIM_OFF: usize = 0x60; // SSI clock/gate control
 const SRCRSEL0_CIM_OFF: usize = 0x64; // SRC route select 0 (reset = 0x76543210)
 const SRCRSEL1_CIM_OFF: usize = 0x68;
@@ -341,7 +341,7 @@ const SRCCR_SYNC: u32 = 1 << 0;
 
 /// SWRSR bit 0: 0 = reset asserted, 1 = normal operation.
 const SWRSR_RESET: u32 = 0;
-const SWRSR_RUN: u32   = 1;
+const SWRSR_RUN: u32 = 1;
 
 /// Generic INIT bit (bit 0) for all xxxIR registers (FFD/FFU/SRC/DVU/MIX/IPC/OPC).
 /// Writing 1 asserts init (stops block); writing 0 releases init (starts block).
@@ -453,7 +453,10 @@ pub struct AudioInfo {
 
 impl AudioInfo {
     /// Stereo (2-channel) 24-bit audio — the most common configuration.
-    pub const STEREO_24: AudioInfo = AudioInfo { channels: 2, depth: BitDepth::B24 };
+    pub const STEREO_24: AudioInfo = AudioInfo {
+        channels: 2,
+        depth: BitDepth::B24,
+    };
 
     fn to_reg(self) -> u32 {
         (self.depth.otbl() << 16) | (self.channels as u32)
@@ -539,13 +542,13 @@ impl DvuConfig {
 #[repr(u32)]
 pub enum IpcSel {
     /// Input path disabled.
-    None          = 0b000,
+    None = 0b000,
     /// SSI → 2SRC (async clock domain).
     SsiToSrcAsync = 0b001,
     /// FFD → 2SRC (async, CPU supplies audio via DMA).
     FfdToSrcAsync = 0b011,
     /// FFD → 2SRC (sync, SCUX uses SSI clock reference).
-    FfdToSrcSync  = 0b111,
+    FfdToSrcSync = 0b111,
 }
 
 /// OPC output path selection (written to OPSLR).
@@ -558,11 +561,11 @@ pub enum IpcSel {
 #[repr(u32)]
 pub enum OpcSel {
     /// Output path disabled.
-    None      = 0b000,
+    None = 0b000,
     /// Async path → SSIF direct (works with or without DVU/MIX in chain).
-    ToSsi     = 0b001,
+    ToSsi = 0b001,
     /// Async path → FFU (CPU receives converted audio via DMA).
-    ToFfu     = 0b011,
+    ToFfu = 0b011,
 }
 
 /// MIX configuration.
@@ -596,14 +599,14 @@ const fn ffu_chcfg(dma_ch: u8) -> u32 {
 }
 
 static mut FFD0_DESC: LinkDesc = LinkDesc([
-    0b1101,                              // Header: LDEN + NXA + valid
-    0,                                   // src  → FFD0 buffer (set at init)
-    (CIM_BASE + DMATD0_CIM_OFF) as u32,  // dst = DMATD0_CIM data register
-    0,                                   // byte count (set at init)
-    ffd_chcfg(FFD0_DMA_CH),              // CHCFG
-    0,                                   // CHITVL
-    0,                                   // CHEXT
-    0,                                   // NXLA → &FFD0_DESC (set at init)
+    0b1101,                             // Header: LDEN + NXA + valid
+    0,                                  // src  → FFD0 buffer (set at init)
+    (CIM_BASE + DMATD0_CIM_OFF) as u32, // dst = DMATD0_CIM data register
+    0,                                  // byte count (set at init)
+    ffd_chcfg(FFD0_DMA_CH),             // CHCFG
+    0,                                  // CHITVL
+    0,                                  // CHEXT
+    0,                                  // NXLA → &FFD0_DESC (set at init)
 ]);
 
 static mut FFD1_DESC: LinkDesc = LinkDesc([
@@ -619,9 +622,9 @@ static mut FFD1_DESC: LinkDesc = LinkDesc([
 
 static mut FFU0_DESC: LinkDesc = LinkDesc([
     0b1101,
-    (CIM_BASE + DMATU0_CIM_OFF) as u32,  // src = DMATU0_CIM data register
-    0,                                   // dst → FFU0 buffer (set at init)
-    0,                                   // byte count (set at init)
+    (CIM_BASE + DMATU0_CIM_OFF) as u32, // src = DMATU0_CIM data register
+    0,                                  // dst → FFU0 buffer (set at init)
+    0,                                  // byte count (set at init)
     ffu_chcfg(FFU0_DMA_CH),
     0,
     0,
@@ -786,7 +789,7 @@ pub unsafe fn configure_src(unit: u8, pair: u8, cfg: SrcConfig) {
         // IFSCR_INTIFSEN=1: use INTIFS ratio (async mode); 0 = sync mode.
         let ifscr_val: u32 = match cfg.mode {
             SrcMode::Async => IFSCR_INTIFSEN,
-            SrcMode::Sync  => 0,
+            SrcMode::Sync => 0,
         };
         src(unit, pair, IFSCR_OFF).write_volatile(ifscr_val);
 
@@ -796,7 +799,7 @@ pub unsafe fn configure_src(unit: u8, pair: u8, cfg: SrcConfig) {
         // Common control: must-be-1 bits | mode bit
         let srccr_val = SRCCR_MBZ1
             | match cfg.mode {
-                SrcMode::Sync  => SRCCR_SYNC,
+                SrcMode::Sync => SRCCR_SYNC,
                 SrcMode::Async => 0,
             };
         src(unit, pair, SRCCR_OFF).write_volatile(srccr_val);
@@ -892,7 +895,7 @@ pub unsafe fn apply_dvu_after_init(ch: u8, cfg: DvuConfig) {
         let vren_mask: u32 = (1u32 << cfg.audio.channels as u32) - 1;
         let (vrpdr, vrdbr) = match cfg.ramp {
             Some(r) => (r.vrpdr, r.vrdbr),
-            None    => (0, 0), // instant: zero-rate dummy ramp
+            None => (0, 0), // instant: zero-rate dummy ramp
         };
         dvu(ch, VRCTR_OFF).write_volatile(vren_mask * VRCTR_VREN);
         dvu(ch, VRPDR_OFF).write_volatile(vrpdr);
@@ -1087,10 +1090,30 @@ pub unsafe fn set_ssictrl(val: u32) {
 pub unsafe fn init_ffd_dma(ffd_ch: u8, src_buf: *const u32, buf_bytes: usize) {
     unsafe {
         let (dma_ch, desc_ptr, cim_dmatd_off, dmars) = match ffd_ch {
-            0 => (FFD0_DMA_CH, core::ptr::addr_of_mut!(FFD0_DESC), DMATD0_CIM_OFF, DMARS_SCUTXI0),
-            1 => (FFD1_DMA_CH, core::ptr::addr_of_mut!(FFD1_DESC), DMATD1_CIM_OFF, DMARS_SCUTXI1),
-            2 => (FFD2_DMA_CH, core::ptr::addr_of_mut!(FFD2_DESC), DMATD2_CIM_OFF, DMARS_SCUTXI2),
-            3 => (FFD3_DMA_CH, core::ptr::addr_of_mut!(FFD3_DESC), DMATD3_CIM_OFF, DMARS_SCUTXI3),
+            0 => (
+                FFD0_DMA_CH,
+                core::ptr::addr_of_mut!(FFD0_DESC),
+                DMATD0_CIM_OFF,
+                DMARS_SCUTXI0,
+            ),
+            1 => (
+                FFD1_DMA_CH,
+                core::ptr::addr_of_mut!(FFD1_DESC),
+                DMATD1_CIM_OFF,
+                DMARS_SCUTXI1,
+            ),
+            2 => (
+                FFD2_DMA_CH,
+                core::ptr::addr_of_mut!(FFD2_DESC),
+                DMATD2_CIM_OFF,
+                DMARS_SCUTXI2,
+            ),
+            3 => (
+                FFD3_DMA_CH,
+                core::ptr::addr_of_mut!(FFD3_DESC),
+                DMATD3_CIM_OFF,
+                DMARS_SCUTXI3,
+            ),
             _ => panic!("init_ffd_dma: invalid channel"),
         };
 
@@ -1099,7 +1122,9 @@ pub unsafe fn init_ffd_dma(ffd_ch: u8, src_buf: *const u32, buf_bytes: usize) {
         // Patch: source buffer address (SRAM audio data, increments each transfer)
         desc_u.add(1).write_volatile(src_buf as u32);
         // Patch: destination = DMATD_CIM data register (fixed address, SCUX ingests here)
-        desc_u.add(2).write_volatile((CIM_BASE + cim_dmatd_off) as u32);
+        desc_u
+            .add(2)
+            .write_volatile((CIM_BASE + cim_dmatd_off) as u32);
         // Patch: transfer byte count
         desc_u.add(3).write_volatile(buf_bytes as u32);
         // Patch: self-referential NXLA (uncached alias)
@@ -1116,17 +1141,39 @@ pub unsafe fn init_ffd_dma(ffd_ch: u8, src_buf: *const u32, buf_bytes: usize) {
 pub unsafe fn init_ffu_dma(ffu_ch: u8, dst_buf: *mut u32, buf_bytes: usize) {
     unsafe {
         let (dma_ch, desc_ptr, cim_dmatu_off, dmars) = match ffu_ch {
-            0 => (FFU0_DMA_CH, core::ptr::addr_of_mut!(FFU0_DESC), DMATU0_CIM_OFF, DMARS_SCURXI0),
-            1 => (FFU1_DMA_CH, core::ptr::addr_of_mut!(FFU1_DESC), DMATU1_CIM_OFF, DMARS_SCURXI1),
-            2 => (FFU2_DMA_CH, core::ptr::addr_of_mut!(FFU2_DESC), DMATU2_CIM_OFF, DMARS_SCURXI2),
-            3 => (FFU3_DMA_CH, core::ptr::addr_of_mut!(FFU3_DESC), DMATU3_CIM_OFF, DMARS_SCURXI3),
+            0 => (
+                FFU0_DMA_CH,
+                core::ptr::addr_of_mut!(FFU0_DESC),
+                DMATU0_CIM_OFF,
+                DMARS_SCURXI0,
+            ),
+            1 => (
+                FFU1_DMA_CH,
+                core::ptr::addr_of_mut!(FFU1_DESC),
+                DMATU1_CIM_OFF,
+                DMARS_SCURXI1,
+            ),
+            2 => (
+                FFU2_DMA_CH,
+                core::ptr::addr_of_mut!(FFU2_DESC),
+                DMATU2_CIM_OFF,
+                DMARS_SCURXI2,
+            ),
+            3 => (
+                FFU3_DMA_CH,
+                core::ptr::addr_of_mut!(FFU3_DESC),
+                DMATU3_CIM_OFF,
+                DMARS_SCURXI3,
+            ),
             _ => panic!("init_ffu_dma: invalid channel"),
         };
 
         let desc_u = (desc_ptr as usize + UNCACHED_MIRROR_OFFSET) as *mut u32;
 
         // Patch: source = DMATU_CIM data register (fixed address, SCUX outputs here)
-        desc_u.add(1).write_volatile((CIM_BASE + cim_dmatu_off) as u32);
+        desc_u
+            .add(1)
+            .write_volatile((CIM_BASE + cim_dmatu_off) as u32);
         // Patch: destination buffer (SRAM, increments each transfer)
         desc_u.add(2).write_volatile(dst_buf as u32);
         // Patch: byte count

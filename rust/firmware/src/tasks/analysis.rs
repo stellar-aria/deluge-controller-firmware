@@ -3,12 +3,12 @@
 //! Runs every 50 ms when the SSI RX DMA is active.  Publishes results to the
 //! shared statics below for consumption by `oled_task` and `rgb_task`.
 
-use core::arch::arm::{vhaddq_s32, vld2q_s32, vcvtq_f32_s32, vmulq_n_f32};
+use core::arch::arm::{vcvtq_f32_s32, vhaddq_s32, vld2q_s32, vmulq_n_f32};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use deluge_bsp::scux_dvu_path;
 use embassy_futures::yield_now;
 use embassy_time::Timer;
-use deluge_bsp::scux_dvu_path;
 
 use deluge_fft::{Complex, RealFft, apply_hann_window_real};
 

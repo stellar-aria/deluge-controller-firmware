@@ -1,0 +1,26 @@
+[package]
+name = "cmsis-dsp-sys"
+version = "0.1.0"
+edition = "2024"
+description = "Raw FFI bindings to ARM CMSIS-DSP v1.17.0 (Cortex-A / NEON)"
+license = "Apache-2.0"
+
+# Tells Cargo this crate links the native library "cmsis_dsp".
+# Only one crate in the dependency graph may claim this link.
+links = "cmsis_dsp"
+
+[features]
+default = ["neon", "loop-unroll"]
+# Enable NEON acceleration (ARMv7-A / ARMv8-A only).
+# Has no effect when the build target is not ARM.
+neon = []
+# Enable CMSIS-DSP loop-unrolling (-DARM_MATH_LOOPUNROLL).
+loop-unroll = []
+
+[build-dependencies]
+cc      = "1"
+bindgen = { version = "0.72", default-features = false, features = ["runtime"] }
+flate2  = "1"
+tar     = "0.4"
+sha2    = "0.11"
+hex     = "0.4"

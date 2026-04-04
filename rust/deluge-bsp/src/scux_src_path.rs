@@ -24,8 +24,7 @@
 //! - The 2SRC unit 0, pair 1 is used, independent of the DVU path's pair 0.
 
 use rza1::scux::{
-    self, AudioInfo, IpcSel, MixConfig, OpcSel, SrcConfig, SrcMode,
-    UNCACHED_MIRROR_OFFSET,
+    self, AudioInfo, IpcSel, MixConfig, OpcSel, SrcConfig, SrcMode, UNCACHED_MIRROR_OFFSET,
 };
 
 /// Number of stereo frames in the SRC path input (TX) buffer.
@@ -107,18 +106,18 @@ pub unsafe fn init(fin_hz: u32, fout_hz: u32) {
             SRC_UNIT,
             SRC_PAIR,
             SrcConfig {
-                mode:     SrcMode::Async,
-                audio:    AudioInfo::STEREO_24,
-                bypass:   false,
+                mode: SrcMode::Async,
+                audio: AudioInfo::STEREO_24,
+                bypass: false,
                 intifs,
-                mnfsr:    0,
+                mnfsr: 0,
                 buf_size: 0,
             },
         );
 
         // MIX: not in path
         scux::configure_mix(MixConfig {
-            audio:  AudioInfo::STEREO_24,
+            audio: AudioInfo::STEREO_24,
             bypass: true,
         });
 
@@ -158,9 +157,7 @@ pub unsafe fn update_input_rate(fin_hz: u32, fout_hz: u32) {
 ///
 /// Write audio at the input rate here.
 pub fn tx_buf_start() -> *mut i32 {
-    unsafe {
-        (core::ptr::addr_of!(SRC_TX_BUF.0[0]) as usize + UNCACHED_MIRROR_OFFSET) as *mut i32
-    }
+    unsafe { (core::ptr::addr_of!(SRC_TX_BUF.0[0]) as usize + UNCACHED_MIRROR_OFFSET) as *mut i32 }
 }
 
 /// One-past-the-end of the input buffer (uncached).

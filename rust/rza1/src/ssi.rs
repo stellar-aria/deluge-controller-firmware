@@ -81,8 +81,8 @@ const SSICR_INIT: u32 = 0x002B_C020;
 /// SSIFCR bit positions (verified against vendor/rbsp ssif.h SSIF_FCR_SHIFT_*).
 const SSIFCR_RFRST: u32 = 1 << 0; // RX FIFO reset (active high)
 const SSIFCR_TFRST: u32 = 1 << 1; // TX FIFO reset (active high)
-const SSIFCR_RIE:   u32 = 1 << 2; // RX interrupt enable (→ RXI DMA trigger)
-const SSIFCR_TIE:   u32 = 1 << 3; // TX interrupt enable (→ TXI DMA trigger)
+const SSIFCR_RIE: u32 = 1 << 2; // RX interrupt enable (→ RXI DMA trigger)
+const SSIFCR_TIE: u32 = 1 << 3; // TX interrupt enable (→ TXI DMA trigger)
 // RTRG[1:0] = bits 5:4 — RX trigger level
 // TTRG[1:0] = bits 7:6 — TX trigger level
 
@@ -342,7 +342,10 @@ pub unsafe fn init_rx_only() {
             (core::ptr::addr_of!(RX_DESC) as usize + UNCACHED_MIRROR_OFFSET) as *const u32;
         dmac::init_with_link_descriptor(RX_DMA_CH, rx_desc_u, DMARS_SSI0_RX);
         dmac::channel_start(RX_DMA_CH);
-        log::debug!("ssi: DMA RX ch{} started (TX skipped — SCUX owns TX)", RX_DMA_CH);
+        log::debug!(
+            "ssi: DMA RX ch{} started (TX skipped — SCUX owns TX)",
+            RX_DMA_CH
+        );
 
         // 5. Release RX FIFO only; leave TX FIFO in reset (TFRST stays set).
         let fcr = ssi_reg(SSIFCR_OFF);

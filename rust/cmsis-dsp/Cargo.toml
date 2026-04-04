@@ -1,0 +1,14 @@
+[package]
+name = "cmsis-dsp"
+version = "0.1.0"
+edition = "2024"
+description = "Safe Rust wrapper around ARM CMSIS-DSP for Cortex-A / NEON"
+license = "Apache-2.0"
+
+[features]
+default = ["neon", "loop-unroll"]
+neon       = ["cmsis-dsp-sys/neon"]
+loop-unroll = ["cmsis-dsp-sys/loop-unroll"]
+
+[dependencies]
+cmsis-dsp-sys = { path = "../cmsis-dsp-sys" }

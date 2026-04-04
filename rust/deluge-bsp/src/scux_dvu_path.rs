@@ -32,8 +32,8 @@
 
 use rza1::{
     scux::{
-        self, AudioInfo, DvuConfig, IpcSel, MixConfig, OpcSel, RampConfig, SrcConfig, SrcMode,
-        INTIFS_44100_TO_44100, UNCACHED_MIRROR_OFFSET,
+        self, AudioInfo, DvuConfig, INTIFS_44100_TO_44100, IpcSel, MixConfig, OpcSel, RampConfig,
+        SrcConfig, SrcMode, UNCACHED_MIRROR_OFFSET,
     },
     ssi,
 };
@@ -50,8 +50,7 @@ pub const DVU_PATH_BUF_LEN: usize = DVU_PATH_FRAMES * 2;
 #[repr(align(32))]
 struct Aligned32<const N: usize>([i32; N]);
 
-static mut DVU_TX_BUF: Aligned32<DVU_PATH_BUF_LEN> =
-    Aligned32([0i32; DVU_PATH_BUF_LEN]);
+static mut DVU_TX_BUF: Aligned32<DVU_PATH_BUF_LEN> = Aligned32([0i32; DVU_PATH_BUF_LEN]);
 
 // ── Internal DVU channel assignment ──────────────────────────────────────────
 
@@ -129,11 +128,11 @@ pub unsafe fn init() {
             SRC_UNIT,
             SRC_PAIR,
             SrcConfig {
-                mode:     SrcMode::Async,
-                audio:    AudioInfo::STEREO_24,
-                bypass:   true,
-                intifs:   INTIFS_44100_TO_44100,
-                mnfsr:    0,
+                mode: SrcMode::Async,
+                audio: AudioInfo::STEREO_24,
+                bypass: true,
+                intifs: INTIFS_44100_TO_44100,
+                mnfsr: 0,
                 buf_size: 0,
             },
         );
@@ -141,10 +140,10 @@ pub unsafe fn init() {
         // DVU0 phase 1: write VADIR + DVUBR only (safe while DVUIR.INIT=1).
         // Phase 2 (VOLxR, VRCTR, DVUCR, DVUER) called after start() clears DVUIR.INIT.
         let dvu_cfg = DvuConfig {
-            audio:          AudioInfo::STEREO_24,
-            bypass:         false,
-            volumes:        [0x0010_0000; 8],
-            ramp:           None,
+            audio: AudioInfo::STEREO_24,
+            bypass: false,
+            volumes: [0x0010_0000; 8],
+            ramp: None,
             zero_cross_mute: false,
         };
         scux::configure_dvu(DVU_CH, dvu_cfg);
@@ -152,7 +151,7 @@ pub unsafe fn init() {
         // MIX: not in the signal path.
         // BSP does NOT start MIX for SCUX_ROUTE_SRC0_SSIF0 (direct route).
         scux::configure_mix(MixConfig {
-            audio:  AudioInfo::STEREO_24,
+            audio: AudioInfo::STEREO_24,
             bypass: true,
         });
 
@@ -241,9 +240,7 @@ pub unsafe fn fade_to(target_vol: u32, ramp: RampConfig) {
 ///
 /// Write audio samples here for the SCUX to pick up.  Wrap at [`tx_buf_end`].
 pub fn tx_buf_start() -> *mut i32 {
-    unsafe {
-        (core::ptr::addr_of!(DVU_TX_BUF.0[0]) as usize + UNCACHED_MIRROR_OFFSET) as *mut i32
-    }
+    unsafe { (core::ptr::addr_of!(DVU_TX_BUF.0[0]) as usize + UNCACHED_MIRROR_OFFSET) as *mut i32 }
 }
 
 /// One-past-the-end pointer for the SCUX DVU path TX buffer (uncached view).

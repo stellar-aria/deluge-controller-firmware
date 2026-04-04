@@ -1,8 +1,8 @@
 use core::sync::atomic::Ordering;
+use deluge_bsp::scux_dvu_path;
 use embassy_usb::driver::{Endpoint as _, EndpointIn as _, EndpointOut as _};
 use log::info;
 use rza1::ssi;
-use deluge_bsp::scux_dvu_path;
 
 use deluge_bsp::usb::classes::audio::{USB_BITS_PER_SAMPLE, USB_CAPTURE_BITS_PER_SAMPLE};
 
@@ -123,7 +123,6 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
                 continue;
             }
             Ok(Ok(bytes_read)) => {
-
                 // Packet size diagnostics — log once per ~8000 packets (≈1 s).
                 if bytes_read > 0 {
                     if bytes_read < diag_min {
@@ -201,7 +200,8 @@ pub(crate) async fn uac2_task(mut ep_out: deluge_bsp::usb::Rusb1EndpointOut) {
                         // 16-bit signed LE → MSB-align in 32 bits
                         let v = (src[i * 2] as u16 | (src[i * 2 + 1] as u16) << 8) as i16;
                         (v as i32) << 16
-                    } .wrapping_add(dither_sample(&mut lfsr));
+                    }
+                    .wrapping_add(dither_sample(&mut lfsr));
                     unsafe {
                         write_ptr.write_volatile(sample);
                         write_ptr = write_ptr.add(1);
